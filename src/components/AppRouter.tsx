@@ -7,8 +7,7 @@ import { AgencyOnboardingNew } from "./onboarding/AgencyOnboardingNew";
 import { FeedHome } from "./FeedHome";
 import { CompanyProfileDemo } from "./CompanyProfileDemo";
 import { ProjectWorkspace } from "./ProjectWorkspace";
-import { TimesheetDemo } from "./TimesheetDemo";
-import { DatabaseSyncTest } from "./timesheets/DatabaseSyncTest"; // ✅ NEW: Test component
+import { DatabaseSyncTest } from "./timesheets/DatabaseSyncTest"; // ✅ Database test (development only)
 import { ProjectsListView } from "./projects/ProjectsListView";
 import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
 import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench"; // ✅ DAY 3: Global approvals
@@ -29,10 +28,8 @@ type AppRoute =
   | "feed"
   | "company-profile-demo"
   | "project-workspace"
-  | "timesheet-demo"
   | "db-sync-test"
   | "projects" // ✅ Projects management route
-  | "visual-builder" // ✅ NEW: Visual WorkGraph Builder
   | "approvals" // ✅ DAY 3: Global approvals workbench
   | "test-dashboard" // ✅ NEW: Comprehensive testing dashboard
   | "checkbox-test"; // ✅ Checkbox debugging
@@ -193,26 +190,11 @@ function AppContent() {
       case "project-workspace":
         return <ProjectWorkspace />;
 
-      case "timesheet-demo":
-        return <TimesheetDemo />;
-
       case "db-sync-test": // ✅ NEW: Database sync test route
         return <DatabaseSyncTest />;
 
       case "projects": // ✅ NEW: Projects management
         return <ProjectsListView />;
-
-      case "visual-builder": // ✅ NEW: Visual WorkGraph Builder
-        return (
-          <WorkGraphBuilder
-            projectId="demo-project-1"
-            projectName="Demo Project - Visual Builder"
-            onSave={(config) => {
-              console.log('✅ Project Compiled & Saved:', config);
-              alert('Project configuration saved! Check console for compiled JSON.');
-            }}
-          />
-        );
 
       case "approvals": // ✅ DAY 3: Global approvals workbench
         return <ApprovalsWorkbench />;
@@ -238,9 +220,7 @@ function AppContent() {
     { route: "feed", label: "📰 Feed" },
     { route: "projects", label: "📋 Projects" },
     { route: "approvals", label: "✅ My Approvals" }, // ✅ DAY 3: Global approvals
-    { route: "visual-builder", label: "🎨 Visual Builder" }, // ✅ NEW: Visual WorkGraph Builder
     { route: "project-workspace", label: "📁 Project Workspace" },
-    { route: "timesheet-demo", label: "⏱️ Timesheets (Old)" },
     { route: "company-profile-demo", label: "🏢 Company Profile" },
     { route: "db-sync-test", label: "🔄 Database Sync Test" },
     { route: "checkbox-test", label: "✅ Checkbox Test" },

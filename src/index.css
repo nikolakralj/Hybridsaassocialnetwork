@@ -1125,8 +1125,16 @@
     height: 200px;
   }
 
+  .h-\[600px\] {
+    height: 600px;
+  }
+
   .h-\[calc\(100\%-1px\)\] {
     height: calc(100% - 1px);
+  }
+
+  .h-\[calc\(100vh-16rem\)\] {
+    height: calc(100vh - 16rem);
   }
 
   .h-\[var\(--radix-select-trigger-height\)\] {
@@ -1959,6 +1967,11 @@
     border-style: dashed;
   }
 
+  .border-none {
+    --tw-border-style: none;
+    border-style: none;
+  }
+
   .border-accent {
     border-color: var(--accent);
   }
@@ -2115,6 +2128,10 @@
     .border-green-500\/20 {
       border-color: color-mix(in oklab, var(--color-green-500) 20%, transparent);
     }
+  }
+
+  .border-green-800 {
+    border-color: var(--color-green-800);
   }
 
   .border-indigo-300 {
@@ -2583,6 +2600,10 @@
 
   .bg-green-600 {
     background-color: var(--color-green-600);
+  }
+
+  .bg-green-700 {
+    background-color: var(--color-green-700);
   }
 
   .bg-indigo-50 {
@@ -4325,6 +4346,18 @@
     @supports (color: color-mix(in lab, red, red)) {
       .hover\:bg-accent-brand\/50:hover {
         background-color: color-mix(in oklab, var(--accent-brand) 50%, transparent);
+      }
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-accent-brand\/90:hover {
+      background-color: var(--accent-brand);
+    }
+
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\:bg-accent-brand\/90:hover {
+        background-color: color-mix(in oklab, var(--accent-brand) 90%, transparent);
       }
     }
   }

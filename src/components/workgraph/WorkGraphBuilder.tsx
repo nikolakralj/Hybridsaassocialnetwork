@@ -96,6 +96,11 @@ interface WorkGraphBuilderProps {
   projectName?: string;
   onSave?: (config: CompiledProjectConfig) => void;
   initialConfig?: CompiledProjectConfig;
+  // Deep linking props
+  focusNodeId?: string;
+  scope?: 'approvals' | 'money' | 'people' | 'access';
+  mode?: 'view' | 'edit';
+  asOf?: string; // 'now' or ISO timestamp / version id
 }
 
 export function WorkGraphBuilder({
@@ -103,6 +108,10 @@ export function WorkGraphBuilder({
   projectName: propProjectName,
   onSave,
   initialConfig,
+  focusNodeId,
+  scope = 'approvals',
+  mode = 'view',
+  asOf = 'now',
 }: WorkGraphBuilderProps) {
   // ✅ DAY 2: Project loading state
   const [projectId, setProjectId] = useState(propProjectId || sessionStorage.getItem('currentProjectId') || '');
@@ -699,49 +708,41 @@ export function WorkGraphBuilder({
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* ✅ DAY 2: Enhanced Header with Project Info */}
-      <div className="bg-white border-b px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-semibold text-gray-900">
-                {project?.name || 'Untitled Project'}
-              </h1>
-              {userRole && (
-                <Badge variant="outline" className="text-xs">
-                  {userRole}
-                </Badge>
-              )}
-              {project && (
-                <>
-                  <Badge variant="secondary" className="text-xs">
-                    {project.region}
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs">
-                    {project.currency}
-                  </Badge>
-                </>
-              )}
-            </div>
-            <p className="text-sm text-gray-500">Visual WorkGraph Builder</p>
-          </div>
-          
+    <div className="h-[calc(100vh-16rem)] flex flex-col bg-background rounded-lg border border-border overflow-hidden">
+      {/* Simplified Header (for embedded mode) */}
+      <div className="bg-card border-b border-border px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
           {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'builder' | 'simulator')}>
-            <TabsList>
-              <TabsTrigger value="builder">Builder</TabsTrigger>
-              <TabsTrigger value="simulator" disabled={!compiledConfig}>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'builder' | 'simulator')} className="border-none">
+            <TabsList className="bg-muted/50">
+              <TabsTrigger value="builder" className="gap-2">
+                <FileJson className="w-4 h-4" />
+                Builder
+              </TabsTrigger>
+              <TabsTrigger value="simulator" disabled={!compiledConfig} className="gap-2">
+                <Play className="w-4 h-4" />
                 Simulator
                 {!compiledConfig && (
-                  <span className="ml-2 text-xs text-gray-400">(Compile first)</span>
+                  <span className="ml-1 text-xs text-muted-foreground">(Compile first)</span>
                 )}
               </TabsTrigger>
             </TabsList>
           </Tabs>
+
+          {/* Stats */}
+          {activeTab === 'builder' && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-xs gap-1">
+                {nodes.length} Nodes
+              </Badge>
+              <Badge variant="outline" className="text-xs gap-1">
+                {edges.length} Edges
+              </Badge>
+            </div>
+          )}
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {activeTab === 'builder' && (
             <>
               {/* Template loader */}
@@ -756,7 +757,7 @@ export function WorkGraphBuilder({
 
               {/* Last saved indicator */}
               {lastSaved && (
-                <div className="text-sm text-gray-500">
+                <div className="text-xs text-muted-foreground px-2">
                   {getLastSavedText()}
                 </div>
               )}
@@ -767,22 +768,26 @@ export function WorkGraphBuilder({
                 size="sm"
                 onClick={handleValidate}
                 disabled={isValidating}
+                className="gap-2"
               >
                 {isValidating ? (
-                  'Validating...'
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Validating...
+                  </>
                 ) : hasErrors ? (
                   <>
-                    <AlertTriangle className="h-4 w-4 mr-2 text-red-600" />
+                    <AlertTriangle className="h-3 w-3 text-destructive" />
                     {validationErrors.length} Issues
                   </>
                 ) : hasWarnings ? (
                   <>
-                    <AlertTriangle className="h-4 w-4 mr-2 text-yellow-600" />
+                    <AlertTriangle className="h-3 w-3 text-warning" />
                     {validationErrors.length} Warnings
                   </>
                 ) : (
                   <>
-                    <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                    <CheckCircle className="h-3 w-3 text-success" />
                     Validate
                   </>
                 )}
@@ -796,8 +801,10 @@ export function WorkGraphBuilder({
                   setTimeout(() => setActiveTab('simulator'), 100);
                 }}
                 disabled={isCompiling || hasErrors}
+                size="sm"
+                className="gap-2"
               >
-                <Play className="h-4 w-4 mr-2" />
+                <Play className="h-3 w-3" />
                 Compile & Test
               </Button>
 
@@ -806,33 +813,23 @@ export function WorkGraphBuilder({
                 <Button
                   onClick={handlePublish}
                   disabled={isPublishing || hasErrors || nodes.length === 0}
+                  size="sm"
                   variant="default"
-                  className="bg-purple-600 hover:bg-purple-700"
+                  className="bg-accent-brand hover:bg-accent-brand/90 gap-2"
                 >
                   {isPublishing ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="h-3 w-3 animate-spin" />
                       Publishing...
                     </>
                   ) : (
                     <>
-                      <Send className="h-4 w-4 mr-2" />
+                      <Send className="h-3 w-3" />
                       Publish
                     </>
                   )}
                 </Button>
               )}
-
-              {/* Save button */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleSave}
-                disabled={!compiledConfig || hasErrors || !hasUnsavedChanges}
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {hasUnsavedChanges ? 'Save' : 'Saved'}
-              </Button>
             </>
           )}
         </div>

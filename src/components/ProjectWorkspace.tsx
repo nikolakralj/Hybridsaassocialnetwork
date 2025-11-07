@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, lazy, Suspense, useEffect } from "react";
 import { 
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, 
-  Plus, Settings, Users, MessageSquare, X, MoreHorizontal
+  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
 } from "lucide-react";
 import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
 import { Button } from "./ui/button";
@@ -17,9 +17,14 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { toast } from "sonner";
+import { Skeleton } from "./ui/skeleton";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
+
+// Lazy load WorkGraphBuilder for performance
+const WorkGraphBuilder = lazy(() => import("./workgraph/WorkGraphBuilder").then(m => ({ default: m.WorkGraphBuilder })));
 
 // Module definitions
-type ModuleId = "overview" | "timesheets" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages";
+type ModuleId = "overview" | "project-graph" | "timesheets" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
 
 interface Module {
   id: ModuleId;
@@ -37,8 +42,22 @@ interface ProjectWorkspaceProps {
 }
 
 export function ProjectWorkspace({ 
+  projectId = "demo-project-1",
   projectName = "Mobile App Redesign" 
 }: ProjectWorkspaceProps) {
+  // Get hash params for deep linking (works in Figma Make iframe)
+  const getHashParams = () => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    const hash = window.location.hash.slice(1); // Remove #
+    return new URLSearchParams(hash);
+  };
+  
+  const hashParams = getHashParams();
+  const focusNodeId = hashParams.get('focus') || undefined;
+  const scope = (hashParams.get('scope') as 'approvals' | 'money' | 'people' | 'access') || 'approvals';
+  const mode = (hashParams.get('mode') as 'view' | 'edit') || 'view';
+  const asOf = hashParams.get('asOf') || 'now';
+
   // Initial state: Core modules enabled, optional modules disabled
   const [modules, setModules] = useState<Module[]>([
     {
@@ -46,6 +65,14 @@ export function ProjectWorkspace({
       name: "Overview",
       icon: LayoutDashboard,
       description: "Project dashboard and key metrics",
+      category: "core",
+      isEnabled: true,
+    },
+    {
+      id: "project-graph",
+      name: "Project Graph",
+      icon: Network,
+      description: "Visual project structure and approval flows",
       category: "core",
       isEnabled: true,
     },
@@ -74,6 +101,14 @@ export function ProjectWorkspace({
       isEnabled: true,
     },
     // Optional modules (can be toggled on/off)
+    {
+      id: "graph-snapshot",
+      name: "Graph Snapshot",
+      icon: Network,
+      description: "Quick health check of project structure (adds to Overview)",
+      category: "optional",
+      isEnabled: false,
+    },
     {
       id: "tasks",
       name: "Tasks",
@@ -118,6 +153,16 @@ export function ProjectWorkspace({
   const enabledModules = modules.filter(m => m.isEnabled);
   const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
 
+  // Listen for custom tab change events (from deep links)
+  useEffect(() => {
+    const handleTabChange = (event: CustomEvent<ModuleId>) => {
+      setActiveTab(event.detail);
+    };
+    
+    window.addEventListener('changeTab', handleTabChange as EventListener);
+    return () => window.removeEventListener('changeTab', handleTabChange as EventListener);
+  }, []);
+
   const handleToggleModule = (moduleId: ModuleId) => {
     setModules(prev => prev.map(m => 
       m.id === moduleId ? { ...m, isEnabled: !m.isEnabled } : m
@@ -152,6 +197,12 @@ export function ProjectWorkspace({
               <div className="flex items-center gap-3 mb-1">
                 <h1 className="m-0">{projectName}</h1>
                 <Badge variant="secondary">Active</Badge>
+                {/* Debug: Show current scope */}
+                {scope !== 'approvals' && (
+                  <Badge variant="outline" className="text-xs">
+                    Scope: {scope}
+                  </Badge>
+                )}
               </div>
               <p className="text-sm text-muted-foreground m-0">
                 Client: Acme Corp · Due: Jan 31, 2024
@@ -271,6 +322,18 @@ export function ProjectWorkspace({
             <OverviewModule projectName={projectName} />
           </TabsContent>
 
+          <TabsContent value="project-graph" className="space-y-6">
+            <Suspense fallback={<div className="h-[600px] flex items-center justify-center"><Skeleton className="h-full w-full" /></div>}>
+              <WorkGraphBuilder
+                projectId={projectId}
+                focusNodeId={focusNodeId}
+                scope={scope}
+                mode={mode}
+                asOf={asOf}
+              />
+            </Suspense>
+          </TabsContent>
+
           <TabsContent value="timesheets" className="space-y-6">
             <ProjectTimesheetsView
               ownerId="demo-owner-id"
@@ -321,20 +384,69 @@ export function ProjectWorkspace({
 // Module Components (placeholders for now)
 
 function OverviewModule({ projectName }: { projectName: string }) {
+  const handleDeepLink = (scope: string, focus?: string) => {
+    const params = new URLSearchParams();
+    params.set('scope', scope);
+    if (focus) params.set('focus', focus);
+    
+    // Use hash-based routing (works in Figma Make iframe)
+    window.location.hash = params.toString();
+    
+    // Add visual toast for confirmation
+    toast.success(`Opening Project Graph: ${scope} view`, {
+      duration: 2000,
+    });
+    
+    // Trigger tab change to project-graph
+    const event = new CustomEvent('changeTab', { detail: 'project-graph' });
+    window.dispatchEvent(event);
+  };
+
   return (
     <div className="grid md:grid-cols-3 gap-6">
-      <Card className="p-6">
-        <p className="text-sm text-muted-foreground mb-2">Budget Progress</p>
+      <Card className="p-6 relative group">
+        <div className="flex items-start justify-between mb-2">
+          <p className="text-sm text-muted-foreground">Budget Progress</p>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleDeepLink('money')}>
+                <Network className="w-4 h-4 mr-2" />
+                Show money flow in graph
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <p className="text-3xl font-semibold mb-1">$12,500</p>
         <p className="text-sm text-muted-foreground">of $20,000 (62%)</p>
       </Card>
+      
       <Card className="p-6">
         <p className="text-sm text-muted-foreground mb-2">Hours This Week</p>
         <p className="text-3xl font-semibold mb-1">45</p>
         <p className="text-sm text-success">+12% from last week</p>
       </Card>
-      <Card className="p-6">
-        <p className="text-sm text-muted-foreground mb-2">Pending Approvals</p>
+      
+      <Card className="p-6 relative group">
+        <div className="flex items-start justify-between mb-2">
+          <p className="text-sm text-muted-foreground">Pending Approvals</p>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => handleDeepLink('approvals')}
+          >
+            View on graph →
+          </Button>
+        </div>
         <p className="text-3xl font-semibold mb-1">3</p>
         <p className="text-sm text-warning">Timesheets need review</p>
       </Card>

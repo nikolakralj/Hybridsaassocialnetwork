@@ -237,6 +237,28 @@ export function ProjectTimesheetsView({
     }
   }, [organizationsWithData]);
 
+  // ✅ PHASE 3: Deep link to graph from timesheet row
+  const handleViewInGraph = useCallback((userId: string, submittedAt?: string) => {
+    const params = new URLSearchParams();
+    params.set('scope', 'approvals');
+    params.set('focus', userId);
+    if (submittedAt) {
+      params.set('asOf', submittedAt);
+    }
+    
+    // Use hash-based routing (works in Figma Make iframe)
+    window.location.hash = params.toString();
+    
+    // Add visual toast for confirmation
+    toast.success('Opening Project Graph: approval chain view', {
+      duration: 2000,
+    });
+    
+    // Trigger tab change to project-graph
+    const event = new CustomEvent('changeTab', { detail: 'project-graph' });
+    window.dispatchEvent(event);
+  }, []);
+
   // ✅ Stable callbacks: Timesheet entry handlers for table view
   const handleUpdateEntry = useCallback(async (entryId: string, updates: Partial<timesheetApi.TimesheetEntry>) => {
     try {
@@ -628,6 +650,7 @@ export function ProjectTimesheetsView({
         onOpenDrawer={handleSelectPeriod}
         onQuickApprove={handleQuickApprove}
         onQuickReject={handleQuickReject}
+        onViewInGraph={handleViewInGraph}
         viewMode={viewMode === 'calendar' ? 'month' : viewMode} // Calendar uses month view
         filterPeriodStart={periodStart}
         filterPeriodEnd={periodEnd}

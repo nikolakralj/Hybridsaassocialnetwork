@@ -39,17 +39,39 @@ export function GraphOverlayModal({
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
 
-  // Close on Escape key
+  // Keyboard shortcuts: Escape, A=approve, R=reject
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) {
+    const handleKeyboard = (e: KeyboardEvent) => {
+      if (!open) return;
+      
+      // Escape to close
+      if (e.key === 'Escape') {
         onClose();
+        return;
+      }
+      
+      // Ignore if typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+      
+      // A = Approve
+      if (e.key.toLowerCase() === 'a' && !isApproving && !isRejecting) {
+        e.preventDefault();
+        handleApprove();
+      }
+      
+      // R = Reject
+      if (e.key.toLowerCase() === 'r' && !isApproving && !isRejecting) {
+        e.preventDefault();
+        handleReject();
       }
     };
     
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [open, onClose]);
+    window.addEventListener('keydown', handleKeyboard);
+    return () => window.removeEventListener('keydown', handleKeyboard);
+  }, [open, onClose, isApproving, isRejecting]);
 
   if (!item) return null;
 
@@ -173,10 +195,18 @@ export function GraphOverlayModal({
                 <div className="flex items-center justify-center gap-4">
                   {/* Step 1 */}
                   <div className={`flex flex-col items-center ${item.stepOrder === 1 ? 'opacity-100' : 'opacity-40'}`}>
-                    <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                      item.stepOrder === 1 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
-                    }`}>
-                      <span className="text-white font-medium">1</span>
+                    <div className="relative">
+                      <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                        item.stepOrder === 1 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
+                      }`}>
+                        <span className="text-white font-medium">1</span>
+                      </div>
+                      {/* YOU badge */}
+                      {item.stepOrder === 1 && (
+                        <div className="absolute -top-2 -right-2">
+                          <Badge className="bg-blue-600 text-white text-xs px-2 py-0.5 shadow-lg">YOU</Badge>
+                        </div>
+                      )}
                     </div>
                     <div className="mt-2 text-center">
                       <div className="text-sm font-medium text-gray-900">Contractor</div>
@@ -189,10 +219,24 @@ export function GraphOverlayModal({
                   
                   {/* Step 2 */}
                   <div className={`flex flex-col items-center ${item.stepOrder === 2 ? 'opacity-100' : 'opacity-40'}`}>
-                    <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                      item.stepOrder === 2 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
-                    }`}>
-                      <span className="text-white font-medium">2</span>
+                    <div className="relative">
+                      <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                        item.stepOrder === 2 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
+                      }`}>
+                        <span className="text-white font-medium">2</span>
+                      </div>
+                      {/* YOU badge */}
+                      {item.stepOrder === 2 && (
+                        <div className="absolute -top-2 -right-2">
+                          <Badge className="bg-blue-600 text-white text-xs px-2 py-0.5 shadow-lg">YOU</Badge>
+                        </div>
+                      )}
+                      {/* NEXT badge */}
+                      {item.stepOrder === 1 && (
+                        <div className="absolute -top-2 -right-2">
+                          <Badge className="bg-purple-600 text-white text-xs px-2 py-0.5 shadow-lg">NEXT</Badge>
+                        </div>
+                      )}
                     </div>
                     <div className="mt-2 text-center">
                       <div className="text-sm font-medium text-gray-900">Manager</div>
@@ -209,10 +253,24 @@ export function GraphOverlayModal({
                       
                       {/* Step 3 */}
                       <div className={`flex flex-col items-center ${item.stepOrder === 3 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                          item.stepOrder === 3 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
-                        }`}>
-                          <span className="text-white font-medium">3</span>
+                        <div className="relative">
+                          <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                            item.stepOrder === 3 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
+                          }`}>
+                            <span className="text-white font-medium">3</span>
+                          </div>
+                          {/* YOU badge */}
+                          {item.stepOrder === 3 && (
+                            <div className="absolute -top-2 -right-2">
+                              <Badge className="bg-blue-600 text-white text-xs px-2 py-0.5 shadow-lg">YOU</Badge>
+                            </div>
+                          )}
+                          {/* NEXT badge */}
+                          {item.stepOrder === 2 && (
+                            <div className="absolute -top-2 -right-2">
+                              <Badge className="bg-purple-600 text-white text-xs px-2 py-0.5 shadow-lg">NEXT</Badge>
+                            </div>
+                          )}
                         </div>
                         <div className="mt-2 text-center">
                           <div className="text-sm font-medium text-gray-900">Finance</div>
@@ -231,10 +289,24 @@ export function GraphOverlayModal({
                       
                       {/* Step 4 */}
                       <div className={`flex flex-col items-center ${item.stepOrder === 4 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                          item.stepOrder === 4 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
-                        }`}>
-                          <span className="text-white font-medium">4</span>
+                        <div className="relative">
+                          <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                            item.stepOrder === 4 ? 'bg-blue-600 ring-4 ring-blue-200' : 'bg-gray-300'
+                          }`}>
+                            <span className="text-white font-medium">4</span>
+                          </div>
+                          {/* YOU badge */}
+                          {item.stepOrder === 4 && (
+                            <div className="absolute -top-2 -right-2">
+                              <Badge className="bg-blue-600 text-white text-xs px-2 py-0.5 shadow-lg">YOU</Badge>
+                            </div>
+                          )}
+                          {/* NEXT badge */}
+                          {item.stepOrder === 3 && (
+                            <div className="absolute -top-2 -right-2">
+                              <Badge className="bg-purple-600 text-white text-xs px-2 py-0.5 shadow-lg">NEXT</Badge>
+                            </div>
+                          )}
                         </div>
                         <div className="mt-2 text-center">
                           <div className="text-sm font-medium text-gray-900">Client</div>
@@ -319,14 +391,23 @@ export function GraphOverlayModal({
 
           {/* Action Buttons */}
           <div className="flex items-center justify-between gap-3">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              disabled={isApproving || isRejecting}
-            >
-              <X className="h-4 w-4 mr-2" />
-              Close
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isApproving || isRejecting}
+              >
+                <X className="h-4 w-4 mr-2" />
+                Close
+                <kbd className="ml-2 px-1.5 py-0.5 text-xs bg-gray-100 border border-gray-300 rounded">Esc</kbd>
+              </Button>
+              
+              {/* Keyboard hints */}
+              <div className="text-xs text-gray-500">
+                Shortcuts: <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded">A</kbd> approve · 
+                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded">R</kbd> reject
+              </div>
+            </div>
 
             <div className="flex items-center gap-2">
               <Button
@@ -344,6 +425,7 @@ export function GraphOverlayModal({
                   <>
                     <XCircle className="h-4 w-4 mr-2" />
                     Reject
+                    <kbd className="ml-2 px-1.5 py-0.5 text-xs bg-gray-100 border border-gray-300 rounded text-gray-600">R</kbd>
                   </>
                 )}
               </Button>
@@ -362,6 +444,7 @@ export function GraphOverlayModal({
                   <>
                     <CheckCircle className="h-4 w-4 mr-2" />
                     Approve Now from Graph
+                    <kbd className="ml-2 px-1.5 py-0.5 text-xs bg-green-700 border border-green-800 rounded text-white">A</kbd>
                   </>
                 )}
               </Button>

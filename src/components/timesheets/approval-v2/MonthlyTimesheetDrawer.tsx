@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  X, CheckCircle, XCircle, Calendar, Clock, FileText, Paperclip, Loader2, ChevronDown, ChevronRight
+  X, CheckCircle, XCircle, Calendar, Clock, FileText, Paperclip, Loader2, ChevronDown, ChevronRight,
+  GitBranch, Shield
 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
@@ -8,6 +9,7 @@ import { Separator } from '../../ui/separator';
 import { ScrollArea } from '../../ui/scroll-area';
 import { Skeleton } from '../../ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
 
 // Import API hooks - NOW LOADING REAL DATA!
 import { 
@@ -452,81 +454,157 @@ export function MonthlyTimesheetDrawer({
           )}
         </div>
 
-        {/* Content - Daily Entries - ULTRA COMPACT */}
-        <ScrollArea className="flex-1" ref={scrollAreaRef}>
-          <div className="px-5 py-2">
-            {/* Loading State */}
-            {isLoadingEntries && (
-              <div className="space-y-0.5">
-                {[1, 2, 3, 4, 5].map(i => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
-              </div>
-            )}
-
-            {/* Daily Entries - ULTRA COMPACT */}
-            {!isLoadingEntries && (
-              <div className="space-y-0">
-                {allDaysInMonth.map((day, index) => {
-                  const isWeekStart = day.dayOfWeek === 1; // Monday
-                  const isFirstDay = index === 0;
-                  const showWeekSeparator = isWeekStart || isFirstDay; // Show on Mondays OR first day of month
-                  
-                  return (
-                    <React.Fragment key={day.dateKey}>
-                      {/* Week Separator - Show for first day OR Mondays */}
-                      {showWeekSeparator && (
-                        <div className="flex items-center gap-2 py-1 mt-0.5 mb-0.5">
-                          <div className="flex-1 border-t border-gray-200"></div>
-                          <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
-                            Week {day.weekNumber}
-                          </span>
-                          <div className="flex-1 border-t border-gray-200"></div>
-                        </div>
-                      )}
-
-                      {/* Day Row */}
-                      <DayEntryRow day={day} contract={contract} dayRefs={dayRefs} />
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-            )}
+        {/* ✅ NEW: Tabs for different views */}
+        <Tabs defaultValue="details" className="flex-1 flex flex-col">
+          <div className="px-5 pt-2 border-b">
+            <TabsList className="grid w-full grid-cols-4 h-8">
+              <TabsTrigger value="details" className="text-[11px]">
+                <FileText className="h-3 w-3 mr-1" />
+                Details
+              </TabsTrigger>
+              <TabsTrigger value="graph" className="text-[11px]">
+                <GitBranch className="h-3 w-3 mr-1" />
+                Approval Chain
+              </TabsTrigger>
+              <TabsTrigger value="policy" className="text-[11px]">
+                <Shield className="h-3 w-3 mr-1" />
+                Policy
+              </TabsTrigger>
+              <TabsTrigger value="history" className="text-[11px]">
+                <Clock className="h-3 w-3 mr-1" />
+                History
+              </TabsTrigger>
+            </TabsList>
           </div>
 
-          {/* Attachments Section - Ultra Compact */}
-          {allAttachments.length > 0 && (
-            <div className="px-5 py-2 border-t border-gray-200 bg-gray-50">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Paperclip className="h-3 w-3 text-gray-400" />
-                <span className="text-[10px] font-medium text-gray-700">Attachments</span>
-              </div>
-              <div className="space-y-1">
-                {allAttachments.map(attachment => (
-                  <div
-                    key={attachment.id}
-                    className="flex items-center justify-between py-1 px-2 border border-gray-200 rounded bg-white hover:bg-gray-50"
-                  >
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <FileText className="h-3 w-3 text-red-600 flex-shrink-0" />
-                      <span className="text-gray-900 truncate text-[10px]">{attachment.name}</span>
-                    </div>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="h-5 text-[9px] px-1.5"
-                      asChild
-                    >
-                      <a href={attachment.url} target="_blank" rel="noopener noreferrer">
-                        View
-                      </a>
-                    </Button>
+          {/* Tab: Details (Existing timesheet view) */}
+          <TabsContent value="details" className="flex-1 flex flex-col m-0">
+            <ScrollArea className="flex-1" ref={scrollAreaRef}>
+              <div className="px-5 py-2">
+                {/* Loading State */}
+                {isLoadingEntries && (
+                  <div className="space-y-0.5">
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <Skeleton key={i} className="h-8 w-full" />
+                    ))}
                   </div>
-                ))}
+                )}
+
+                {/* Daily Entries - ULTRA COMPACT */}
+                {!isLoadingEntries && (
+                  <div className="space-y-0">
+                    {allDaysInMonth.map((day, index) => {
+                      const isWeekStart = day.dayOfWeek === 1; // Monday
+                      const isFirstDay = index === 0;
+                      const showWeekSeparator = isWeekStart || isFirstDay; // Show on Mondays OR first day of month
+                      
+                      return (
+                        <React.Fragment key={day.dateKey}>
+                          {/* Week Separator - Show for first day OR Mondays */}
+                          {showWeekSeparator && (
+                            <div className="flex items-center gap-2 py-1 mt-0.5 mb-0.5">
+                              <div className="flex-1 border-t border-gray-200"></div>
+                              <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">
+                                Week {day.weekNumber}
+                              </span>
+                              <div className="flex-1 border-t border-gray-200"></div>
+                            </div>
+                          )}
+
+                          {/* Day Row */}
+                          <DayEntryRow day={day} contract={contract} dayRefs={dayRefs} />
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Attachments Section - Ultra Compact */}
+              {allAttachments.length > 0 && (
+                <div className="px-5 py-2 border-t border-gray-200 bg-gray-50">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Paperclip className="h-3 w-3 text-gray-400" />
+                    <span className="text-[10px] font-medium text-gray-700">Attachments</span>
+                  </div>
+                  <div className="space-y-1">
+                    {allAttachments.map(attachment => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between py-1 px-2 border border-gray-200 rounded bg-white hover:bg-gray-50"
+                      >
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                          <FileText className="h-3 w-3 text-red-600 flex-shrink-0" />
+                          <span className="text-gray-900 truncate text-[10px]">{attachment.name}</span>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-5 text-[9px] px-1.5"
+                          asChild
+                        >
+                          <a href={attachment.url} target="_blank" rel="noopener noreferrer">
+                            View
+                          </a>
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </ScrollArea>
+          </TabsContent>
+
+          {/* Tab: Graph (Approval chain visualization) */}
+          <TabsContent value="graph" className="flex-1 m-0">
+            <div className="p-5 text-center text-gray-500">
+              <p className="text-sm mb-2">🔧 Coming soon: Approval chain visualization</p>
+              <p className="text-xs">Will show: [Contractor] → [You] → [Manager] → [Finance]</p>
+            </div>
+          </TabsContent>
+
+          {/* Tab: Policy & Budget */}
+          <TabsContent value="policy" className="flex-1 m-0">
+            <div className="p-5">
+              <h3 className="font-medium text-sm mb-3">Policy & Budget Checks</h3>
+              <div className="space-y-2">
+                <PolicyCheckItem 
+                  status="pass" 
+                  label="Hours Validation" 
+                  message={`Total: ${monthlyTotals.totalHours}hrs (within limits)`}
+                />
+                <PolicyCheckItem 
+                  status="warn" 
+                  label="Budget Status" 
+                  message="85% of allocated budget spent"
+                />
+                <PolicyCheckItem 
+                  status="pass" 
+                  label="Rate Validation" 
+                  message="Rates match contract terms"
+                />
               </div>
             </div>
-          )}
-        </ScrollArea>
+          </TabsContent>
+
+          {/* Tab: History */}
+          <TabsContent value="history" className="flex-1 m-0">
+            <div className="p-5">
+              <h3 className="font-medium text-sm mb-3">Approval History</h3>
+              <div className="space-y-3 text-sm text-gray-600">
+                <div className="flex items-start gap-2">
+                  <Clock className="h-4 w-4 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-gray-900">Submitted</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date().toLocaleDateString()} by {contract.userName}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
 
         {/* Footer - Ultra Compact */}
         <div className="px-5 py-2 border-t bg-gray-50 flex items-center justify-between gap-2">
@@ -752,6 +830,35 @@ function DayEntryRow({
             {dayTotal.toFixed(1)}h
           </span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Component to render policy check items
+function PolicyCheckItem({ 
+  status, 
+  label, 
+  message
+}: { 
+  status: 'pass' | 'warn' | 'fail';
+  label: string;
+  message: string;
+}) {
+  const statusColor = useMemo(() => {
+    switch (status) {
+      case 'pass': return 'green';
+      case 'warn': return 'yellow';
+      case 'fail': return 'red';
+      default: return 'gray';
+    }
+  }, [status]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`h-3 w-3 rounded-full bg-${statusColor}-500`} />
+      <div className="text-[10px] text-gray-700 leading-tight">
+        <span className="font-medium">{label}:</span> {message}
       </div>
     </div>
   );

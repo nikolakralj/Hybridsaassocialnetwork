@@ -1,0 +1,1118 @@
+openapi: 3.0.3
+info:
+  title: WorkGraph Phase 6 - AI + Automation API
+  description: |
+    API endpoints for AI decision system and n8n workflow automation.
+    
+    **Phase 6 Features:**
+    - AI-powered approval routing (shadow/assist/auto modes)
+    - n8n workflow integration
+    - Event-driven architecture
+    - Webhook management
+    - Analytics & observability
+  version: 1.0.0
+  contact:
+    name: WorkGraph Engineering
+    email: engineering@workgraph.com
+
+servers:
+  - url: https://api.workgraph.com/v1
+    description: Production
+  - url: https://staging-api.workgraph.com/v1
+    description: Staging
+  - url: http://localhost:3000/v1
+    description: Local Development
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: AI Decisions
+    description: AI evaluation and decision management
+  - name: Policies
+    description: Approval policy configuration
+  - name: Webhooks
+    description: Webhook subscription management
+  - name: Workflows
+    description: n8n workflow templates and executions
+  - name: Analytics
+    description: AI performance and workflow analytics
+  - name: Admin
+    description: Administrative operations (kill switch, etc.)
+
+paths:
+  # ==========================================================================
+  # AI DECISIONS
+  # ==========================================================================
+  
+  /ai/evaluate:
+    post:
+      tags: [AI Decisions]
+      summary: Evaluate a subject with AI
+      description: |
+        Evaluates a timesheet/invoice/expense using AI rules and returns
+        a decision (approve/reject/flag) with confidence score.
+        
+        **Modes:**
+        - **shadow**: Logs decision without acting
+        - **assist**: Returns suggestion for human review
+        - **auto**: Executes decision if confidence ≥ threshold
+      operationId: evaluateWithAI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subjectType, subjectId, projectId]
+              properties:
+                subjectType:
+                  type: string
+                  enum: [timesheet, invoice, expense]
+                subjectId:
+                  type: string
+                  format: uuid
+                projectId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: AI evaluation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIDecision'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ai/decisions/{id}:
+    get:
+      tags: [AI Decisions]
+      summary: Get AI decision details
+      operationId: getAIDecision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: AI decision found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIDecision'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ai/decisions/{id}/explain:
+    get:
+      tags: [AI Decisions]
+      summary: Get human-readable explanation
+      description: Returns detailed explanation of why AI made this decision
+      operationId: explainAIDecision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Explanation generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decision:
+                    type: string
+                    enum: [approve, reject, flag, route]
+                  score:
+                    type: number
+                    format: float
+                  confidence:
+                    type: number
+                    format: float
+                  reason:
+                    type: string
+                    example: "Auto-approved: amount under $1k, no anomalies, contractor has 95% approval rate"
+                  features_used:
+                    type: array
+                    items:
+                      type: string
+                  rules_triggered:
+                    type: array
+                    items:
+                      type: string
+                  override_info:
+                    type: object
+                    properties:
+                      was_overridden:
+                        type: boolean
+                      human_decision:
+                        type: string
+                      human_user:
+                        type: string
+
+  # ==========================================================================
+  # POLICIES
+  # ==========================================================================
+  
+  /projects/{projectId}/policies:
+    get:
+      tags: [Policies]
+      summary: List policies for project
+      operationId: listPolicies
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [timesheet, invoice, expense]
+      responses:
+        '200':
+          description: Policies found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Policy'
+
+    post:
+      tags: [Policies]
+      summary: Create approval policy
+      operationId: createPolicy
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyInput'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /policies/{id}:
+    get:
+      tags: [Policies]
+      summary: Get policy by ID
+      operationId: getPolicy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Policy found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+
+    patch:
+      tags: [Policies]
+      summary: Update policy
+      operationId: updatePolicy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyInput'
+      responses:
+        '200':
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+
+  /policies/{id}/mode:
+    put:
+      tags: [Policies]
+      summary: Change policy mode
+      description: Switch between shadow/assist/auto modes
+      operationId: changePolicyMode
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [shadow, assist, auto]
+      responses:
+        '200':
+          description: Mode changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+
+  # ==========================================================================
+  # WEBHOOKS
+  # ==========================================================================
+  
+  /projects/{projectId}/webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhook subscriptions
+      operationId: listWebhooks
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Webhooks found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookSubscription'
+
+    post:
+      tags: [Webhooks]
+      summary: Create webhook subscription
+      operationId: createWebhook
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookSubscriptionInput'
+      responses:
+        '201':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+
+  /webhooks/{id}:
+    delete:
+      tags: [Webhooks]
+      summary: Delete webhook subscription
+      operationId: deleteWebhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Webhook deleted
+
+  /webhooks/{id}/test:
+    post:
+      tags: [Webhooks]
+      summary: Test webhook delivery
+      description: Sends a test event to verify webhook is working
+      operationId: testWebhook
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Test successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  statusCode:
+                    type: integer
+                  responseTime:
+                    type: number
+                  error:
+                    type: string
+
+  # ==========================================================================
+  # WORKFLOWS
+  # ==========================================================================
+  
+  /workflows/templates:
+    get:
+      tags: [Workflows]
+      summary: List available n8n templates
+      operationId: listWorkflowTemplates
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [invoice, notification, integration, escalation]
+      responses:
+        '200':
+          description: Templates found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkflowTemplate'
+
+  /workflows/templates/{id}/install:
+    post:
+      tags: [Workflows]
+      summary: Install workflow template
+      description: One-click install of pre-built n8n workflow
+      operationId: installWorkflowTemplate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId:
+                  type: string
+                  format: uuid
+                config:
+                  type: object
+                  description: Template-specific configuration
+      responses:
+        '201':
+          description: Template installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+
+  /workflows/executions:
+    get:
+      tags: [Workflows]
+      summary: List workflow executions
+      operationId: listWorkflowExecutions
+      parameters:
+        - name: projectId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [running, success, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Executions found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkflowExecution'
+
+  /workflows/executions/{id}:
+    get:
+      tags: [Workflows]
+      summary: Get workflow execution details
+      operationId: getWorkflowExecution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Execution found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowExecution'
+
+  # ==========================================================================
+  # ANALYTICS
+  # ==========================================================================
+  
+  /analytics/ai-performance:
+    get:
+      tags: [Analytics]
+      summary: Get AI performance metrics
+      operationId: getAIPerformance
+      parameters:
+        - name: projectId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: timeRange
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, 90d]
+            default: 7d
+      responses:
+        '200':
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPerformanceMetrics'
+
+  /analytics/workflow-metrics:
+    get:
+      tags: [Analytics]
+      summary: Get workflow execution metrics
+      operationId: getWorkflowMetrics
+      parameters:
+        - name: projectId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: timeRange
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, 90d]
+            default: 7d
+      responses:
+        '200':
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowMetrics'
+
+  # ==========================================================================
+  # ADMIN
+  # ==========================================================================
+  
+  /admin/tenants/{tenantId}/ai/disable:
+    post:
+      tags: [Admin]
+      summary: Emergency AI kill switch
+      description: |
+        Immediately disables AI auto-approval for a tenant.
+        Downgrades to assist mode. Use in case of critical errors.
+      operationId: disableAI
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  example: "Error rate >5% in last hour"
+                disabledBy:
+                  type: string
+                  example: "ops-team"
+      responses:
+        '200':
+          description: AI disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  previousMode:
+                    type: string
+                  newMode:
+                    type: string
+                    enum: [assist]
+                  affectedProjects:
+                    type: integer
+
+  /admin/ai/models:
+    get:
+      tags: [Admin]
+      summary: List AI model versions
+      operationId: listAIModels
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: modelType
+          in: query
+          schema:
+            type: string
+            enum: [rule_engine, gbdt, llm_router]
+      responses:
+        '200':
+          description: Models found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AIModelVersion'
+
+  /admin/ai/models/{id}/activate:
+    post:
+      tags: [Admin]
+      summary: Activate AI model version
+      description: Switch to a different model version
+      operationId: activateAIModel
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Model activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIModelVersion'
+
+  /admin/ai/retrain:
+    post:
+      tags: [Admin]
+      summary: Trigger model retraining
+      description: Starts background job to retrain AI model from recent data
+      operationId: retrainAIModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tenantId:
+                  type: string
+                  format: uuid
+                modelType:
+                  type: string
+                  enum: [gbdt]
+      responses:
+        '202':
+          description: Retraining job started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                  estimatedDuration:
+                    type: string
+                    example: "30 minutes"
+
+  # ==========================================================================
+  # CALLBACKS (FROM EXTERNAL SYSTEMS)
+  # ==========================================================================
+  
+  /callbacks/external:
+    post:
+      tags: [Webhooks]
+      summary: Receive callback from external system
+      description: |
+        Receives callbacks from QuickBooks, n8n, Jira, etc.
+        Must include proper signature verification.
+      operationId: receiveCallback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, projectId]
+              properties:
+                event:
+                  type: string
+                  example: "payment.received"
+                projectId:
+                  type: string
+                  format: uuid
+                payload:
+                  type: object
+      responses:
+        '200':
+          description: Callback processed
+        '401':
+          description: Invalid signature
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # AI Decision
+    AIDecision:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        approvalId:
+          type: string
+          format: uuid
+        modelVersionId:
+          type: string
+          format: uuid
+        features:
+          type: object
+          description: Input features used for decision
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        flags:
+          type: array
+          items:
+            type: string
+          example: ["rate_mismatch", "hours_spike"]
+        suggestedAction:
+          type: string
+          enum: [approve, reject, flag, route]
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        explanation:
+          type: object
+          properties:
+            reason:
+              type: string
+            features_used:
+              type: array
+              items:
+                type: string
+            rules_triggered:
+              type: array
+              items:
+                type: string
+        humanOverride:
+          type: boolean
+          nullable: true
+        humanDecision:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    # Policy
+    Policy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          enum: [timesheet, invoice, expense]
+        rules:
+          $ref: '#/components/schemas/PolicyRules'
+        mode:
+          type: string
+          enum: [shadow, assist, auto]
+        version:
+          type: integer
+        isActive:
+          type: boolean
+        modelVersionId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PolicyInput:
+      type: object
+      required: [scope, rules, mode]
+      properties:
+        scope:
+          type: string
+          enum: [timesheet, invoice, expense]
+        rules:
+          $ref: '#/components/schemas/PolicyRules'
+        mode:
+          type: string
+          enum: [shadow, assist, auto]
+
+    PolicyRules:
+      type: object
+      properties:
+        autoApproveMaxCents:
+          type: integer
+          example: 100000
+        autoApproveMinConfidence:
+          type: number
+          format: float
+          example: 0.85
+        rejectIfHoursOver:
+          type: integer
+          example: 80
+        flagIfRateChangePct:
+          type: number
+          format: float
+          example: 10
+        flagIfHoursChangePct:
+          type: number
+          format: float
+          example: 20
+        flagIfNewContractorDays:
+          type: integer
+          example: 30
+        anomalySensitivity:
+          type: string
+          enum: [low, medium, high]
+        autoApproveDailyCap:
+          type: integer
+          example: 10
+
+    # Webhook Subscription
+    WebhookSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          example: "approval.completed"
+        endpoint:
+          type: string
+          format: uri
+          example: "https://n8n.example.com/webhook/approval"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    WebhookSubscriptionInput:
+      type: object
+      required: [eventType, endpoint]
+      properties:
+        eventType:
+          type: string
+          example: "approval.completed"
+        endpoint:
+          type: string
+          format: uri
+        secret:
+          type: string
+          description: HMAC secret (auto-generated if not provided)
+
+    # Workflow Template
+    WorkflowTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          example: "Invoice Generator"
+        description:
+          type: string
+        category:
+          type: string
+          enum: [invoice, notification, integration, escalation]
+        author:
+          type: string
+        version:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        requiredConfig:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              type:
+                type: string
+                enum: [text, number, url, secret]
+
+    # Workflow Execution
+    WorkflowExecution:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        workflowName:
+          type: string
+        n8nExecutionId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [running, success, failed]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        meta:
+          type: object
+
+    # AI Performance Metrics
+    AIPerformanceMetrics:
+      type: object
+      properties:
+        timeRange:
+          type: string
+        totalDecisions:
+          type: integer
+        autoApprovalRate:
+          type: number
+          format: float
+          description: "% of items auto-approved"
+        agreementRate:
+          type: number
+          format: float
+          description: "% AI agrees with human"
+        overrideRate:
+          type: number
+          format: float
+          description: "% human overrides AI"
+        avgConfidence:
+          type: number
+          format: float
+        avgScore:
+          type: number
+          format: float
+        errorRate:
+          type: number
+          format: float
+        timeSavedHours:
+          type: number
+          format: float
+        flagDistribution:
+          type: object
+          additionalProperties:
+            type: integer
+
+    # Workflow Metrics
+    WorkflowMetrics:
+      type: object
+      properties:
+        timeRange:
+          type: string
+        totalExecutions:
+          type: integer
+        successRate:
+          type: number
+          format: float
+        failureRate:
+          type: number
+          format: float
+        avgExecutionTime:
+          type: number
+          format: float
+        p95ExecutionTime:
+          type: number
+          format: float
+        topWorkflows:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              executions:
+                type: integer
+              successRate:
+                type: number
+
+    # AI Model Version
+    AIModelVersion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        modelType:
+          type: string
+          enum: [rule_engine, gbdt, llm_router]
+        version:
+          type: string
+        config:
+          type: object
+        trainingDate:
+          type: string
+          format: date-time
+          nullable: true
+        metrics:
+          type: object
+          properties:
+            accuracy:
+              type: number
+            precision:
+              type: number
+            recall:
+              type: number
+            auc:
+              type: number
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    # Error Response
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        code:
+          type: string
+        details:
+          type: object
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    NotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

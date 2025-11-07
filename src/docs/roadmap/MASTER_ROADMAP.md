@@ -1,6 +1,6 @@
 # 🗺️ WorkGraph Master Roadmap
 
-**Last Updated:** 2025-10-31
+**Last Updated:** 2025-11-06
 
 ---
 
@@ -98,201 +98,88 @@ WorkGraph is a hybrid SaaS + social work network for technical freelancers with:
 
 ## 🚀 Next Phases
 
-### **Phase 5: Project Builder - Collaborative Setup + Compliance** ⭐ REFOCUSED
-**Goal:** Multi-party collaborative project setup with contracts, compliance, and gating
+### **Phase 5: Integration & Real Data** 🔄 IN PROGRESS
 
-**Why this pivot:** Builder becomes immediately useful for real teams setting up real projects, with compliance built-in from day 1.
+**Duration:** 2 weeks (10 working days)  
+**Status:** Days 1-5 complete (36%) | 13/13 features complete (100% of Days 1-5)  
+**Started:** November 3, 2025
+
+**Goals:**
+- Replace mock data with real Supabase database
+- Build global approvals workbench
+- Create graph overlay integration
+- Enable project creation with multi-party support
+
+**Milestones:**
+- **M5.1: Project Creation System** ✅ Complete (Day 1)
+- **M5.2: Policy Versioning** ✅ Complete (Day 2)
+- **M5.3: Global Approvals Workbench** ✅ Complete (Day 3)
+- **M5.4: Graph Overlay Integration** ✅ Complete (Day 4)
+- **M5.5: Keyboard Shortcuts + Enhancements** ✅ Complete (Day 5)
+- **M5.6: Project Approvals Tab** ⏳ Day 6
+- **M5.7: Deep-Links + Email Templates** ⏳ Day 7
+- **M5.8-M5.13: Database Integration** ⏳ Days 8-14
+
+**Exit Criteria:** [11/11 items in `/docs/roadmap/PHASE_5_SPRINT_GUIDE.md`]
+
+**Location:** `/docs/guides/PHASE_5_DAY_5_COMPLETE.md`
 
 ---
 
-#### **M5.1: Project Creation & Collaborative Canvas** (Week 1)
-**Goal:** Multiple stakeholders can co-create a project graph
+### **Phase 6: AI + Automation Foundation** 📋 PLANNED
 
-**Tasks:**
-- [ ] **Project Creation Wizard**
-  - Name, region, currency, start/end dates
-  - Default work week configuration
-  - Add Parties from existing company profiles
-  - Invite new parties by email
-  
-- [ ] **Real-time Collaboration**
-  - Presence cursors (see who's editing)
-  - Optimistic locking (prevent overwrites)
-  - Activity feed (who changed what)
-  
-- [ ] **Roles & Permissions**
-  - Owner, Editor, Contributor, Commenter, Viewer
-  - Role-based UI gating (what each role can do)
-  - Permission matrix enforcement
-  
-- [ ] **Comments & Mentions**
-  - Pin comments to nodes/edges
-  - @mention other collaborators
-  - Resolve/unresolve threads
-  
-- [ ] **Publish Draft**
-  - "Publish Draft" creates Policy v1
-  - Read-only link for external stakeholders
-  - Change tracking
+**Duration:** 6-8 weeks  
+**Status:** Documented, ready after Phase 5  
+**Dependencies:** Phase 5 complete (real database integration)
+
+**Goals:**
+- AI-powered approval routing (shadow → assist → auto)
+- n8n workflow automation (Slack, email, QuickBooks)
+- Event-driven architecture (outbox pattern, webhooks)
+- Observability & compliance (audit logs, metrics, kill switches)
+
+**Key Features:**
+- **Week 1:** Event infrastructure + signed webhooks
+- **Week 2:** AI shadow mode (rule engine + anomaly detection)
+- **Week 3:** AI assist mode (human in loop)
+- **Week 4:** AI auto mode (supervised automation)
+- **Week 5:** n8n template library (5+ ready-to-use workflows)
+- **Week 6:** Observability + hardening (metrics, DLQ, audit UI)
+- **Weeks 7-8:** Polish (graph versioning, GBDT model training)
 
 **Exit Criteria:**
-- ✅ Two orgs can co-edit one project graph
-- ✅ Presence shows both users
-- ✅ Comments work with @mentions
-- ✅ Commenters can't change nodes/edges
-- ✅ Publish creates Policy v1
+- ✅ At least 1 n8n workflow live in production
+- ✅ AI auto-approves ≥10% of submitted items
+- ✅ Zero incorrect auto-approvals in 7 days
+- ✅ SLA breach escalation working
+- ✅ 5+ n8n templates ready to use
+- ✅ Webhook delivery success rate ≥99%
+- ✅ Kill switch tested and documented
+- ✅ Security review passed
 
----
+**Architecture:**
+```
+WorkGraph → Rules/AI Service → Integration Broker → n8n
+              ↓                      ↓                ↓
+         Auto-approve            Webhooks      External APIs
+         Smart routing           Callbacks     (Slack, QB, etc.)
+         Anomaly flags           Retries
+```
 
-#### **M5.2: Contracts & Privacy** (Week 2)
-**Goal:** Add real contract nodes with field-level visibility
+**Documentation:**
+- **Full Spec:** `/docs/roadmap/PHASE_6_AI_AUTOMATION.md`
+- **AI Architecture:** `/docs/architecture/AI_DECISION_ARCHITECTURE.md`
+- **n8n Patterns:** `/docs/architecture/N8N_INTEGRATION_PATTERNS.md`
+- **Safety Guidelines:** `/docs/guides/AI_SAFETY_GUIDELINES.md`
+- **Database Migrations:** `/docs/database/PHASE_6_MIGRATIONS.sql`
+- **API Contracts:** `/docs/api/PHASE_6_API_CONTRACTS.yaml`
 
-**Tasks:**
-- [ ] **Contract Node Types**
-  - FrameworkContract (MSA)
-  - NDA
-  - SOW/ProjectContract
-  - RateCard
-  
-- [ ] **Contract Edges**
-  - Between (Party↔Contract)
-  - FrameworkOf (MSA↔SOW)
-  - Attaches (SOW↔RateCard)
-  
-- [ ] **Field-level Visibility**
-  - Rates hidden from non-signatories
-  - Markup visibility rules
-  - Document attachments
-  
-- [ ] **E-sign Placeholder**
-  - Request signature workflow
-  - Signature status tracking
-  - Document version control
-
-**Exit Criteria:**
-- ✅ Create MSA between Agency↔Company, then SOW
-- ✅ Policy compiles with FrameworkOf linkage
-- ✅ Agency/Client don't see Contractor↔Company rates via API
-
----
-
-#### **M5.3: Compliance Pack** (Week 3)
-**Goal:** Document requirements with gating logic
-
-**Tasks:**
-- [ ] **Compliance Node Types**
-  - ComplianceRequirement (template)
-  - ComplianceItem (uploaded doc)
-  
-- [ ] **Requirement Categories**
-  - Person: A1, right-to-work, visa, background check
-  - Party: TPLI insurance, W-9/W-8BEN, GDPR DPA, SOC 2
-  - Assignment: client induction, site access
-  
-- [ ] **Compliance Edges**
-  - Requires (Party/Person→Requirement)
-  - Satisfies (Item→Requirement)
-  
-- [ ] **Gating Rules**
-  - Can't assign if A1 expired
-  - Can't submit timesheet if missing docs
-  - Can't invoice without vendor insurance
-  
-- [ ] **Status & Reminders**
-  - Valid / Expiring / Missing / Rejected badges
-  - T-30 and T-7 day expiry reminders
-  - Verification workflow
-
-**Exit Criteria:**
-- ✅ If John's A1 expired, Simulator blocks submission with clear reason
-- ✅ If Vendor's TPLI missing, invoice blocked
-- ✅ "Request document" button assigns task
-
----
-
-#### **M5.4: Simulator & Publish Flow** (Week 4)
-**Goal:** Test with compliance, version, and share
-
-**Tasks:**
-- [ ] **Simulator with Compliance**
-  - Compliance checks before Step 1
-  - Show which requirements failed
-  - Preview gating logic
-  
-- [ ] **Versioning** (reuse Day 1-2 work!)
-  - "Publish v2" creates new version
-  - In-flight items stay on v1
-  - New items use v2
-  
-- [ ] **Share for Review**
-  - Read-only link with commenter access
-  - Client/Agency stakeholders can review
-  - Approval sign-off tracking
-
-**Exit Criteria:**
-- ✅ Publish v2 keeps existing items on v1
-- ✅ "Share for Review" link works
-- ✅ Client can comment but not edit
-- ✅ Simulator shows compliance blocks
-
----
-
-**Priority:** CRITICAL  
-**Timeline:** 4 weeks (4 milestones)  
-**Benefit:** Collaborative project setup with built-in compliance
-
----
-
-### **Phase 6: Commercial Controls & Advanced Features**
-**Goal:** Enterprise-grade financial controls and policy features
-
-#### **Commercial Controls:**
-- [ ] **Framework Contracts (MSAs) & Child SOWs**
-  - New node type: FrameworkContract
-  - Link to SOW/Project contracts with inheritance
-  - Expiry alerts and escalation formula support (e.g., +3%/yr)
-  - Visibility: signatories only
-- [ ] **Budgets & POs with 3-way match**
-  - PO lines ↔ SOW ↔ Invoice with tolerances
-  - Draw-down tracking and overspend blocks (with override + audit)
-  - Cannot create invoice when PO consumed unless override logged
-  - Dashboard shows remaining by PO line
-- [ ] **Markups with secrecy**
-  - Define markup at Agency level
-  - Client sees aggregate total, not contractor rates
-  - "No rates" guaranteed via API/exports, not just UI
-- [ ] **Multi-currency & FX lock**
-  - Lock FX rate at invoice time
-  - Revaluation on payment
-  - Basic tax handling
-
-#### **Advanced Policy Features:**
-- [ ] **Conditional approval rules**
-  - If hours > X, require extra approval
-  - If amount > budget threshold, escalate
-  - Weekend/holiday/overtime detection
-- [ ] **Budget tracking per contract**
-  - Real-time burn rate
-  - Forecast overruns
-  - Auto-alerts at 80%/90%/100%
-- [ ] **Custom approval criteria**
-  - Business rule engine
-  - Complex AND/OR conditions
-  - Time-based rules (weekends, holidays)
-- [ ] **Validator Agent (AI, opt-in)**
-  - Observes Submitted events
-  - Proposes blocks/warnings (expired MSA, overtime, PO near limit)
-  - Human-in-loop via "Action Inbox"
-
-#### **DoD (Definition of Done):**
-- ✅ Cannot create invoice when PO consumed unless override logged
-- ✅ Dashboard shows remaining by PO line
-- ✅ Client sees aggregate only, no contractor rates in any export
-- ✅ FX rotation without downtime
-- ✅ Conditional rules execute correctly in simulation
-
-**Priority:** HIGH  
-**Benefit:** Handles complex real-world commercial scenarios
+**Business Impact:**
+- Reduce manual approval time by 60%
+- Auto-generate invoices in QuickBooks
+- Real-time Slack notifications
+- Automated SLA breach escalation
+- 100% audit compliance maintained
 
 ---
 

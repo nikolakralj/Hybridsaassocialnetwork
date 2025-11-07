@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Users, Building2, FileText, MoreVertical, Eye, CheckCircle, XCircle, Download, MessageSquare, History } from 'lucide-react';
+import { ChevronDown, ChevronRight, Users, Building2, FileText, MoreVertical, Eye, CheckCircle, XCircle, Download, MessageSquare, History, Network } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Checkbox } from '../../ui/checkbox';
 import { Badge } from '../../ui/badge';
@@ -37,6 +37,7 @@ interface OrganizationGroupedTableProps {
   onOpenDrawer?: (period: TimesheetPeriod, contract: ProjectContract) => void;
   onQuickApprove?: (periodId: string, contractId: string) => void;
   onQuickReject?: (periodId: string, contractId: string) => void;
+  onViewInGraph?: (userId: string, submittedAt?: string) => void; // NEW: Deep link to graph
   viewMode?: 'month' | 'week'; // NEW: Control whether to show monthly or weekly periods
   filterPeriodStart?: Date; // NEW: Filter to only show periods within this range
   filterPeriodEnd?: Date; // NEW: Filter to only show periods within this range
@@ -50,6 +51,7 @@ export function OrganizationGroupedTable({
   onOpenDrawer,
   onQuickApprove,
   onQuickReject,
+  onViewInGraph,
   viewMode = 'week', // DEFAULT: Show weekly periods
   filterPeriodStart,
   filterPeriodEnd,
