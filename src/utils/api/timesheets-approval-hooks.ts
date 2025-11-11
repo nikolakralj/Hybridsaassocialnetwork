@@ -443,24 +443,27 @@ export function useApprovalsData() {
   const data: OrganizationWithData[] = useMemo(() => {
     if (!organizations || !contracts) return [];
 
-    return organizations.map(org => {
-      const orgContracts = contracts
-        .filter(c => c.organizationId === org.id)
-        .map((contract, index) => {
-          const periodResult = periodResults[contracts.indexOf(contract)];
-          const periods = periodResult?.data || [];
-          
-          return {
-            ...contract,
-            periods,
-          };
-        });
+    return organizations
+      .map(org => {
+        const orgContracts = contracts
+          .filter(c => c.organizationId === org.id)
+          .map((contract, index) => {
+            const periodResult = periodResults[contracts.indexOf(contract)];
+            const periods = periodResult?.data || [];
+            
+            return {
+              ...contract,
+              periods,
+            };
+          });
 
-      return {
-        ...org,
-        contracts: orgContracts,
-      };
-    });
+        return {
+          ...org,
+          contracts: orgContracts,
+        };
+      })
+      // ✅ FIX: Filter out organizations with no contracts (prevents duplicates)
+      .filter(org => org.contracts.length > 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizations, contracts, periodResultsKey]);
 

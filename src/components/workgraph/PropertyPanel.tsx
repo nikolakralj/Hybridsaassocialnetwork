@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Trash2, Building2 } from 'lucide-react';
+import { X, Trash2, Building2, ChevronDown, ChevronRight, Activity, Users, DollarSign, Clock, AlertCircle, Copy, CheckCircle2, ExternalLink, Calendar } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -7,7 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from '../ui/checkbox';
 import { Separator } from '../ui/separator';
 import { Badge } from '../ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { CompanySearchDialog } from './CompanySearchDialog';
+import { useNodeStats, useEdgeStats, formatTimeAgo, formatHoursProgress } from '../../hooks/useNodeStats';
+import { useMonthContextSafe } from '../../contexts/MonthContext';
 import type { BaseNode, BaseEdge } from '../../types/workgraph';
 
 interface PropertyPanelProps {
@@ -17,6 +20,8 @@ interface PropertyPanelProps {
   onUpdateEdge: (edgeId: string, updates: any) => void;
   onDelete: () => void;
   allParties: BaseNode[];
+  allNodes?: BaseNode[];
+  allEdges?: any[];
 }
 
 export function PropertyPanel({
@@ -26,6 +31,8 @@ export function PropertyPanel({
   onUpdateEdge,
   onDelete,
   allParties,
+  allNodes = [],
+  allEdges = [],
 }: PropertyPanelProps) {
   if (!node && !edge) return null;
 
@@ -63,8 +70,8 @@ export function PropertyPanel({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {node && <NodeProperties node={node} onUpdate={onUpdateNode} allParties={allParties} />}
-        {edge && <EdgeProperties edge={edge} onUpdate={onUpdateEdge} allParties={allParties} />}
+        {node && <NodeProperties node={node} onUpdate={onUpdateNode} allParties={allParties} allNodes={allNodes} allEdges={allEdges} />}
+        {edge && <EdgeProperties edge={edge} onUpdate={onUpdateEdge} allParties={allParties} allEdges={allEdges} />}
       </div>
     </div>
   );
@@ -73,17 +80,120 @@ export function PropertyPanel({
 function NodeProperties({ 
   node, 
   onUpdate, 
-  allParties 
+  allParties,
+  allNodes,
+  allEdges,
 }: { 
   node: BaseNode; 
   onUpdate: (id: string, updates: any) => void;
   allParties: BaseNode[];
+  allNodes: BaseNode[];
+  allEdges: any[];
 }) {
   const [showCompanySearch, setShowCompanySearch] = useState(false);
+  const [showStats, setShowStats] = useState(true); // Stats section open by default
   const nameInputRef = React.useRef<HTMLInputElement>(null);
   const partyRoleInputRef = React.useRef<HTMLInputElement>(null);
   const personRoleInputRef = React.useRef<HTMLInputElement>(null);
   const emailInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Phase 5: Fetch node stats from database
+  const { stats, loading: statsLoading, error: statsError } = useNodeStats(node, allNodes, allEdges);
+  
+  // Detect if database is not set up
+  const isDatabaseError = statsError?.message?.includes('PGRST205') || 
+                         statsError?.message?.includes('not find') ||
+                         statsError?.message?.includes('schema cache');
+  
+  const [copiedSetupSQL, setCopiedSetupSQL] = useState(false);
+  
+  const setupSQL = `-- Run this in Supabase SQL Editor
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS organizations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('company', 'agency', 'freelancer')),
+  logo TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_contracts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  user_name TEXT NOT NULL,
+  user_role TEXT NOT NULL,
+  organization_id UUID REFERENCES organizations(id),
+  project_id UUID NOT NULL,
+  contract_type TEXT NOT NULL,
+  hourly_rate DECIMAL(10,2),
+  start_date DATE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS timesheet_periods (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  contract_id UUID NOT NULL REFERENCES project_contracts(id),
+  week_start_date DATE NOT NULL,
+  week_end_date DATE NOT NULL,
+  total_hours DECIMAL(5,2) DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  submitted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_contracts_user ON project_contracts(user_id);
+CREATE INDEX idx_periods_contract ON timesheet_periods(contract_id);`;
+
+  const copySetupSQL = () => {
+    // Try modern clipboard API first
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(setupSQL)
+        .then(() => {
+          setCopiedSetupSQL(true);
+          setTimeout(() => setCopiedSetupSQL(false), 2000);
+        })
+        .catch((err) => {
+          console.warn('Clipboard API failed, using fallback:', err);
+          fallbackCopyTextToClipboard(setupSQL);
+        });
+    } else {
+      // Fallback for older browsers or non-secure contexts
+      fallbackCopyTextToClipboard(setupSQL);
+    }
+  };
+
+  // Fallback copy method for browsers that don't support clipboard API
+  const fallbackCopyTextToClipboard = (text: string) => {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.width = '2em';
+    textArea.style.height = '2em';
+    textArea.style.padding = '0';
+    textArea.style.border = 'none';
+    textArea.style.outline = 'none';
+    textArea.style.boxShadow = 'none';
+    textArea.style.background = 'transparent';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        setCopiedSetupSQL(true);
+        setTimeout(() => setCopiedSetupSQL(false), 2000);
+      }
+    } catch (err) {
+      console.error('Fallback copy error:', err);
+    }
+    
+    document.body.removeChild(textArea);
+  };
 
   const handleChange = (field: string, value: any) => {
     onUpdate(node.id, { [field]: value });
@@ -632,6 +742,263 @@ function NodeProperties({
         </>
       )}
 
+      {/* Phase 5: Stats & Activity Section */}
+      {stats && (
+        <>
+          <Separator />
+          <Collapsible open={showStats} onOpenChange={setShowStats}>
+            <CollapsibleTrigger className="flex items-center justify-between w-full p-2 rounded hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-blue-600" />
+                <Label className="text-sm font-medium cursor-pointer">Stats & Activity</Label>
+                <Badge variant="outline" className="text-xs bg-green-50 border-green-200 text-green-700">
+                  Phase 5 🔄
+                </Badge>
+              </div>
+              {showStats ? (
+                <ChevronDown className="h-4 w-4 text-gray-500" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-gray-500" />
+              )}
+            </CollapsibleTrigger>
+            
+            <CollapsibleContent className="mt-2 space-y-2">
+              {statsLoading ? (
+                <div className="text-xs text-gray-500 italic p-2">Loading stats...</div>
+              ) : (
+                <>
+                  {/* Person Stats */}
+                  {node.type === 'person' && 'totalHoursWorked' in stats && (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600 flex items-center gap-2">
+                          <Clock className="h-3 w-3" />
+                          Total Hours Worked
+                        </span>
+                        <span className="font-medium">{stats.totalHoursWorked.toLocaleString()} hrs</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">This Month</span>
+                        <span className="font-medium">{stats.totalHoursThisMonth} hrs</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Current Week</span>
+                        <span className="font-medium">
+                          {stats.currentWeekHours} / {stats.weeklyLimit} hrs
+                          <span className="text-xs text-gray-500 ml-1">
+                            ({Math.round((stats.currentWeekHours / stats.weeklyLimit) * 100)}%)
+                          </span>
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Current Month</span>
+                        <span className="font-medium">
+                          {stats.currentMonthHours} / {stats.monthlyLimit} hrs
+                          <span className="text-xs text-gray-500 ml-1">
+                            ({Math.round((stats.currentMonthHours / stats.monthlyLimit) * 100)}%)
+                          </span>
+                        </span>
+                      </div>
+                      
+                      {stats.lastTimesheetSubmitted && (
+                        <div className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                          <span className="text-blue-700">Last Timesheet</span>
+                          <span className="font-medium text-blue-900">{formatTimeAgo(stats.lastTimesheetSubmitted)}</span>
+                        </div>
+                      )}
+                      
+                      {stats.pendingTimesheets > 0 && (
+                        <div className="flex items-center justify-between p-2 bg-yellow-50 rounded">
+                          <span className="text-yellow-700">Pending Timesheets</span>
+                          <Badge variant="outline" className="bg-yellow-100 border-yellow-300 text-yellow-900">
+                            {stats.pendingTimesheets}
+                          </Badge>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Party Stats */}
+                  {node.type === 'party' && 'totalEmployees' in stats && (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600 flex items-center gap-2">
+                          <Users className="h-3 w-3" />
+                          Total Employees
+                        </span>
+                        <span className="font-medium">{stats.totalEmployees}</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Active Contracts</span>
+                        <span className="font-medium">{stats.totalContracts}</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Total Hours (Month)</span>
+                        <span className="font-medium">{stats.totalHoursThisMonth.toLocaleString()} hrs</span>
+                      </div>
+                      
+                      {stats.lastActivity && (
+                        <div className="flex items-center justify-between p-2 bg-green-50 rounded">
+                          <span className="text-green-700">Last Activity</span>
+                          <span className="font-medium text-green-900">{formatTimeAgo(stats.lastActivity)}</span>
+                        </div>
+                      )}
+                      
+                      {stats.employeeNames.length > 0 && (
+                        <div className="p-2 bg-blue-50 rounded">
+                          <div className="text-xs text-blue-700 font-medium mb-1">Employees:</div>
+                          <div className="text-xs text-blue-900">
+                            {stats.employeeNames.slice(0, 3).join(', ')}
+                            {stats.employeeNames.length > 3 && ` +${stats.employeeNames.length - 3} more`}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Contract Stats */}
+                  {node.type === 'contract' && 'totalHoursWorked' in stats && (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600 flex items-center gap-2">
+                          <DollarSign className="h-3 w-3" />
+                          Total Billed
+                        </span>
+                        <span className="font-medium">${stats.totalAmountBilled.toLocaleString()}</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Total Hours Worked</span>
+                        <span className="font-medium">{stats.totalHoursWorked.toLocaleString()} hrs</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Budget Utilization</span>
+                        <span className="font-medium">
+                          {stats.budgetUtilization.toFixed(1)}%
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Current Week</span>
+                        <span className="font-medium">{stats.currentWeekHours} hrs</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-gray-600">Current Month</span>
+                        <span className="font-medium">{stats.currentMonthHours} hrs</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between p-2 bg-purple-50 rounded">
+                        <span className="text-purple-700">Workers on Contract</span>
+                        <span className="font-medium text-purple-900">{stats.workersCount}</span>
+                      </div>
+                      
+                      {stats.workerNames.length > 0 && (
+                        <div className="p-2 bg-blue-50 rounded">
+                          <div className="text-xs text-blue-700 font-medium mb-1">Workers:</div>
+                          <div className="text-xs text-blue-900">
+                            {stats.workerNames.join(', ')}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        </>
+      )}
+
+      {/* Database Error Handling */}
+      {isDatabaseError && (
+        <>
+          <Separator />
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-red-900">
+                  Database Error
+                </div>
+                <div className="text-xs text-red-700">
+                  {statsError?.message || 'An error occurred while fetching stats.'}
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Copy className="h-4 w-4 text-gray-500" />
+                <Label className="text-sm font-medium">Setup SQL</Label>
+              </div>
+              <p className="text-xs text-gray-500">
+                Run the following SQL in your Supabase SQL Editor to set up the necessary tables:
+              </p>
+              
+              <div className="p-2 bg-gray-50 rounded">
+                <pre className="text-xs text-gray-700">
+                  {setupSQL}
+                </pre>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={copySetupSQL}
+                  className="text-sm"
+                >
+                  {copiedSetupSQL ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-green-600 mr-2" />
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4 text-gray-500 mr-2" />
+                      Copy SQL
+                    </>
+                  )}
+                </Button>
+                
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => {
+                    // Navigate to setup page
+                    window.dispatchEvent(new CustomEvent('navigate', { detail: 'setup' }));
+                  }}
+                  className="text-sm bg-blue-600 hover:bg-blue-700"
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Go to Setup Page
+                </Button>
+              </div>
+              
+              <p className="text-xs text-gray-500 mt-2">
+                Or open the{' '}
+                <a
+                  href="https://supabase.com/dashboard/project/_/sql/new"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  Supabase SQL Editor
+                </a>
+                {' '}directly
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Company Search Dialog */}
       {node.type === 'party' && (
         <CompanySearchDialog
@@ -648,10 +1015,12 @@ function EdgeProperties({
   edge,
   onUpdate,
   allParties,
+  allEdges,
 }: {
   edge: BaseEdge;
   onUpdate: (id: string, updates: any) => void;
   allParties: BaseNode[];
+  allEdges: any[];
 }) {
   const handleChange = (field: string, value: any) => {
     onUpdate(edge.id, { [field]: value });

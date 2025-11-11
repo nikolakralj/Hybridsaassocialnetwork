@@ -1,21 +1,15 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { 
-  ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus, 
-  CheckCircle2, Clock, AlertCircle, TrendingUp, TrendingDown,
-  Download, Send, Eye, Zap, Copy, LayoutList, GripVertical
-} from "lucide-react";
-import { Button } from "../ui/button";
-import { Card } from "../ui/card";
-import { Badge } from "../ui/badge";
-import { EnhancedDayEntryModal } from "./EnhancedDayEntryModal";
-import { toast } from "sonner@2.0.3";
-import { DndProvider, useDrag, useDrop } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
-import { startOfMonth, endOfMonth } from 'date-fns';
-
-// ✅ Import database hooks
-import { useTimesheetEntries, useSaveTimesheetEntry, useBulkSaveTimesheetEntries, formatDateForAPI, entriesToDateMap } from '../../utils/api/timesheets-hooks';
-import type { TimesheetEntry } from '../../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Copy, Plus, List, LayoutGrid } from 'lucide-react';
+import { Button } from '../ui/button';
+import { Badge } from '../ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import { toast } from 'sonner';
+import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSaturday, isSunday, isWithinInterval, addMonths, subMonths } from 'date-fns';
+import { TimesheetEntryDialog } from './TimesheetEntryDialog';
+import { ApplyToOthersDialog } from './ApplyToOthersDialog';
+import { useTimesheetEntries, useTimesheetPeriods } from '../../utils/api/timesheets-hooks';
+import type { TimesheetEntry as BaseEntry } from '../../utils/api/timesheets-hooks';
+import { useMonthContextSafe } from '../../contexts/MonthContext';
 
 type WorkType = "regular" | "travel" | "overtime" | "oncall";
 
@@ -231,7 +225,9 @@ function TimesheetCalendarContent({
   userId = 'user-freelancer-3', // ✅ CHANGED: Default to James Kim for testing
   companyId = 'company-1' // ✅ NEW: Default to company-1
 }: TimesheetCalendarViewProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // ✅ Use shared month context instead of local state
+  const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
+  const currentDate = selectedMonth;
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [showDayModal, setShowDayModal] = useState(false);
   
@@ -374,11 +370,11 @@ function TimesheetCalendarContent({
   };
 
   const handlePreviousMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
+    setSelectedMonth(new Date(year, month - 1, 1));
   };
 
   const handleNextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
+    setSelectedMonth(new Date(year, month + 1, 1));
   };
 
   const handleDayClick = (date: Date) => {

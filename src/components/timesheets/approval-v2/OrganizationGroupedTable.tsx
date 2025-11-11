@@ -204,8 +204,7 @@ export function OrganizationGroupedTable({
             {/* Organization Header */}
             <div className="bg-gray-50 px-4 py-3 flex items-center gap-3 hover:bg-gray-100 transition-colors">
               <Checkbox
-                checked={allSelected}
-                {...(someSelected && !allSelected ? { indeterminate: true } : {})}
+                checked={someSelected && !allSelected ? "indeterminate" : allSelected}
                 onCheckedChange={(checked) => {
                   console.log('✅ Org checkbox clicked:', org.name, 'checked:', checked);
                   safeOnToggleOrganization(allContractIds);
@@ -424,6 +423,14 @@ export function OrganizationGroupedTable({
                                       View Details
                                     </DropdownMenuItem>
                                     
+                                    <DropdownMenuItem onClick={(e) => {
+                                      e.stopPropagation();
+                                      onViewInGraph?.(contract.userId, monthlyPeriods[0].submittedAt);
+                                    }}>
+                                      <Network className="mr-2 h-4 w-4" />
+                                      View on graph
+                                    </DropdownMenuItem>
+                                    
                                     {monthlyPeriods[0].status === 'pending' && (
                                       <>
                                         <DropdownMenuItem 
@@ -579,6 +586,14 @@ export function OrganizationGroupedTable({
                                       View Details
                                     </DropdownMenuItem>
                                     
+                                    <DropdownMenuItem onClick={(e) => {
+                                      e.stopPropagation();
+                                      onViewInGraph?.(contract.userId, period.submittedAt);
+                                    }}>
+                                      <Network className="mr-2 h-4 w-4" />
+                                      View on graph
+                                    </DropdownMenuItem>
+                                    
                                     {period.status === 'pending' && (
                                       <>
                                         <DropdownMenuItem 
@@ -649,7 +664,10 @@ export function OrganizationGroupedTable({
       {organizations.length === 0 && (
         <div className="px-4 py-12 text-center text-gray-500">
           <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-          <p className="text-sm">No timesheets match the selected filters</p>
+          <p className="text-sm mb-2">No timesheets match the selected filters</p>
+          <p className="text-xs text-muted-foreground">
+            Once contractors submit timesheets, you'll see them here with approval options
+          </p>
         </div>
       )}
     </div>

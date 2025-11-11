@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { Skeleton } from "./ui/skeleton";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
+import { MonthProvider } from "../contexts/MonthContext";
 
 // Lazy load WorkGraphBuilder for performance
 const WorkGraphBuilder = lazy(() => import("./workgraph/WorkGraphBuilder").then(m => ({ default: m.WorkGraphBuilder })));
@@ -224,158 +225,160 @@ export function ProjectWorkspace({
 
       {/* Modular Tabs */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ModuleId)}>
-          {/* Tab List with (+) Button */}
-          <div className="flex items-center gap-2 mb-6">
-            <TabsList className="flex-1">
-              {enabledModules.map((module) => {
-                const Icon = module.icon;
-                return (
-                  <TabsTrigger 
-                    key={module.id} 
-                    value={module.id}
-                    className="gap-2 relative group"
-                  >
-                    <Icon className="w-4 h-4" />
-                    {module.name}
-                    
-                    {/* Remove button (only for optional modules) */}
-                    {module.category === "optional" && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleModule(module.id);
-                        }}
-                        className="ml-1 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 rounded-sm p-0.5 apple-transition"
-                        title={`Remove ${module.name}`}
-                      >
-                        <X className="w-3 h-3 text-destructive" />
-                      </button>
-                    )}
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-
-            {/* Add Module Button */}
-            <Dialog open={isAddModuleOpen} onOpenChange={setIsAddModuleOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2 flex-shrink-0">
-                  <Plus className="w-4 h-4" />
-                  Add Module
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add Module to Project</DialogTitle>
-                  <DialogDescription>
-                    Customize this project workspace by adding modules that fit your workflow
-                  </DialogDescription>
-                </DialogHeader>
-                
-                <div className="space-y-3 mt-4">
-                  {availableModules.length > 0 ? (
-                    availableModules.map((module) => {
-                      const Icon = module.icon;
-                      return (
+        <MonthProvider>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ModuleId)}>
+            {/* Tab List with (+) Button */}
+            <div className="flex items-center gap-2 mb-6">
+              <TabsList className="flex-1">
+                {enabledModules.map((module) => {
+                  const Icon = module.icon;
+                  return (
+                    <TabsTrigger 
+                      key={module.id} 
+                      value={module.id}
+                      className="gap-2 relative group"
+                    >
+                      <Icon className="w-4 h-4" />
+                      {module.name}
+                      
+                      {/* Remove button (only for optional modules) */}
+                      {module.category === "optional" && (
                         <button
-                          key={module.id}
-                          onClick={() => handleAddModule(module.id)}
-                          className="w-full p-4 rounded-lg border border-border hover:border-accent-brand hover:bg-accent/30 apple-transition text-left flex items-start gap-3 group"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleModule(module.id);
+                          }}
+                          className="ml-1 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 rounded-sm p-0.5 apple-transition"
+                          title={`Remove ${module.name}`}
                         >
-                          <div className="w-10 h-10 rounded-lg bg-accent-brand/10 flex items-center justify-center flex-shrink-0 group-hover:bg-accent-brand/20 apple-transition">
-                            <Icon className="w-5 h-5 text-accent-brand" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <p className="font-semibold m-0">{module.name}</p>
-                              {module.comingSoon && (
-                                <Badge variant="secondary" className="text-xs">
-                                  Coming Soon
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground m-0">
-                              {module.description}
-                            </p>
-                          </div>
-                          <Plus className="w-5 h-5 text-muted-foreground group-hover:text-accent-brand flex-shrink-0 apple-transition" />
+                          <X className="w-3 h-3 text-destructive" />
                         </button>
-                      );
-                    })
-                  ) : (
-                    <div className="text-center py-12">
-                      <CheckSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="mb-2">All modules enabled!</h3>
-                      <p className="text-sm text-muted-foreground">
-                        You're using all available modules for this project.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
+                      )}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
 
-          {/* Tab Content */}
-          <TabsContent value="overview" className="space-y-6">
-            <OverviewModule projectName={projectName} />
-          </TabsContent>
+              {/* Add Module Button */}
+              <Dialog open={isAddModuleOpen} onOpenChange={setIsAddModuleOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2 flex-shrink-0">
+                    <Plus className="w-4 h-4" />
+                    Add Module
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add Module to Project</DialogTitle>
+                    <DialogDescription>
+                      Customize this project workspace by adding modules that fit your workflow
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  <div className="space-y-3 mt-4">
+                    {availableModules.length > 0 ? (
+                      availableModules.map((module) => {
+                        const Icon = module.icon;
+                        return (
+                          <button
+                            key={module.id}
+                            onClick={() => handleAddModule(module.id)}
+                            className="w-full p-4 rounded-lg border border-border hover:border-accent-brand hover:bg-accent/30 apple-transition text-left flex items-start gap-3 group"
+                          >
+                            <div className="w-10 h-10 rounded-lg bg-accent-brand/10 flex items-center justify-center flex-shrink-0 group-hover:bg-accent-brand/20 apple-transition">
+                              <Icon className="w-5 h-5 text-accent-brand" />
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-semibold m-0">{module.name}</p>
+                                {module.comingSoon && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Coming Soon
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground m-0">
+                                {module.description}
+                              </p>
+                            </div>
+                            <Plus className="w-5 h-5 text-muted-foreground group-hover:text-accent-brand flex-shrink-0 apple-transition" />
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center py-12">
+                        <CheckSquare className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                        <h3 className="mb-2">All modules enabled!</h3>
+                        <p className="text-sm text-muted-foreground">
+                          You're using all available modules for this project.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
 
-          <TabsContent value="project-graph" className="space-y-6">
-            <Suspense fallback={<div className="h-[600px] flex items-center justify-center"><Skeleton className="h-full w-full" /></div>}>
-              <WorkGraphBuilder
-                projectId={projectId}
-                focusNodeId={focusNodeId}
-                scope={scope}
-                mode={mode}
-                asOf={asOf}
+            {/* Tab Content */}
+            <TabsContent value="overview" className="space-y-6">
+              <OverviewModule projectName={projectName} />
+            </TabsContent>
+
+            <TabsContent value="project-graph" className="space-y-6">
+              <Suspense fallback={<div className="h-[600px] flex items-center justify-center"><Skeleton className="h-full w-full" /></div>}>
+                <WorkGraphBuilder
+                  projectId={projectId}
+                  focusNodeId={focusNodeId}
+                  scope={scope}
+                  mode={mode}
+                  asOf={asOf}
+                />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="timesheets" className="space-y-6">
+              <ProjectTimesheetsView
+                ownerId="demo-owner-id"
+                ownerName="Demo Project Owner"
+                contractors={[
+                  { id: "sarah-chen-id", name: "Sarah Chen", initials: "SC" },
+                  { id: "mike-johnson-id", name: "Mike Johnson", initials: "MJ" },
+                  { id: "emma-davis-id", name: "Emma Davis", initials: "ED" },
+                  { id: "tom-martinez-id", name: "Tom Martinez", initials: "TM", company: "Acme Corp" },
+                  { id: "lisa-park-id", name: "Lisa Park", initials: "LP", company: "Acme Corp" },
+                  { id: "james-wilson-id", name: "James Wilson", initials: "JW", company: "Acme Corp" },
+                  { id: "alex-kim-id", name: "Alex Kim", initials: "AK", company: "TechStaff Inc" },
+                  { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
+                ]}
+                hourlyRate={95}
               />
-            </Suspense>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="timesheets" className="space-y-6">
-            <ProjectTimesheetsView
-              ownerId="demo-owner-id"
-              ownerName="Demo Project Owner"
-              contractors={[
-                { id: "sarah-chen-id", name: "Sarah Chen", initials: "SC" },
-                { id: "mike-johnson-id", name: "Mike Johnson", initials: "MJ" },
-                { id: "emma-davis-id", name: "Emma Davis", initials: "ED" },
-                { id: "tom-martinez-id", name: "Tom Martinez", initials: "TM", company: "Acme Corp" },
-                { id: "lisa-park-id", name: "Lisa Park", initials: "LP", company: "Acme Corp" },
-                { id: "james-wilson-id", name: "James Wilson", initials: "JW", company: "Acme Corp" },
-                { id: "alex-kim-id", name: "Alex Kim", initials: "AK", company: "TechStaff Inc" },
-                { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
-              ]}
-              hourlyRate={95}
-            />
-          </TabsContent>
+            <TabsContent value="contracts" className="space-y-6">
+              <ContractsModule />
+            </TabsContent>
 
-          <TabsContent value="contracts" className="space-y-6">
-            <ContractsModule />
-          </TabsContent>
+            <TabsContent value="documents" className="space-y-6">
+              <DocumentsModule />
+            </TabsContent>
 
-          <TabsContent value="documents" className="space-y-6">
-            <DocumentsModule />
-          </TabsContent>
+            <TabsContent value="tasks" className="space-y-6">
+              <TasksModule />
+            </TabsContent>
 
-          <TabsContent value="tasks" className="space-y-6">
-            <TasksModule />
-          </TabsContent>
+            <TabsContent value="analytics" className="space-y-6">
+              <AnalyticsModule />
+            </TabsContent>
 
-          <TabsContent value="analytics" className="space-y-6">
-            <AnalyticsModule />
-          </TabsContent>
+            <TabsContent value="team" className="space-y-6">
+              <TeamModule />
+            </TabsContent>
 
-          <TabsContent value="team" className="space-y-6">
-            <TeamModule />
-          </TabsContent>
-
-          <TabsContent value="messages" className="space-y-6">
-            <MessagesModule />
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="messages" className="space-y-6">
+              <MessagesModule />
+            </TabsContent>
+          </Tabs>
+        </MonthProvider>
       </div>
     </div>
   );

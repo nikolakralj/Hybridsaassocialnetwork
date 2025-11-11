@@ -14,7 +14,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Stores companies, agencies, and freelancer entities
 
 CREATE TABLE IF NOT EXISTS organizations (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('company', 'agency', 'freelancer')),
   logo TEXT,
@@ -34,12 +34,12 @@ COMMENT ON COLUMN organizations.type IS 'company = staff aug, agency = represent
 -- Stores individual contractor contracts with rates and terms
 
 CREATE TABLE IF NOT EXISTS project_contracts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   user_name TEXT NOT NULL,
   user_role TEXT NOT NULL CHECK (user_role IN ('individual_contributor', 'company_employee', 'agency_contractor')),
-  organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-  project_id UUID NOT NULL,
+  organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
   
   -- Contract terms
   contract_type TEXT NOT NULL CHECK (contract_type IN ('hourly', 'daily', 'fixed', 'custom')),
@@ -76,8 +76,8 @@ COMMENT ON COLUMN project_contracts.hide_rate IS 'Role-based: hide rate from con
 -- Stores weekly timesheet periods with approval status
 
 CREATE TABLE IF NOT EXISTS timesheet_periods (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  contract_id UUID NOT NULL REFERENCES project_contracts(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  contract_id TEXT NOT NULL REFERENCES project_contracts(id) ON DELETE CASCADE,
   
   -- Period dates (Monday - Sunday)
   week_start_date DATE NOT NULL,
@@ -95,11 +95,11 @@ CREATE TABLE IF NOT EXISTS timesheet_periods (
   
   -- Approval tracking
   approved_at TIMESTAMPTZ,
-  approved_by UUID,
+  approved_by TEXT,
   
   -- Rejection tracking
   rejected_at TIMESTAMPTZ,
-  rejected_by UUID,
+  rejected_by TEXT,
   rejection_reason TEXT,
   
   -- Additional context
@@ -131,8 +131,8 @@ COMMENT ON COLUMN timesheet_periods.week_end_date IS 'Always Sunday';
 -- Stores individual daily timesheet entries
 
 CREATE TABLE IF NOT EXISTS timesheet_entries (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  period_id UUID NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
   
   -- Entry details
   date DATE NOT NULL,
@@ -178,8 +178,8 @@ COMMENT ON COLUMN timesheet_entries.days IS 'For daily contracts';
 -- Audit trail for all approval actions
 
 CREATE TABLE IF NOT EXISTS approval_history (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  period_id UUID NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
   
   -- Action details
   timestamp TIMESTAMPTZ DEFAULT NOW(),
@@ -204,8 +204,8 @@ COMMENT ON COLUMN approval_history.actor IS 'Name or ID of person who performed 
 -- Stores PDF signed timesheets and other attachments
 
 CREATE TABLE IF NOT EXISTS attachments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  period_id UUID NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
   
   -- File details
   name TEXT NOT NULL,
@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS attachments (
   
   -- Metadata
   uploaded_at TIMESTAMPTZ DEFAULT NOW(),
-  uploaded_by UUID,
+  uploaded_by TEXT,
   
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -233,8 +233,8 @@ COMMENT ON COLUMN attachments.url IS 'Supabase Storage signed URL or public URL'
 -- Auto-detected anomalies and warnings
 
 CREATE TABLE IF NOT EXISTS review_flags (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  period_id UUID NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
   
   -- Flag details
   type TEXT NOT NULL CHECK (type IN ('warning', 'error', 'info')),
@@ -259,8 +259,8 @@ COMMENT ON COLUMN review_flags.severity IS 'Helps prioritize review items';
 -- Planned vs actual task hours for budget tracking
 
 CREATE TABLE IF NOT EXISTS allocated_tasks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  period_id UUID NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL REFERENCES timesheet_periods(id) ON DELETE CASCADE,
   
   -- Task details
   name TEXT NOT NULL,
@@ -390,7 +390,7 @@ COMMENT ON POLICY "Users can read own contracts" ON project_contracts IS 'TODO: 
 -- ============================================================================
 
 -- Function to calculate period totals from entries
-CREATE OR REPLACE FUNCTION calculate_period_totals(p_period_id UUID)
+CREATE OR REPLACE FUNCTION calculate_period_totals(p_period_id TEXT)
 RETURNS TABLE(total_hours DECIMAL, total_days DECIMAL) AS $$
 BEGIN
   RETURN QUERY

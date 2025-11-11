@@ -1,12 +1,11 @@
 /**
  * Timesheet Approval System API - Production Ready
  * 
- * API layer for approval-v2 system with KV store integration
- * Builds organizations, contracts, and periods dynamically from real timesheet data
+ * API layer for approval-v2 system with Supabase integration
+ * Builds organizations, contracts, and periods dynamically from real database tables
  */
 
 import { createClient } from '../supabase/client';
-import { getTimesheetEntries } from './timesheets';
 import type { 
   Organization,
   ProjectContract,
@@ -33,65 +32,36 @@ const supabase = createClient();
 
 async function buildOrganizationsFromData(): Promise<Organization[]> {
   try {
-    // Fetch ALL timesheet entries from the database
-    const entries = await getTimesheetEntries({});
+    // ✅ Query Supabase organizations table directly
+    const { data: orgData, error } = await supabase
+      .from('organizations')
+      .select('*');
     
-    // If no entries exist, return default organization structure
-    if (entries.length === 0) {
-      console.log('📋 No timesheet entries found - returning default organization');
-      return [{
-        id: 'company-1',
-        name: 'Acme Corporation',
-        type: 'company' as const,
-      }];
+    if (error) {
+      console.error('Error fetching organizations:', error);
+      return [];
     }
     
-    // Extract unique company IDs
-    const companyIds = new Set<string>();
-    entries.forEach(entry => {
-      if (entry.companyId) {
-        companyIds.add(entry.companyId);
-      }
-    });
+    // If no organizations exist, return empty array
+    if (!orgData || orgData.length === 0) {
+      console.log('📋 No organizations found - returning empty array');
+      return [];
+    }
     
-    // Map company IDs to organization objects
-    const organizations: Organization[] = Array.from(companyIds).map(companyId => ({
-      id: companyId,
-      name: getCompanyName(companyId), // Helper function to get friendly name
-      type: 'company' as const,
+    // Map to Organization type
+    const organizations: Organization[] = orgData.map(org => ({
+      id: org.id,
+      name: org.name,
+      type: org.type || 'company',
     }));
     
     console.log('📋 Built organizations from DB:', organizations.length, 'companies');
     return organizations;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error building organizations:', error);
-    // Return default organization on error
-    return [{
-      id: 'company-1',
-      name: 'Acme Corporation',
-      type: 'company' as const,
-    }];
+    console.warn('⚠️ Database not set up - returning empty array. Visit /setup to configure the database.');
+    return [];
   }
-}
-
-// Helper to map company IDs to friendly names
-function getCompanyName(companyId: string): string {
-  const nameMap: Record<string, string> = {
-    'company-1': 'Acme Corporation',
-    'company-2': 'TechStart Inc',
-    'company-3': 'Global Solutions Ltd',
-  };
-  return nameMap[companyId] || companyId;
-}
-
-// Helper to map user IDs to friendly names
-function getUserName(userId: string): string {
-  const nameMap: Record<string, string> = {
-    'user-1': 'James Kim',
-    'user-2': 'Sarah Johnson',
-    'user-3': 'Mike Chen',
-  };
-  return nameMap[userId] || userId;
 }
 
 // ============================================================================
@@ -100,34 +70,33 @@ function getUserName(userId: string): string {
 
 async function buildContractsFromData(): Promise<ProjectContract[]> {
   try {
-    // Fetch ALL timesheet entries from the database
-    const entries = await getTimesheetEntries({});
+    // ✅ Query Supabase project_contracts table directly
+    const { data: contractData, error } = await supabase
+      .from('project_contracts')
+      .select('*');
     
-    // Extract unique user+company combinations
-    const contractMap = new Map<string, { userId: string; companyId: string }>();
+    if (error) {
+      console.error('Error fetching contracts:', error);
+      return [];
+    }
     
-    entries.forEach(entry => {
-      const key = `${entry.userId}:${entry.companyId}`;
-      if (!contractMap.has(key)) {
-        contractMap.set(key, {
-          userId: entry.userId,
-          companyId: entry.companyId,
-        });
-      }
-    });
+    if (!contractData || contractData.length === 0) {
+      console.log('📋 No contracts found - returning empty array');
+      return [];
+    }
     
-    // Build contract objects
-    const contracts: ProjectContract[] = Array.from(contractMap.values()).map(({ userId, companyId }) => ({
-      id: `contract-${userId}-${companyId}`,
-      userId,
-      userName: getUserName(userId),
-      userRole: 'individual_contributor' as const,
-      organizationId: companyId,
-      projectId: 'project-main',
-      contractType: 'hourly' as const,
-      hourlyRate: 125,
-      hideRate: false,
-      startDate: '2025-01-01',
+    // Map to ProjectContract type
+    const contracts: ProjectContract[] = contractData.map(contract => ({
+      id: contract.id,
+      userId: contract.user_id,
+      userName: contract.user_name,
+      userRole: contract.user_role || 'individual_contributor',
+      organizationId: contract.organization_id,
+      projectId: contract.project_id,
+      contractType: contract.contract_type || 'hourly',
+      hourlyRate: contract.hourly_rate || 125,
+      hideRate: contract.hide_rate || false,
+      startDate: contract.start_date,
     }));
     
     console.log('📋 Built contracts from DB:', contracts.length, 'contracts');
@@ -144,65 +113,40 @@ async function buildContractsFromData(): Promise<ProjectContract[]> {
 
 async function buildPeriodsForContract(contractId: string, userId: string, companyId: string): Promise<TimesheetPeriod[]> {
   try {
-    // Fetch entries for this user+company
-    const entries = await getTimesheetEntries({
-      userId,
-      companyId,
-    });
+    // ✅ Query Supabase timesheet_periods table directly
+    const { data: periodData, error } = await supabase
+      .from('timesheet_periods')
+      .select('*')
+      .eq('contract_id', contractId)
+      .order('week_start_date', { ascending: false });
     
-    if (entries.length === 0) {
+    if (error) {
+      console.error('Error fetching periods:', error);
       return [];
     }
     
-    // Group entries by week
-    const weekMap = new Map<string, typeof entries>();
+    if (!periodData || periodData.length === 0) {
+      console.log(`📋 No periods found for contract ${contractId}`);
+      return [];
+    }
     
-    entries.forEach(entry => {
-      const entryDate = parseISO(entry.date);
-      const weekStart = startOfWeek(entryDate, { weekStartsOn: 1 }); // Monday
-      const weekKey = format(weekStart, 'yyyy-MM-dd');
-      
-      if (!weekMap.has(weekKey)) {
-        weekMap.set(weekKey, []);
-      }
-      weekMap.get(weekKey)!.push(entry);
-    });
-    
-    // Build period objects for each week
-    const periods: TimesheetPeriod[] = Array.from(weekMap.entries()).map(([weekStartStr, weekEntries]) => {
-      const weekStart = parseISO(weekStartStr);
-      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-      
-      // Calculate total hours
-      const totalHours = weekEntries.reduce((sum, entry) => sum + entry.hours, 0);
-      
-      // Determine status based on entries
-      const hasApproved = weekEntries.some(e => e.status === 'approved');
-      const hasRejected = weekEntries.some(e => e.status === 'rejected');
-      const hasSubmitted = weekEntries.some(e => e.status === 'submitted');
-      
-      let status: ApprovalStatus = 'pending';
-      if (hasRejected) status = 'rejected';
-      else if (hasApproved && weekEntries.every(e => e.status === 'approved')) status = 'approved';
-      else if (hasSubmitted) status = 'pending';
-      
-      return {
-        id: `period-${contractId}-${weekStartStr}`,
-        contractId,
-        weekStartDate: format(weekStart, 'yyyy-MM-dd'),
-        weekEndDate: format(weekEnd, 'yyyy-MM-dd'),
-        totalHours,
-        status,
-        approvalHistory: [],
-        attachments: [],
-        reviewFlags: [],
-        allocatedTasks: [],
-        submittedAt: hasSubmitted ? new Date().toISOString() : undefined,
-      };
-    });
+    // Map to TimesheetPeriod type
+    const periods: TimesheetPeriod[] = periodData.map(period => ({
+      id: period.id,
+      contractId: period.contract_id,
+      weekStartDate: period.week_start_date,
+      weekEndDate: period.week_end_date,
+      totalHours: period.total_hours,
+      status: period.status || 'pending',
+      approvalHistory: [],
+      attachments: [],
+      reviewFlags: [],
+      allocatedTasks: [],
+      submittedAt: period.submitted_at,
+    }));
     
     console.log(`📋 Built ${periods.length} periods for contract ${contractId}`);
-    return periods.sort((a, b) => b.weekStartDate.localeCompare(a.weekStartDate)); // Most recent first
+    return periods;
   } catch (error) {
     console.error('Error building periods for contract:', error);
     return [];
@@ -296,19 +240,45 @@ export async function fetchContractById(id: string): Promise<ProjectContract | n
 export async function fetchPeriodsByContract(
   contractId: string
 ): Promise<TimesheetPeriod[]> {
-  // Extract userId and companyId from contractId
-  // Format: "contract-{userId}-{companyId}"
-  const match = contractId.match(/^contract-(.+?)-(.+)$/);
-  
-  if (!match) {
-    console.warn(`Invalid contractId format: ${contractId}`);
+  try {
+    // ✅ Query Supabase timesheet_periods table directly by contract_id
+    const { data: periodData, error } = await supabase
+      .from('timesheet_periods')
+      .select('*')
+      .eq('contract_id', contractId)
+      .order('week_start_date', { ascending: false });
+    
+    if (error) {
+      console.error('Error fetching periods:', error);
+      return [];
+    }
+    
+    if (!periodData || periodData.length === 0) {
+      console.log(`📋 No periods found for contract ${contractId}`);
+      return [];
+    }
+    
+    // Map to TimesheetPeriod type
+    const periods: TimesheetPeriod[] = periodData.map(period => ({
+      id: period.id,
+      contractId: period.contract_id,
+      weekStartDate: period.week_start_date,
+      weekEndDate: period.week_end_date,
+      totalHours: period.total_hours,
+      status: period.status || 'pending',
+      approvalHistory: [],
+      attachments: [],
+      reviewFlags: [],
+      allocatedTasks: [],
+      submittedAt: period.submitted_at,
+    }));
+    
+    console.log(`📋 Built ${periods.length} periods for contract ${contractId}`);
+    return periods;
+  } catch (error) {
+    console.error('Error fetching periods for contract:', error);
     return [];
   }
-  
-  const [, userId, companyId] = match;
-  
-  // Build periods from real database entries
-  return buildPeriodsForContract(contractId, userId, companyId);
 }
 
 export async function fetchPeriodById(id: string): Promise<TimesheetPeriod | null> {
@@ -597,7 +567,7 @@ export async function fetchMonthlyView(
 }
 
 // ============================================================================
-// APPROVAL ACTIONS (MUTATIONS) - Update real database entries
+// APPROVAL ACTIONS (MUTATIONS) - Update real database periods
 // ============================================================================
 
 export async function approveTimesheet(
@@ -606,38 +576,21 @@ export async function approveTimesheet(
   approverName: string
 ): Promise<void> {
   try {
-    // Extract userId and companyId from periodId
-    // Format: "period-contract-{userId}-{companyId}-{weekStartDate}"
-    const match = periodId.match(/^period-contract-(.+?)-(.+?)-(\d{4}-\d{2}-\d{2})$/);
+    // Update the period status to 'approved' in Supabase
+    const { error } = await supabase
+      .from('timesheet_periods')
+      .update({ 
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', periodId);
     
-    if (!match) {
-      console.warn(`Invalid periodId format: ${periodId}`);
-      return;
+    if (error) {
+      console.error('Error approving timesheet:', error);
+      throw new Error(`Failed to approve timesheet: ${error.message}`);
     }
     
-    const [, userId, companyId, weekStartStr] = match;
-    
-    // Fetch all entries for this user+company+week
-    const weekStart = parseISO(weekStartStr);
-    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-    
-    const entries = await getTimesheetEntries({
-      userId,
-      companyId,
-      startDate: format(weekStart, 'yyyy-MM-dd'),
-      endDate: format(weekEnd, 'yyyy-MM-dd'),
-    });
-    
-    // Update all entries to 'approved' status
-    const { updateTimesheetEntry } = await import('./timesheets');
-    
-    await Promise.all(
-      entries.map(entry => 
-        updateTimesheetEntry(entry.id, { status: 'approved' })
-      )
-    );
-    
-    console.log(`✅ Approved ${entries.length} entries for period ${periodId}`);
+    console.log(`✅ Approved period ${periodId}`);
   } catch (err) {
     console.error('Unexpected error in approveTimesheet:', err);
     throw err;
@@ -651,37 +604,21 @@ export async function rejectTimesheet(
   reason: string
 ): Promise<void> {
   try {
-    // Extract userId and companyId from periodId
-    const match = periodId.match(/^period-contract-(.+?)-(.+?)-(\d{4}-\d{2}-\d{2})$/);
+    // Update the period status to 'rejected' in Supabase
+    const { error } = await supabase
+      .from('timesheet_periods')
+      .update({ 
+        status: 'rejected',
+        // Note: You may want to add a rejection_reason column
+      })
+      .eq('id', periodId);
     
-    if (!match) {
-      console.warn(`Invalid periodId format: ${periodId}`);
-      return;
+    if (error) {
+      console.error('Error rejecting timesheet:', error);
+      throw new Error(`Failed to reject timesheet: ${error.message}`);
     }
     
-    const [, userId, companyId, weekStartStr] = match;
-    
-    // Fetch all entries for this user+company+week
-    const weekStart = parseISO(weekStartStr);
-    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-    
-    const entries = await getTimesheetEntries({
-      userId,
-      companyId,
-      startDate: format(weekStart, 'yyyy-MM-dd'),
-      endDate: format(weekEnd, 'yyyy-MM-dd'),
-    });
-    
-    // Update all entries to 'rejected' status
-    const { updateTimesheetEntry } = await import('./timesheets');
-    
-    await Promise.all(
-      entries.map(entry => 
-        updateTimesheetEntry(entry.id, { status: 'rejected' })
-      )
-    );
-    
-    console.log(`❌ Rejected ${entries.length} entries for period ${periodId}. Reason: ${reason}`);
+    console.log(`❌ Rejected period ${periodId}. Reason: ${reason}`);
   } catch (err) {
     console.error('Unexpected error in rejectTimesheet:', err);
     throw err;

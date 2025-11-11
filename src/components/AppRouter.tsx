@@ -13,6 +13,7 @@ import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
 import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench"; // ✅ DAY 3: Global approvals
 import { TestDashboard } from "./TestDashboard"; // ✅ NEW: Comprehensive testing dashboard
 import { CheckboxTest } from "./CheckboxTest";
+import { DatabaseSetup } from "./DatabaseSetup"; // ✅ NEW: Database setup page
 import { PersonaType } from "./social/IntentChips";
 import { Toaster } from "./ui/sonner";
 import { WorkGraphProvider } from "../contexts/WorkGraphContext";
@@ -32,7 +33,8 @@ type AppRoute =
   | "projects" // ✅ Projects management route
   | "approvals" // ✅ DAY 3: Global approvals workbench
   | "test-dashboard" // ✅ NEW: Comprehensive testing dashboard
-  | "checkbox-test"; // ✅ Checkbox debugging
+  | "checkbox-test" // ✅ Checkbox debugging
+  | "setup"; // ✅ NEW: Database setup
 
 interface UserData {
   email: string;
@@ -209,6 +211,9 @@ function AppContent() {
           </div>
         );
 
+      case "setup": // ✅ NEW: Database setup
+        return <DatabaseSetup />;
+
       default:
         return <Landing onSignIn={handleSignIn} onSignUp={handleSignUp} />;
     }
@@ -224,6 +229,7 @@ function AppContent() {
     { route: "company-profile-demo", label: "🏢 Company Profile" },
     { route: "db-sync-test", label: "🔄 Database Sync Test" },
     { route: "checkbox-test", label: "✅ Checkbox Test" },
+    { route: "setup", label: "🔧 Database Setup" }, // ✅ NEW: Database setup
   ];
 
   return (

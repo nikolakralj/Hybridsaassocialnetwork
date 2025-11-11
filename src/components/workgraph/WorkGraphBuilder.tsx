@@ -11,10 +11,13 @@ import ReactFlow, {
   Connection,
   ConnectionMode,
   Panel,
+  useReactFlow,
+  ReactFlowProvider,
 } from 'reactflow@11.10.0';
 import 'reactflow@11.10.0/dist/style.css';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { 
   Save, 
   Play, 
@@ -29,6 +32,10 @@ import {
   Maximize,
   Send,
   Loader2,
+  Download,
+  Upload,
+  History,
+  HelpCircle,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { PartyNode } from './nodes/PartyNode';
@@ -46,19 +53,26 @@ import { CustomEdge } from './CustomEdge';
 import { OverlayController, type OverlayMode } from './OverlayController';
 import { applyOverlay } from './overlay-transforms';
 import { TEMPLATES } from './templates';
-import { PolicySimulator } from './PolicySimulator';
-import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
+import { useGraphPersistence } from '../hooks/useGraphPersistence';
+import { useMonthContextSafe } from '../../contexts/MonthContext';
+import { EdgeTypeGuide } from './EdgeTypeGuide';
 import type { 
-  BaseNode,
-  BaseEdge,
-  ValidationError,
+  BaseNode, 
+  BaseEdge, 
   CompiledProjectConfig,
   ApprovalPolicy,
   VisibilityRule,
+  ValidationError,
+  Project,
+  ProjectMember,
+  ProjectRole
 } from '../../types/workgraph';
-import { getProjectMock, getProjectMembersMock, getUserProjectRole } from '../../utils/api/projects';
+import { PolicySimulator } from './PolicySimulator';
+import { 
+  getProjectMock, 
+  getProjectMembersMock 
+} from '../../utils/api/projects';
 import { savePolicyVersionMock } from '../../utils/api/policy-versions';
-import type { Project, ProjectMember, ProjectRole } from '../../types/collaboration';
 import { UIPermissions } from '../../utils/collaboration/permissions';
 
 // Custom node types for React Flow
@@ -113,20 +127,57 @@ export function WorkGraphBuilder({
   mode = 'view',
   asOf = 'now',
 }: WorkGraphBuilderProps) {
+  // ✅ MONTH CONTEXT: Get selected month for temporal graph loading
+  const { selectedMonth } = useMonthContextSafe();
+  
   // ✅ DAY 2: Project loading state
-  const [projectId, setProjectId] = useState(propProjectId || sessionStorage.getItem('currentProjectId') || '');
+  const [projectId, setProjectId] = useState(propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha'); // Default fallback
   const [project, setProject] = useState<Project | null>(null);
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [userRole, setUserRole] = useState<ProjectRole | null>(null);
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   
+  // ✅ PHASE 3: Load real data template by default
+  const defaultTemplate = TEMPLATES[0]; // First template = WorkGraph Project (Real Data)
+  
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(
-    initialConfig?.graph.nodes || []
+    initialConfig?.graph.nodes || defaultTemplate.nodes || []
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(
-    initialConfig?.graph.edges || []
+    initialConfig?.graph.edges || defaultTemplate.edges || []
   );
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingGraph, setIsLoadingGraph] = useState(true); // NEW: Track graph loading state
+  
+  // ✅ GRAPH PERSISTENCE: Connect to database
+  const graphPersistence = useGraphPersistence({
+    projectId,
+    autoSave: false, // Manual save for now
+    onLoadSuccess: (version) => {
+      console.log('✅ Graph loaded:', version.version_number);
+      if (version.graph_data) {
+        setNodes(version.graph_data.nodes || []);
+        setEdges(version.graph_data.edges || []);
+        setIsLoadingGraph(false);
+      }
+    },
+    onLoadError: (error) => {
+      console.error('❌ Failed to load graph:', error);
+      setIsLoadingGraph(false);
+      // Fall back to template
+      setNodes(defaultTemplate.nodes as any);
+      setEdges(defaultTemplate.edges as any);
+    },
+    onSaveSuccess: (version) => {
+      console.log('✅ Graph saved:', version.version_number);
+      setHasUnsavedChanges(false);
+      setLastSaved(new Date());
+    },
+    onSaveError: (error) => {
+      console.error('❌ Failed to save graph:', error);
+    },
+  });
   
   const [selectedNode, setSelectedNode] = useState<BaseNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<BaseEdge | null>(null);
@@ -142,64 +193,47 @@ export function WorkGraphBuilder({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [activeTab, setActiveTab] = useState<'builder' | 'simulator'>('builder');
+  const [showEdgeTypeGuide, setShowEdgeTypeGuide] = useState(false); // NEW: Edge type guide dialog
   
-  // ✅ DAY 2: Load project data on mount
+  // ✅ LOAD GRAPH ON MOUNT: Load active version from database
   useEffect(() => {
-    async function loadProject() {
-      const storedProjectId = sessionStorage.getItem('currentProjectId');
-      const idToLoad = propProjectId || storedProjectId;
-      
-      if (!idToLoad) return;
-      
-      setIsLoadingProject(true);
-      
-      try {
-        // Load project details
-        const projectData = await getProjectMock(idToLoad);
-        setProject(projectData);
-        setProjectId(idToLoad);
-        
-        // Load project members
-        const members = await getProjectMembersMock(idToLoad);
-        setProjectMembers(members);
-        
-        // Get current user's role (mock current user ID)
-        const currentUserId = 'current-user-id';
-        const role = members.find(m => m.userId === currentUserId)?.role || null;
-        setUserRole(role);
-        
-        // Load any saved graph data from localStorage (draft recovery)
-        const draftKey = `workgraph-draft-${idToLoad}`;
-        const savedDraft = localStorage.getItem(draftKey);
-        if (savedDraft) {
-          try {
-            const draft = JSON.parse(savedDraft);
-            if (draft.nodes && draft.edges) {
-              setNodes(draft.nodes);
-              setEdges(draft.edges);
-              toast.info('Draft recovered from autosave');
-            }
-          } catch (e) {
-            console.error('Failed to parse draft:', e);
-          }
-        }
-        
-        console.log('✅ Project loaded:', projectData.name, 'Role:', role);
-      } catch (error) {
-        console.error('Error loading project:', error);
-        toast.error('Failed to load project');
-        
-        // Clear invalid project ID from sessionStorage
-        if (storedProjectId === idToLoad) {
-          sessionStorage.removeItem('currentProjectId');
-        }
-      } finally {
-        setIsLoadingProject(false);
-      }
-    }
+    console.log('🔄 Loading graph for project:', projectId);
+    setIsLoadingGraph(true);
     
-    loadProject();
-  }, [propProjectId]);
+    // Load active version
+    graphPersistence.loadActiveVersion().then((version) => {
+      if (!version) {
+        console.log('ℹ️ No active version found, using template');
+        setNodes(defaultTemplate.nodes as any);
+        setEdges(defaultTemplate.edges as any);
+        setIsLoadingGraph(false);
+      }
+    });
+  }, []); // Only on mount
+  
+  // ✅ MONTH-AWARE LOADING: Reload graph when month changes
+  useEffect(() => {
+    console.log('📅 Month changed:', selectedMonth);
+    setIsLoadingGraph(true);
+    
+    // Load graph version for selected month
+    graphPersistence.loadVersionForDate(selectedMonth).then((version) => {
+      if (!version) {
+        console.log(`ℹ️ No graph version for ${selectedMonth}, loading active version`);
+        // Fall back to active version
+        graphPersistence.loadActiveVersion().then((activeVersion) => {
+          if (!activeVersion) {
+            console.log('ℹ️ No active version found, using template');
+            setNodes(defaultTemplate.nodes as any);
+            setEdges(defaultTemplate.edges as any);
+          }
+          setIsLoadingGraph(false);
+        });
+      } else {
+        setIsLoadingGraph(false);
+      }
+    });
+  }, [selectedMonth]); // Reload when month changes
   
   // Apply overlay transformations to nodes and edges
   const { nodes: displayNodes, edges: displayEdges, stats: overlayStats } = useMemo(() => {
@@ -695,6 +729,95 @@ export function WorkGraphBuilder({
     return `Saved • ${hours}h ago`;
   };
 
+  // ✅ PHASE 3: Handle deep link focus - Filter nodes and center view
+  // This component needs to be inside ReactFlow context, so we'll create a child component
+  const FocusHandler = () => {
+    const reactFlowInstance = useReactFlow();
+    
+    useEffect(() => {
+      if (!focusNodeId || nodes.length === 0) return;
+
+      console.log('🎯 Deep link focus requested:', focusNodeId);
+
+      // Find the focused node
+      const focusedNode = nodes.find((n) => n.id === focusNodeId);
+      
+      if (!focusedNode) {
+        console.warn('⚠️ Focus node not found:', focusNodeId);
+        toast.error(`Person not found in graph: ${focusNodeId}`);
+        return;
+      }
+
+      // Build approval chain for this person
+      const getApprovalChain = (personId: string): Set<string> => {
+        const visited = new Set<string>();
+        const queue = [personId];
+        
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          if (visited.has(current)) continue;
+          
+          visited.add(current);
+          
+          // Find all edges where this person/company is source or target
+          edges.forEach((edge) => {
+            if (edge.source === current && !visited.has(edge.target)) {
+              queue.push(edge.target);
+            }
+            if (edge.target === current && !visited.has(edge.source)) {
+              queue.push(edge.source);
+            }
+          });
+        }
+        
+        return visited;
+      };
+
+      const visibleNodeIds = getApprovalChain(focusNodeId);
+      
+      console.log('✅ Visible nodes in approval chain:', Array.from(visibleNodeIds));
+
+      // Update node visibility - hide nodes not in the chain
+      setNodes((nds) =>
+        nds.map((node) => ({
+          ...node,
+          hidden: !visibleNodeIds.has(node.id),
+          style: {
+            ...node.style,
+            // Highlight the focused person
+            ...(node.id === focusNodeId ? {
+              boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.5)',
+              border: '2px solid #3b82f6',
+            } : {}),
+          },
+        }))
+      );
+
+      // Update edge visibility - only show edges between visible nodes
+      setEdges((eds) =>
+        eds.map((edge) => ({
+          ...edge,
+          hidden: !visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target),
+        }))
+      );
+
+      // Center view on the focused node after a short delay
+      setTimeout(() => {
+        reactFlowInstance.fitView({
+          padding: 0.3,
+          duration: 800,
+          nodes: [{ id: focusNodeId }],
+        });
+      }, 100);
+
+      toast.success('Focused on approval chain', {
+        description: `Showing ${visibleNodeIds.size} connected nodes`,
+      });
+    }, [focusNodeId, reactFlowInstance]);
+
+    return null;
+  };
+
   // ✅ DAY 2: Loading state
   if (isLoadingProject) {
     return (
@@ -754,6 +877,29 @@ export function WorkGraphBuilder({
                 selectedPartyId={previewPartyId}
                 onChange={handlePreviewChange}
               />
+
+              {/* Save Graph button - NEW */}
+              <Button
+                variant={hasUnsavedChanges ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  graphPersistence.saveVersion(nodes, edges, 'Manual save')
+                }}
+                disabled={graphPersistence.isSaving || nodes.length === 0}
+                className="gap-2"
+              >
+                {graphPersistence.isSaving ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-3 w-3" />
+                    {hasUnsavedChanges ? 'Save Graph' : 'Saved'}
+                  </>
+                )}
+              </Button>
 
               {/* Last saved indicator */}
               {lastSaved && (
@@ -865,6 +1011,9 @@ export function WorkGraphBuilder({
             pannable
           />
           
+          {/* ✅ PHASE 3: Focus handler for deep linking */}
+          <FocusHandler />
+          
           {/* Stats Panel */}
           <Panel position="top-left" className="bg-white rounded-lg shadow-lg p-4">
             <div className="space-y-2">
@@ -904,6 +1053,8 @@ export function WorkGraphBuilder({
             onUpdateEdge={handleUpdateEdge}
             onDelete={handleDelete}
             allParties={nodes.filter((n) => n.type === 'party')}
+            allNodes={nodes}
+            allEdges={edges}
           />
         )}
 
@@ -937,6 +1088,12 @@ export function WorkGraphBuilder({
             onCancel={() => setPendingConnection(null)}
           />
         )}
+
+        {/* Edge Type Guide Dialog */}
+        <EdgeTypeGuide 
+          open={showEdgeTypeGuide} 
+          onClose={() => setShowEdgeTypeGuide(false)} 
+        />
 
         {/* Compile Modal */}
         {showCompileModal && compiledConfig && (

@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
-import { CalendarDays } from "lucide-react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { CalendarDays, Database, RefreshCw } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { MultiPersonTimesheetCalendar } from "./MultiPersonTimesheetCalendar";
 import { TimesheetTableView } from "./table/TimesheetTableView";
@@ -17,6 +17,8 @@ import { useApprovalsData } from "../../utils/api/timesheets-approval-hooks";
 import type { OrganizationWithData } from "../../utils/api/timesheets-approval-hooks";
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-fns";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { verifySupabaseSetup } from "../../utils/api/supabase-setup-check";
+import { DatabaseStatusInline } from "../DatabaseStatusInline";
 
 /**
  * PROJECT-SCOPED Timesheets View - UNIFIED
@@ -241,7 +243,7 @@ export function ProjectTimesheetsView({
   const handleViewInGraph = useCallback((userId: string, submittedAt?: string) => {
     const params = new URLSearchParams();
     params.set('scope', 'approvals');
-    params.set('focus', userId);
+    params.set('focus', `user-${userId}`); // ✅ Add 'user-' prefix to match graph node IDs
     if (submittedAt) {
       params.set('asOf', submittedAt);
     }
@@ -613,6 +615,51 @@ export function ProjectTimesheetsView({
           <p className="text-sm text-muted-foreground mb-6">
             Loading timesheet data...
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show empty state if no organizations found
+  if (!isLoadingData && organizationsWithData.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="mb-1">Project Timesheets</h2>
+          <p className="text-sm text-muted-foreground mb-6">
+            Manage timesheets and approvals for all contractors on this project
+          </p>
+        </div>
+        
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Left: Empty state message */}
+          <div className="flex flex-col items-center justify-center py-8 px-4 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+            <div className="text-center space-y-3">
+              <div className="text-6xl mb-2">📋</div>
+              <h3 className="text-lg font-semibold text-gray-900">No Timesheet Data Yet</h3>
+              <p className="text-sm text-gray-600 max-w-md">
+                Database tables need to be set up and populated with data. Check the status on the right, 
+                then visit the setup page to create tables and seed demo data.
+              </p>
+              <div className="flex flex-col gap-2 pt-4">
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'setup' }))}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Go to Setup Page
+                </button>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'db-sync-test' }))}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  Database Sync Test
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Right: Database status checker */}
+          <DatabaseStatusInline />
         </div>
       </div>
     );

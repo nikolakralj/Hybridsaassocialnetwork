@@ -670,176 +670,504 @@ app.get("/make-server-f8b491be/companies/:companyId/people", async (c) => {
 });
 
 // ============================================================
-// SEED DATA ENDPOINT (for demo/testing)
+// SEED SUPABASE TABLES (Real database seed)
 // ============================================================
 
-app.post("/make-server-f8b491be/seed", async (c) => {
+app.post("/make-server-f8b491be/seed-supabase", async (c) => {
   try {
-    console.log('🌱 Starting seed data creation...');
+    console.log('🌱 Starting Supabase database seed...');
     
-    // Create demo company
-    const companyId = 'demo-company-1';
-    await kv.set(`company:${companyId}`, {
-      id: companyId,
-      name: 'Acme Corp',
-      type: 'company',
-      createdAt: new Date().toISOString(),
-    });
-    console.log('✓ Company created');
+    const supabase = getSupabaseClient();
     
-    // Create demo users with IDs matching the mock data
-    const demoUsers = [
-      { id: 'c1', name: 'Sarah Chen', email: 'sarah@example.com', role: 'Senior Engineer', initials: 'SC' },
-      { id: 'c2', name: 'Ian Mitchell', email: 'ian@example.com', role: 'Frontend Developer', initials: 'IM' },
-      { id: 'c3', name: 'Lisa Park', email: 'lisa@example.com', role: 'UI Designer', initials: 'LP' },
-      { id: 'c4', name: 'Marcus Webb', email: 'marcus@example.com', role: 'Backend Engineer', initials: 'MW' },
-      { id: 'c5', name: 'Nina Patel', email: 'nina@example.com', role: 'QA Engineer', initials: 'NP' },
-    ];
+    // ⚠️ CLEAR ALL EXISTING DATA FIRST (prevents UUID conflicts)
+    console.log('🗑️ Clearing existing data...');
     
-    for (const user of demoUsers) {
-      await kv.set(`user:${user.id}`, user);
-      
-      // Create contract linking user to company
-      await kv.set(`contract:company:${companyId}:${user.id}`, {
-        id: `contract-${user.id}`,
-        userId: user.id,
-        companyId,
-        role: user.role,
-        status: 'active',
-      });
+    // Delete in correct order (respecting foreign key constraints)
+    const { error: entriesDeleteError } = await supabase
+      .from('timesheet_entries')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+    
+    if (entriesDeleteError) {
+      console.warn('Warning: Failed to clear timesheet_entries:', entriesDeleteError);
     }
-    console.log(`✓ ${demoUsers.length} users created with contracts`);
     
-    // Create sample timesheet entries for entire October 2025
-    const entries = [];
-    const projects = [
-      'Client Portal Redesign', 
-      'API Integration', 
-      'Mobile App Development',
-      'Database Optimization',
-      'Security Audit',
-      'User Dashboard'
+    const { error: periodsDeleteError } = await supabase
+      .from('timesheet_periods')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+    
+    if (periodsDeleteError) {
+      console.warn('Warning: Failed to clear timesheet_periods:', periodsDeleteError);
+    }
+    
+    const { error: graphDeleteError } = await supabase
+      .from('graph_versions')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+    
+    if (graphDeleteError) {
+      console.warn('Warning: Failed to clear graph_versions:', graphDeleteError);
+    }
+    
+    const { error: contractsDeleteError } = await supabase
+      .from('project_contracts')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+    
+    if (contractsDeleteError) {
+      console.warn('Warning: Failed to clear project_contracts:', contractsDeleteError);
+    }
+    
+    const { error: orgsDeleteError } = await supabase
+      .from('organizations')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+    
+    if (orgsDeleteError) {
+      console.warn('Warning: Failed to clear organizations:', orgsDeleteError);
+    }
+    
+    console.log('✓ Cleared all existing data');
+    
+    // Generate a valid UUID for the demo project
+    const projectId = crypto.randomUUID();
+    console.log(`📋 Using project ID: ${projectId}`);
+    
+    // Step 1: Create Organizations
+    console.log('Creating organizations...');
+    const organizations = [
+      { name: 'Acme Dev Studio', type: 'company', logo: null },
+      { name: 'BrightWorks Design', type: 'company', logo: null },
+      { name: 'TechStaff Agency', type: 'agency', logo: null },
+      { name: 'Enterprise ClientCorp', type: 'company', logo: null },
     ];
     
-    const tasks = [
-      'Frontend Development', 
-      'Backend Development', 
-      'Code Review', 
-      'Client Meetings', 
-      'Testing & QA',
-      'Documentation',
-      'Bug Fixes',
-      'Planning & Estimation'
+    const { data: orgData, error: orgError } = await supabase
+      .from('organizations')
+      .insert(organizations)
+      .select();
+    
+    if (orgError) {
+      console.error('Error creating organizations:', orgError);
+      return c.json({ error: 'Failed to create organizations', details: orgError }, 500);
+    }
+    
+    console.log(`✓ Created ${orgData.length} organizations`);
+    
+    // Step 2: Create Project Contracts (10 contractors)
+    console.log('Creating project contracts...');
+    const contractors = [
+      // Acme Dev Studio - Company Employees
+      { name: 'Sarah Johnson', role: 'company_employee', orgId: orgData[0].id, rate: 150 },
+      { name: 'Mike Chen', role: 'company_employee', orgId: orgData[0].id, rate: 140 },
+      { name: 'Emily Davis', role: 'company_employee', orgId: orgData[0].id, rate: 135 },
+      { name: 'Robert Garcia', role: 'company_employee', orgId: orgData[0].id, rate: 145 },
+      { name: 'Lisa Anderson', role: 'company_employee', orgId: orgData[0].id, rate: 130 },
+      
+      // BrightWorks Design - Agency Contractors
+      { name: 'Sophia Martinez', role: 'agency_contractor', orgId: orgData[1].id, rate: 125 },
+      { name: 'Oliver Anderson', role: 'agency_contractor', orgId: orgData[1].id, rate: 120 },
+      { name: 'Emma Thomas', role: 'agency_contractor', orgId: orgData[1].id, rate: 115 },
+      
+      // Individual Contributors - Freelancers
+      { name: 'Alex Chen', role: 'individual_contributor', orgId: null, rate: 175 },
+      { name: 'Jordan Rivera', role: 'individual_contributor', orgId: null, rate: 165 },
     ];
     
-    // Generate entries for October 1-31, 2025
-    for (let day = 1; day <= 31; day++) {
-      const date = `2025-10-${String(day).padStart(2, '0')}`;
-      const dayOfWeek = new Date(2025, 9, day).getDay(); // 0 = Sunday
-      
-      // Skip weekends (Saturday=6, Sunday=0) for some users
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      
-      // Use all 5 users (first 3 are from Acme Corp, last 2 from TechStaff Inc in mock)
-      for (let i = 0; i < 5; i++) {
-        const user = demoUsers[i];
+    const contractsToInsert = contractors.map((c, i) => ({
+      user_id: crypto.randomUUID(), // Generate UUID for each user
+      user_name: c.name,
+      user_role: c.role,
+      organization_id: c.orgId,
+      project_id: projectId,
+      contract_type: 'hourly',
+      hourly_rate: c.rate,
+      start_date: '2025-10-01',
+    }));
+    
+    const { data: contractData, error: contractError } = await supabase
+      .from('project_contracts')
+      .insert(contractsToInsert)
+      .select();
+    
+    if (contractError) {
+      console.error('Error creating contracts:', contractError);
+      return c.json({ error: 'Failed to create contracts', details: contractError }, 500);
+    }
+    
+    console.log(`✓ Created ${contractData.length} project contracts`);
+    
+    // Step 3: Create Initial Graph Version
+    console.log('Creating initial graph version...');
+    
+    // Build the initial graph structure from the seeded data
+    const initialGraphData = {
+      nodes: [
+        // Client node
+        { 
+          id: 'client-1', 
+          type: 'client', 
+          label: 'Enterprise ClientCorp',
+          organizationId: orgData[3].id,
+          position: { x: 400, y: 50 }
+        },
+        // Company nodes
+        {
+          id: 'company-acme',
+          type: 'company',
+          label: 'Acme Dev Studio',
+          organizationId: orgData[0].id,
+          position: { x: 200, y: 200 }
+        },
+        {
+          id: 'company-brightworks',
+          type: 'company',
+          label: 'BrightWorks Design',
+          organizationId: orgData[1].id,
+          position: { x: 600, y: 200 }
+        },
+        // Agency node
+        {
+          id: 'agency-techstaff',
+          type: 'agency',
+          label: 'TechStaff Agency',
+          organizationId: orgData[2].id,
+          position: { x: 400, y: 350 }
+        },
+        // Individual contractors
+        ...contractData
+          .filter(c => c.user_role === 'individual_contributor')
+          .map((c, idx) => ({
+            id: `freelancer-${c.id}`,
+            type: 'individual',
+            label: c.user_name,
+            contractId: c.id,
+            userId: c.user_id,
+            position: { x: 100 + (idx * 150), y: 500 }
+          }))
+      ],
+      edges: [
+        // Client -> Companies
+        { id: 'e1', source: 'client-1', target: 'company-acme' },
+        { id: 'e2', source: 'client-1', target: 'company-brightworks' },
+        // Client -> Freelancers (direct)
+        ...contractData
+          .filter(c => c.user_role === 'individual_contributor')
+          .map((c, idx) => ({
+            id: `e-client-freelancer-${idx}`,
+            source: 'client-1',
+            target: `freelancer-${c.id}`
+          }))
+      ],
+      metadata: {
+        description: 'Initial project structure - October 2025',
+        contractCount: contractData.length,
+        organizationCount: orgData.length
+      }
+    };
+    
+    const { data: graphVersionData, error: graphVersionError } = await supabase
+      .from('graph_versions')
+      .insert({
+        project_id: projectId,
+        version_number: 1,
+        effective_from_date: '2025-10-01',
+        effective_to_date: null, // Currently active
+        graph_data: initialGraphData,
+        change_summary: 'Initial project setup with 4 organizations and 10 contractors',
+        created_by: 'system',
+      })
+      .select()
+      .single();
+    
+    if (graphVersionError) {
+      console.error('Error creating graph version:', graphVersionError);
+      return c.json({ error: 'Failed to create graph version', details: graphVersionError }, 500);
+    }
+    
+    console.log(`✓ Created graph version 1`);
+    
+    // Step 4: Create Timesheet Periods (4 weeks of October 2025)
+    console.log('Creating timesheet periods...');
+    const weeks = [
+      { start: '2025-09-29', end: '2025-10-05' }, // Week 1
+      { start: '2025-10-06', end: '2025-10-12' }, // Week 2
+      { start: '2025-10-13', end: '2025-10-19' }, // Week 3
+      { start: '2025-10-20', end: '2025-10-26' }, // Week 4
+    ];
+    
+    const periodsToInsert = [];
+    for (const contract of contractData) {
+      for (let weekIdx = 0; weekIdx < weeks.length; weekIdx++) {
+        const week = weeks[weekIdx];
         
-        // Skip weekends for users 0-2 (weekday workers)
-        if (isWeekend && i < 3) continue;
+        // Vary status by week
+        let status = 'pending';
+        if (weekIdx === 0) status = 'approved';
+        else if (weekIdx === 1) status = contract.user_id.endsWith('1') ? 'approved' : 'pending';
+        else if (weekIdx === 2) status = 'pending';
+        else status = 'pending';
         
-        // Determine status based on day (older entries more likely approved)
-        let status: 'draft' | 'submitted' | 'approved' | 'rejected';
-        if (day <= 7) {
-          status = 'approved'; // Week 1 all approved
-        } else if (day <= 14) {
-          status = day % 2 === 0 ? 'approved' : 'submitted'; // Week 2 mix
-        } else if (day <= 21) {
-          status = 'submitted'; // Week 3 all submitted
-        } else {
-          status = 'draft'; // Week 4+ all draft
-        }
+        // Vary hours (35-45 hours per week)
+        const baseHours = 40;
+        const variance = (Math.random() * 10) - 5; // -5 to +5
+        const totalHours = Math.round((baseHours + variance) * 2) / 2; // Round to .5
         
-        // Create multi-task entries on some days
-        const isMultiTaskDay = day % 5 === 0; // Every 5th day
-        const hasOvertimeDay = day % 7 === 0; // Every 7th day
-        
-        if (isMultiTaskDay) {
-          // Create 2-3 tasks for this day
-          const numTasks = 2 + (i % 2);
-          
-          for (let t = 0; t < numTasks; t++) {
-            const taskId = `task-${t + 1}`;
-            const hours = t === 0 ? 4.5 : t === 1 ? 3 : 1.5;
-            
-            const entry = {
-              id: `${user.id}:${date}:${taskId}`,
-              userId: user.id,
-              companyId,
-              date,
-              hours,
-              status,
-              projectId: projects[(i + t) % projects.length],
-              notes: t === 0 ? `Working on ${tasks[(i + t) % tasks.length]}` : tasks[(i + t + 1) % tasks.length],
-              taskId,
-              updatedAt: new Date().toISOString(),
-            };
-            
-            await kv.set(`timesheet:${user.id}:${date}:${taskId}`, entry);
-            entries.push(entry);
-          }
-        } else {
-          // Single task entry
-          const taskId = 'task-1';
-          
-          // Vary hours: some standard 8h, some 6h, some overtime
-          let hours = 8;
-          if (hasOvertimeDay && i === 1) {
-            hours = 10; // Ian occasionally works overtime
-          } else if (day % 8 === 0) {
-            hours = 6; // Part day
-          } else if (i === 2) {
-            hours = 7; // Lisa standard 7h days
-          }
-          
-          const entry = {
-            id: `${user.id}:${date}:${taskId}`,
-            userId: user.id,
-            companyId,
-            date,
-            hours,
-            status,
-            projectId: projects[i % projects.length],
-            notes: day % 10 === 0 ? `Sprint ${Math.floor(day / 7) + 1} - ${tasks[i % tasks.length]}` : '',
-            taskId,
-            updatedAt: new Date().toISOString(),
-          };
-          
-          await kv.set(`timesheet:${user.id}:${date}:${taskId}`, entry);
-          entries.push(entry);
-        }
+        periodsToInsert.push({
+          contract_id: contract.id,
+          week_start_date: week.start,
+          week_end_date: week.end,
+          total_hours: totalHours,
+          status: status,
+          submitted_at: status !== 'pending' ? '2025-10-26T10:00:00Z' : null,
+          graph_version_id: graphVersionData.id, // ✅ LINK TO GRAPH VERSION
+        });
       }
     }
     
-    console.log(`✓ ${entries.length} timesheet entries created for October 2025`);
+    const { data: periodData, error: periodError } = await supabase
+      .from('timesheet_periods')
+      .insert(periodsToInsert)
+      .select();
+    
+    if (periodError) {
+      console.error('Error creating periods:', periodError);
+      return c.json({ error: 'Failed to create periods', details: periodError }, 500);
+    }
+    
+    console.log(`✓ Created ${periodData.length} timesheet periods`);
+    
+    // Success! Skip creating daily entries since timesheet_entries table doesn't exist in simple schema
+    console.log('✓ Skipping daily entries (using simple schema)');
+    
+    // Success response
+    return c.json({
+      success: true,
+      message: '✅ Supabase database seeded successfully with temporal graph versioning!',
+      summary: {
+        organizations: orgData.length,
+        contracts: contractData.length,
+        periods: periodData.length,
+        graphVersions: 1,
+        note: 'Using temporal versioning - graph changes are tracked',
+      },
+      details: {
+        projectId: projectId,
+        graphVersionId: graphVersionData.id,
+        organizations: orgData.map(o => o.name),
+        contractors: contractors.map(c => c.name),
+        dateRange: 'October 2025 (4 weeks)',
+        weeksPerContractor: 4,
+      },
+    });
+    
+  } catch (error) {
+    console.error('❌ Error seeding Supabase:', error);
+    return c.json({ 
+      error: 'Failed to seed Supabase database',
+      details: String(error),
+    }, 500);
+  }
+});
+
+// ============================================================
+// GRAPH VERSION MANAGEMENT
+// ============================================================
+
+// Get the active graph version for a project
+app.get("/make-server-f8b491be/graph-versions/active", async (c) => {
+  try {
+    const projectId = c.req.query('projectId');
+    
+    if (!projectId) {
+      return c.json({ error: 'projectId required' }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    // Get the active version (where effective_to_date is null)
+    const { data, error } = await supabase
+      .from('graph_versions')
+      .select('*')
+      .eq('project_id', projectId)
+      .is('effective_to_date', null)
+      .single();
+    
+    if (error) {
+      console.error('Error fetching active graph version:', error);
+      return c.json({ error: 'Failed to fetch active graph version', details: error }, 500);
+    }
+    
+    return c.json({ graphVersion: data });
+  } catch (error) {
+    console.error('Error in GET /graph-versions/active:', error);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get graph version for a specific date (month-aware lookup)
+app.get("/make-server-f8b491be/graph-versions/for-date", async (c) => {
+  try {
+    const projectId = c.req.query('projectId');
+    const date = c.req.query('date'); // Format: YYYY-MM-DD or YYYY-MM-15 (mid-month)
+    
+    if (!projectId || !date) {
+      return c.json({ error: 'projectId and date required' }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    // Find the version that was active on the given date
+    // effective_from_date <= date AND (effective_to_date > date OR effective_to_date IS NULL)
+    const { data, error } = await supabase
+      .from('graph_versions')
+      .select('*')
+      .eq('project_id', projectId)
+      .lte('effective_from_date', date)
+      .or(`effective_to_date.is.null,effective_to_date.gt.${date}`)
+      .order('version_number', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (error) {
+      // If no version found for this date, return null (not an error)
+      if (error.code === 'PGRST116') {
+        return c.json({ graphVersion: null, message: 'No graph version found for this date' });
+      }
+      console.error('Error fetching graph version for date:', error);
+      return c.json({ error: 'Failed to fetch graph version for date', details: error }, 500);
+    }
+    
+    return c.json({ graphVersion: data });
+  } catch (error) {
+    console.error('Error in GET /graph-versions/for-date:', error);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get graph version by ID
+app.get("/make-server-f8b491be/graph-versions/:versionId", async (c) => {
+  try {
+    const versionId = c.req.param('versionId');
+    const supabase = getSupabaseClient();
+    
+    const { data, error } = await supabase
+      .from('graph_versions')
+      .select('*')
+      .eq('id', versionId)
+      .single();
+    
+    if (error) {
+      console.error('Error fetching graph version:', error);
+      return c.json({ error: 'Failed to fetch graph version', details: error }, 500);
+    }
+    
+    return c.json({ graphVersion: data });
+  } catch (error) {
+    console.error('Error in GET /graph-versions/:versionId:', error);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Get all graph versions for a project (version history)
+app.get("/make-server-f8b491be/graph-versions", async (c) => {
+  try {
+    const projectId = c.req.query('projectId');
+    
+    if (!projectId) {
+      return c.json({ error: 'projectId required' }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    const { data, error } = await supabase
+      .from('graph_versions')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('version_number', { ascending: false });
+    
+    if (error) {
+      console.error('Error fetching graph versions:', error);
+      return c.json({ error: 'Failed to fetch graph versions', details: error }, 500);
+    }
+    
+    return c.json({ graphVersions: data });
+  } catch (error) {
+    console.error('Error in GET /graph-versions:', error);
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// Create a new graph version (when the graph is edited)
+app.post("/make-server-f8b491be/graph-versions", async (c) => {
+  try {
+    const { projectId, graphData, changeSummary, createdBy } = await c.req.json();
+    
+    if (!projectId || !graphData) {
+      return c.json({ error: 'projectId and graphData required' }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+    
+    // Step 1: Get the current active version to determine the next version number
+    const { data: currentVersion, error: currentError } = await supabase
+      .from('graph_versions')
+      .select('*')
+      .eq('project_id', projectId)
+      .is('effective_to_date', null)
+      .single();
+    
+    if (currentError && currentError.code !== 'PGRST116') {
+      // PGRST116 = no rows returned (this is OK for first version)
+      console.error('Error fetching current version:', currentError);
+      return c.json({ error: 'Failed to fetch current version', details: currentError }, 500);
+    }
+    
+    const nextVersionNumber = currentVersion ? currentVersion.version_number + 1 : 1;
+    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    // Step 2: Close the current version (set effective_to_date)
+    if (currentVersion) {
+      const { error: updateError } = await supabase
+        .from('graph_versions')
+        .update({ effective_to_date: now })
+        .eq('id', currentVersion.id);
+      
+      if (updateError) {
+        console.error('Error closing current version:', updateError);
+        return c.json({ error: 'Failed to close current version', details: updateError }, 500);
+      }
+    }
+    
+    // Step 3: Create the new version
+    const { data: newVersion, error: insertError } = await supabase
+      .from('graph_versions')
+      .insert({
+        project_id: projectId,
+        version_number: nextVersionNumber,
+        effective_from_date: now,
+        effective_to_date: null, // New active version
+        graph_data: graphData,
+        change_summary: changeSummary || `Version ${nextVersionNumber}`,
+        created_by: createdBy || 'user',
+      })
+      .select()
+      .single();
+    
+    if (insertError) {
+      console.error('Error creating new graph version:', insertError);
+      return c.json({ error: 'Failed to create graph version', details: insertError }, 500);
+    }
+    
+    console.log(`✅ Created graph version ${nextVersionNumber}`);
     
     return c.json({ 
-      message: '✅ Seed data created successfully!',
-      details: {
-        company: 'Acme Corp',
-        users: demoUsers.length,
-        entries: entries.length,
-        dateRange: 'October 1-31, 2025',
-        features: [
-          'Multi-task entries on every 5th day',
-          'Overtime entries on every 7th day',
-          'Varied statuses (approved → submitted → draft)',
-          'Weekend entries for some users',
-          'Realistic hour variations (6-10h)'
-        ]
-      }
+      graphVersion: newVersion,
+      message: `Graph version ${nextVersionNumber} created successfully` 
     });
   } catch (error) {
-    console.log(`❌ Error seeding data: ${error}`);
+    console.error('Error in POST /graph-versions:', error);
     return c.json({ error: String(error) }, 500);
   }
 });
