@@ -36,6 +36,9 @@ import {
   Upload,
   History,
   HelpCircle,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { PartyNode } from './nodes/PartyNode';
@@ -128,7 +131,28 @@ export function WorkGraphBuilder({
   asOf = 'now',
 }: WorkGraphBuilderProps) {
   // ✅ MONTH CONTEXT: Get selected month for temporal graph loading
-  const { selectedMonth } = useMonthContextSafe();
+  // Default to October 2025 if context is not available
+  const monthContext = useMonthContextSafe();
+  const selectedMonth = monthContext.selectedMonth || new Date('2025-10-01');
+  const setSelectedMonth = monthContext.setSelectedMonth || (() => {});
+  
+  // Month navigation handlers
+  const handlePreviousMonth = () => {
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth();
+    setSelectedMonth(new Date(year, month - 1, 1));
+  };
+  
+  const handleNextMonth = () => {
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth();
+    setSelectedMonth(new Date(year, month + 1, 1));
+  };
+  
+  const monthString = selectedMonth.toLocaleDateString('en-US', { 
+    month: 'long', 
+    year: 'numeric' 
+  });
   
   // ✅ DAY 2: Project loading state
   const [projectId, setProjectId] = useState(propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha'); // Default fallback
@@ -855,6 +879,31 @@ export function WorkGraphBuilder({
           {/* Stats */}
           {activeTab === 'builder' && (
             <div className="flex items-center gap-2">
+              {/* Month Navigator */}
+              <div className="flex items-center gap-1 border-r pr-3 mr-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePreviousMonth}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="flex items-center gap-1.5 min-w-[120px] justify-center">
+                  <Calendar className="h-3.5 w-3.5 text-blue-600" />
+                  <span className="text-xs font-medium">{monthString}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleNextMonth}
+                  className="h-7 w-7 p-0"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+              
+              {/* Node/Edge counts */}
               <Badge variant="outline" className="text-xs gap-1">
                 {nodes.length} Nodes
               </Badge>
@@ -1016,16 +1065,26 @@ export function WorkGraphBuilder({
           
           {/* Stats Panel */}
           <Panel position="top-left" className="bg-white rounded-lg shadow-lg p-4">
-            <div className="space-y-2">
+            <div className="space-y-3">
+              {/* Graph Stats */}
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{nodes.length} Nodes</Badge>
-                <Badge variant="outline">{edges.length} Edges</Badge>
+                <Badge variant="outline" className="text-xs">{nodes.length} Nodes</Badge>
+                <Badge variant="outline" className="text-xs">{edges.length} Edges</Badge>
               </div>
+              
               {previewPartyId && (
                 <Badge variant="default" className="bg-blue-600">
                   <Eye className="h-3 w-3 mr-1" />
                   Preview Mode
                 </Badge>
+              )}
+              
+              {/* Loading indicator */}
+              {isLoadingGraph && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading graph...
+                </div>
               )}
             </div>
           </Panel>

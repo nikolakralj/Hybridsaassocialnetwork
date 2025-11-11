@@ -43,7 +43,7 @@ interface ProjectWorkspaceProps {
 }
 
 export function ProjectWorkspace({ 
-  projectId = "demo-project-1",
+  projectId = "proj-alpha",  // ✅ Updated to match seed data in COMPLETE_SETUP_WITH_GRAPH.sql
   projectName = "Mobile App Redesign" 
 }: ProjectWorkspaceProps) {
   // Get hash params for deep linking (works in Figma Make iframe)

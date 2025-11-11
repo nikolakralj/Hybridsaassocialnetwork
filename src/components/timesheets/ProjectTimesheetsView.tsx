@@ -19,6 +19,7 @@ import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-f
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { verifySupabaseSetup } from "../../utils/api/supabase-setup-check";
 import { DatabaseStatusInline } from "../DatabaseStatusInline";
+import { useMonthContextSafe } from "../../contexts/MonthContext";
 
 /**
  * PROJECT-SCOPED Timesheets View - UNIFIED
@@ -58,10 +59,12 @@ export function ProjectTimesheetsView({
 }: ProjectTimesheetsViewProps) {
   const [viewMode, setViewMode] = useState<"month" | "week" | "calendar">("month");
   
-  // NEW: Period navigation state
-  const today = new Date();
-  const [periodStart, setPeriodStart] = useState<Date>(startOfMonth(today));
-  const [periodEnd, setPeriodEnd] = useState<Date>(endOfMonth(today));
+  // ✅ USE SHARED MONTH CONTEXT (synchronized with WorkGraph tab)
+  const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
+  
+  // Calculate period start/end from the selected month
+  const periodStart = useMemo(() => startOfMonth(selectedMonth), [selectedMonth]);
+  const periodEnd = useMemo(() => endOfMonth(selectedMonth), [selectedMonth]);
   
   // ✅ DATABASE SAVE MUTATION
   const saveEntryMutation = useSaveTimesheetEntry();
@@ -681,8 +684,8 @@ export function ProjectTimesheetsView({
           startDate={periodStart}
           endDate={periodEnd}
           onNavigate={(start, end) => {
-            setPeriodStart(start);
-            setPeriodEnd(end);
+            // Update the shared month context (will automatically update periodStart/periodEnd via useMemo)
+            setSelectedMonth(start);
           }}
           showCalendarTab={true}
         />
