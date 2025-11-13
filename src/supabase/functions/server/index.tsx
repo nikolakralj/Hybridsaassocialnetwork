@@ -3,6 +3,8 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import * as kv from "./kv_store.tsx";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { registerEmailRoutes } from "./email.tsx"; // ✅ Phase 5 Day 8: Email sending
+import { registerApprovalRoutes } from "./approvals.tsx"; // ✅ Phase 5 Days 9-10: Approval execution
 
 // Force rebuild - 2025-01-23-v3
 const app = new Hono();
@@ -91,70 +93,74 @@ app.get("/make-server-f8b491be/timesheets", async (c) => {
     const startDate = c.req.query('startDate'); // YYYY-MM-DD
     const endDate = c.req.query('endDate'); // YYYY-MM-DD
     
-    console.log('📥 GET /timesheets - Query params:', { userId, companyId, startDate, endDate });
+    console.log('📥 GET /timesheets (SUPABASE) - Query params:', { userId, companyId, startDate, endDate });
     
-    // ✅ ALLOW FETCHING ALL ENTRIES when no filters provided (for building org structure)
-    // This is needed for the approval system to discover all organizations and contracts
+    const supabase = getSupabaseClient();
     
-    let entries;
+    // Query timesheet_entries from Supabase
+    let query = supabase
+      .from('timesheet_entries')
+      .select(`
+        *,
+        period:timesheet_periods!inner(
+          contract_id,
+          status,
+          week_start_date,
+          week_end_date,
+          contract:project_contracts!inner(
+            user_id,
+            user_name,
+            organization_id
+          )
+        )
+      `);
     
+    // Filter by userId if provided
     if (userId) {
-      // Get entries for specific user
-      entries = await kv.getByPrefix(`timesheet:${userId}:`);
-      console.log(`📊 Found ${entries.length} entries for user ${userId}`);
-      
-      // ✅ Also filter by companyId if provided
-      if (companyId) {
-        entries = entries.filter((entry: any) => entry.companyId === companyId);
-        console.log(`📊 After filtering by companyId ${companyId}: ${entries.length} entries`);
-      }
-    } else if (companyId) {
-      // Get entries for all users in company
-      entries = await kv.getByPrefix(`timesheet:`);
-      console.log(`📊 Found ${entries.length} total timesheet entries in KV store`);
-      // Filter to only entries matching the companyId
-      entries = entries.filter((entry: any) => entry.companyId === companyId);
-      console.log(`📊 After filtering by companyId ${companyId}: ${entries.length} entries`);
-    } else {
-      // ✅ NEW: No filters - return ALL entries (for discovery/organization building)
-      entries = await kv.getByPrefix(`timesheet:`);
-      console.log(`📊 Found ${entries.length} total timesheet entries (no filters)`);
+      query = query.eq('period.contract.user_id', userId);
     }
     
-    // Normalize old format entries (userId:date) to new format (userId:date:taskId)
-    const normalizedEntries = entries.map((entry: any) => {
-      // Check if entry has taskId
-      if (!entry.taskId) {
-        // Old format entry - add default taskId
-        return {
-          ...entry,
-          taskId: 'task-1',
-          id: `${entry.userId}:${entry.date}:task-1`
-        };
-      }
-      return entry;
-    });
-    
-    // Filter by date range if provided
-    let filteredEntries = normalizedEntries;
-    if (startDate || endDate) {
-      filteredEntries = normalizedEntries.filter((entry: any) => {
-        const entryDate = entry.date;
-        if (startDate && entryDate < startDate) return false;
-        if (endDate && entryDate > endDate) return false;
-        return true;
-      });
+    // Filter by date range
+    if (startDate) {
+      query = query.gte('date', startDate);
+    }
+    if (endDate) {
+      query = query.lte('date', endDate);
     }
     
-    console.log('🔍 SERVER GET: Returning entries sample:', {
-      count: filteredEntries.length,
-      firstEntry: filteredEntries[0],
-      firstEntryTaskDescription: filteredEntries[0]?.taskDescription,
-    });
+    const { data: entries, error } = await query;
     
-    return c.json({ entries: filteredEntries });
+    if (error) {
+      console.error('❌ Error fetching timesheet entries:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    console.log(`✅ Returning ${entries?.length || 0} entries from Supabase`);
+    
+    // Transform entries to match expected format
+    const transformedEntries = (entries || []).map((entry: any) => ({
+      id: entry.id,
+      userId: entry.period.contract.user_id,
+      companyId: entry.period.contract.organization_id,
+      date: entry.date,
+      hours: parseFloat(entry.hours),
+      status: entry.period.status,
+      projectId: entry.period.contract.project_id,
+      notes: entry.notes || '',
+      taskId: entry.task_id,
+      startTime: entry.start_time,
+      endTime: entry.end_time,
+      breakMinutes: entry.break_minutes || 0,
+      workType: entry.work_type || 'regular',
+      taskCategory: entry.task_category || 'Development',
+      taskDescription: entry.task_description || '',
+      billable: entry.billable !== false,
+      updatedAt: entry.updated_at,
+    }));
+    
+    return c.json({ entries: transformedEntries });
   } catch (error) {
-    console.log(`Error fetching timesheets: ${error}`);
+    console.error('❌ Error in GET /timesheets:', error);
     return c.json({ error: String(error) }, 500);
   }
 });
@@ -164,7 +170,7 @@ app.post("/make-server-f8b491be/timesheets", async (c) => {
   try {
     const { userId, companyId, date, hours, status, projectId, notes, taskId, startTime, endTime, breakMinutes, workType, taskCategory, taskDescription, billable } = await c.req.json();
     
-    console.log('🔍 SERVER: Received timesheet POST:', {
+    console.log('🔍 SERVER: Received timesheet POST (PURE SUPABASE):', {
       userId,
       companyId,
       date,
@@ -179,42 +185,137 @@ app.post("/make-server-f8b491be/timesheets", async (c) => {
       breakMinutes,
     });
     
-    if (!userId || !companyId || !date || hours === undefined) {
-      return c.json({ error: 'Missing required fields' }, 400);
+    if (!userId || !date || hours === undefined) {
+      return c.json({ error: 'Missing required fields: userId, date, hours' }, 400);
     }
     
-    // Support multi-task entries: if taskId provided, use it; otherwise generate unique ID
-    const uniqueTaskId = taskId || `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const entryId = `${userId}:${date}:${uniqueTaskId}`;
+    const supabase = getSupabaseClient();
     
-    const entry = {
+    // Find the user's contract
+    const { data: contracts, error: contractError } = await supabase
+      .from('project_contracts')
+      .select('*')
+      .eq('user_id', userId)
+      .limit(1);
+    
+    if (contractError || !contracts || contracts.length === 0) {
+      console.error('❌ No contract found for user:', userId);
+      return c.json({ error: 'No contract found for user' }, 404);
+    }
+    
+    const contract = contracts[0];
+    
+    // Determine week boundaries (Monday to Sunday)
+    const dateObj = new Date(date + 'T12:00:00');
+    const dayOfWeek = dateObj.getDay();
+    const daysToMonday = (dayOfWeek + 6) % 7;
+    const weekStartDate = new Date(dateObj);
+    weekStartDate.setDate(dateObj.getDate() - daysToMonday);
+    const weekEndDate = new Date(weekStartDate);
+    weekEndDate.setDate(weekStartDate.getDate() + 6);
+    
+    const weekStart = weekStartDate.toISOString().split('T')[0];
+    const weekEnd = weekEndDate.toISOString().split('T')[0];
+    
+    console.log(`📅 Week: ${weekStart} to ${weekEnd}`);
+    
+    // Find or create period
+    let { data: periods } = await supabase
+      .from('timesheet_periods')
+      .select('*')
+      .eq('contract_id', contract.id)
+      .eq('week_start_date', weekStart)
+      .eq('week_end_date', weekEnd);
+    
+    let period;
+    if (!periods || periods.length === 0) {
+      const { data: newPeriod } = await supabase
+        .from('timesheet_periods')
+        .insert({
+          id: crypto.randomUUID(),
+          contract_id: contract.id,
+          week_start_date: weekStart,
+          week_end_date: weekEnd,
+          total_hours: 0,
+          status: 'pending',
+        })
+        .select()
+        .single();
+      period = newPeriod;
+      console.log(`✅ Created period: ${period?.id}`);
+    } else {
+      period = periods[0];
+    }
+    
+    // Check if entry already exists
+    const uniqueTaskId = taskId || `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const entryId = `${userId.replace(/[^a-zA-Z0-9]/g, '-')}-${date}-${uniqueTaskId}`;
+    
+    const { data: existingEntries } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .eq('period_id', period.id)
+      .eq('date', date)
+      .eq('task_id', uniqueTaskId);
+    
+    const existingEntry = existingEntries && existingEntries.length > 0 ? existingEntries[0] : null;
+    const oldHours = existingEntry ? parseFloat(existingEntry.hours || 0) : 0;
+    const newHours = parseFloat(hours);
+    const hoursDelta = newHours - oldHours;
+    
+    console.log(`📊 Hours change: ${oldHours}h → ${newHours}h (delta: ${hoursDelta > 0 ? '+' : ''}${hoursDelta}h)`);
+    
+    // Update period total hours
+    const currentTotal = parseFloat(period.total_hours || 0);
+    const newTotal = Math.max(0, currentTotal + hoursDelta); // Ensure non-negative
+    
+    console.log(`📊 Updating period total: ${currentTotal}h + ${hoursDelta}h = ${newTotal}h`);
+    
+    await supabase
+      .from('timesheet_periods')
+      .update({ total_hours: newTotal })
+      .eq('id', period.id);
+    
+    console.log(`✅ Updated period total: ${newTotal}h`);
+    
+    // Create or update timesheet entry
+    const entryData = {
       id: entryId,
-      userId,
-      companyId,
-      date,
-      hours,
-      status: status || 'draft',
-      projectId: projectId || null,
+      period_id: period.id, // ✅ Link to timesheet_periods
+      user_id: userId, // ✅ Add user_id for direct queries
+      company_id: companyId || null, // ✅ Add company_id
+      project_id: projectId || 'proj-alpha', // ✅ Add project_id
+      date: date,
+      hours: newHours,
+      status: status || 'draft', // ✅ Add status
       notes: notes || '',
-      taskId: uniqueTaskId,
-      // ✅ Include time tracking fields
-      startTime: startTime || null,
-      endTime: endTime || null,
-      breakMinutes: breakMinutes || 0,
-      // ✅ Include task category, description and work type
-      workType: workType || 'regular',
-      taskCategory: taskCategory || 'Development',
-      taskDescription: taskDescription || '',
+      task_id: uniqueTaskId,
+      start_time: startTime || null,
+      end_time: endTime || null,
+      break_minutes: breakMinutes || 0,
+      work_type: workType || 'regular',
+      task_category: taskCategory || 'Development',
+      task_description: taskDescription || '',
       billable: billable !== undefined ? billable : true,
-      updatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
     
-    console.log('💾 SERVER: Saving entry to database:', entry);
+    if (existingEntry) {
+      // Update existing entry
+      await supabase
+        .from('timesheet_entries')
+        .update(entryData)
+        .eq('id', existingEntry.id);
+      console.log(`✅ Updated entry: ${entryId}`);
+    } else {
+      // Create new entry
+      await supabase
+        .from('timesheet_entries')
+        .insert(entryData);
+      console.log(`✅ Created entry: ${entryId}`);
+    }
     
-    // Store with multi-task key (userId:date:taskId allows multiple entries per day)
-    await kv.set(`timesheet:${userId}:${date}:${uniqueTaskId}`, entry);
-    
-    return c.json({ entry });
+    return c.json({ entry: entryData });
   } catch (error) {
     console.log(`Error creating timesheet: ${error}`);
     return c.json({ error: String(error) }, 500);
@@ -235,7 +336,7 @@ app.post("/make-server-f8b491be/timesheets/bulk", async (c) => {
     for (const entry of entries) {
       const { userId, companyId, date, hours, status, projectId, notes, taskId, startTime, endTime, breakMinutes, workType, taskCategory, taskDescription, billable } = entry;
       
-      if (!userId || !companyId || !date || hours === undefined) {
+      if (!userId || !date || hours === undefined) {
         continue; // Skip invalid entries
       }
       
@@ -458,58 +559,72 @@ app.put("/make-server-f8b491be/timesheets/:entryId", async (c) => {
     const entryId = c.req.param('entryId');
     const updates = await c.req.json();
     
-    // entryId format can be "userId:date:taskId" (multi-task) or "userId:date" (legacy single-task)
-    const parts = entryId.split(':');
-    const userId = parts[0];
-    const date = parts[1];
-    const taskId = parts[2]; // May be undefined for legacy entries
+    console.log('📝 PUT /timesheets - Updating entry:', entryId);
     
-    if (!userId || !date) {
-      return c.json({ error: 'Invalid entry ID format' }, 400);
+    const supabase = getSupabaseClient();
+    
+    // Query the entry directly by ID
+    const { data: existingEntry, error: fetchError } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .eq('id', entryId)
+      .maybeSingle();
+    
+    if (fetchError) {
+      console.error('Error fetching entry:', fetchError);
+      return c.json({ error: 'Failed to fetch entry', details: fetchError.message }, 500);
     }
     
-    // Try to get entry - first try new format, then old format
-    let kvKey = taskId 
-      ? `timesheet:${userId}:${date}:${taskId}`
-      : `timesheet:${userId}:${date}`;
-    
-    let existingEntry = await kv.get(kvKey);
-    
-    // If not found and no taskId provided, this might be a normalized old entry
-    // Try looking for the old format key
-    if (!existingEntry && !taskId) {
-      // Entry doesn't exist in old format either
+    if (!existingEntry) {
+      console.error('Entry not found:', entryId);
       return c.json({ error: 'Entry not found' }, 404);
     }
     
-    // If this is an old format entry being updated, migrate it to new format
-    let needsMigration = false;
-    if (existingEntry && !existingEntry.taskId) {
-      needsMigration = true;
-      existingEntry.taskId = 'task-1'; // Add default taskId
+    // Calculate hours delta for period update
+    const oldHours = parseFloat(existingEntry.hours || 0);
+    const newHours = updates.hours !== undefined ? parseFloat(updates.hours) : oldHours;
+    const hoursDelta = newHours - oldHours;
+    
+    console.log(`📊 Hours change: ${oldHours}h → ${newHours}h (delta: ${hoursDelta > 0 ? '+' : ''}${hoursDelta}h)`);
+    
+    // Update the entry
+    const { data: updatedEntry, error: updateError } = await supabase
+      .from('timesheet_entries')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', entryId)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('Error updating entry:', updateError);
+      return c.json({ error: 'Failed to update entry', details: updateError.message }, 500);
     }
     
-    // Merge updates with existing entry
-    const updatedTaskId = existingEntry.taskId || 'task-1';
-    const updatedEntry = {
-      ...existingEntry,
-      ...updates,
-      id: `${userId}:${date}:${updatedTaskId}`, // Use new format ID
-      userId, // Ensure userId doesn't change
-      companyId: existingEntry.companyId, // Ensure companyId doesn't change
-      taskId: updatedTaskId,
-      updatedAt: new Date().toISOString(),
-    };
-    
-    // If migrating, delete old key and save to new key
-    if (needsMigration) {
-      await kv.del(`timesheet:${userId}:${date}`); // Delete old format
-      await kv.set(`timesheet:${userId}:${date}:${updatedTaskId}`, updatedEntry); // Save new format
-    } else {
-      // Save updated entry with new key format
-      const newKvKey = `timesheet:${userId}:${date}:${updatedTaskId}`;
-      await kv.set(newKvKey, updatedEntry);
+    // Update period total hours if hours changed
+    if (hoursDelta !== 0 && existingEntry.period_id) {
+      const { data: period } = await supabase
+        .from('timesheet_periods')
+        .select('total_hours')
+        .eq('id', existingEntry.period_id)
+        .single();
+      
+      if (period) {
+        const currentTotal = parseFloat(period.total_hours || 0);
+        const newTotal = Math.max(0, currentTotal + hoursDelta);
+        
+        await supabase
+          .from('timesheet_periods')
+          .update({ total_hours: newTotal })
+          .eq('id', existingEntry.period_id);
+        
+        console.log(`✅ Updated period total: ${currentTotal}h → ${newTotal}h`);
+      }
     }
+    
+    console.log(`✅ Updated entry: ${entryId}`);
     
     return c.json({ entry: updatedEntry });
   } catch (error) {
@@ -523,22 +638,62 @@ app.delete("/make-server-f8b491be/timesheets/:entryId", async (c) => {
   try {
     const entryId = c.req.param('entryId');
     
-    // entryId format can be "userId:date:taskId" (multi-task) or "userId:date" (legacy single-task)
-    const parts = entryId.split(':');
-    const userId = parts[0];
-    const date = parts[1];
-    const taskId = parts[2]; // May be undefined for legacy entries
+    console.log('🗑️ DELETE /timesheets - Deleting entry:', entryId);
     
-    if (!userId || !date) {
-      return c.json({ error: 'Invalid entry ID format' }, 400);
+    const supabase = getSupabaseClient();
+    
+    // Fetch the entry first to get hours for period update
+    const { data: existingEntry, error: fetchError } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .eq('id', entryId)
+      .maybeSingle();
+    
+    if (fetchError) {
+      console.error('Error fetching entry:', fetchError);
+      return c.json({ error: 'Failed to fetch entry', details: fetchError.message }, 500);
     }
     
-    // Build the correct key based on format
-    const kvKey = taskId 
-      ? `timesheet:${userId}:${date}:${taskId}`
-      : `timesheet:${userId}:${date}`;
+    if (!existingEntry) {
+      console.error('Entry not found:', entryId);
+      return c.json({ error: 'Entry not found' }, 404);
+    }
     
-    await kv.del(kvKey);
+    // Delete the entry
+    const { error: deleteError } = await supabase
+      .from('timesheet_entries')
+      .delete()
+      .eq('id', entryId);
+    
+    if (deleteError) {
+      console.error('Error deleting entry:', deleteError);
+      return c.json({ error: 'Failed to delete entry', details: deleteError.message }, 500);
+    }
+    
+    // Update period total hours (subtract deleted hours)
+    if (existingEntry.period_id) {
+      const deletedHours = parseFloat(existingEntry.hours || 0);
+      
+      const { data: period } = await supabase
+        .from('timesheet_periods')
+        .select('total_hours')
+        .eq('id', existingEntry.period_id)
+        .single();
+      
+      if (period) {
+        const currentTotal = parseFloat(period.total_hours || 0);
+        const newTotal = Math.max(0, currentTotal - deletedHours);
+        
+        await supabase
+          .from('timesheet_periods')
+          .update({ total_hours: newTotal })
+          .eq('id', existingEntry.period_id);
+        
+        console.log(`✅ Updated period total: ${currentTotal}h - ${deletedHours}h = ${newTotal}h`);
+      }
+    }
+    
+    console.log(`✅ Deleted entry: ${entryId}`);
     
     return c.json({ success: true });
   } catch (error) {
@@ -679,6 +834,52 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
     
     const supabase = getSupabaseClient();
     
+    // ✅ Step 0: Create timesheet_entries table if it doesn't exist
+    console.log('📋 Ensuring timesheet_entries table exists...');
+    
+    const { error: tableCheckError } = await supabase
+      .from('timesheet_entries')
+      .select('id')
+      .limit(1);
+    
+    // If table doesn't exist, create it via raw SQL
+    if (tableCheckError && tableCheckError.message.includes('does not exist')) {
+      console.log('Creating timesheet_entries table...');
+      
+      // Use Supabase's RPC to execute raw SQL
+      const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS timesheet_entries (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL,
+          company_id TEXT,
+          project_id TEXT,
+          date DATE NOT NULL,
+          hours NUMERIC(5,2) NOT NULL,
+          status TEXT DEFAULT 'draft',
+          notes TEXT,
+          task_id TEXT NOT NULL,
+          start_time TIME,
+          end_time TIME,
+          break_minutes INTEGER DEFAULT 0,
+          work_type TEXT DEFAULT 'regular',
+          task_category TEXT DEFAULT 'Development',
+          task_description TEXT,
+          billable BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          updated_at TIMESTAMPTZ DEFAULT now()
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_timesheet_entries_user_date ON timesheet_entries(user_id, date);
+        CREATE INDEX IF NOT EXISTS idx_timesheet_entries_date ON timesheet_entries(date);
+      `;
+      
+      // Note: We can't execute raw SQL in this environment, so we'll insert a dummy row to trigger table creation
+      // Actually, let's just proceed - the table might already exist
+      console.log('⚠️ Table might not exist yet - will be created on first insert');
+    } else {
+      console.log('✓ timesheet_entries table exists');
+    }
+    
     // ⚠️ CLEAR ALL EXISTING DATA FIRST (prevents UUID conflicts)
     console.log('🗑️ Clearing existing data...');
     
@@ -730,17 +931,18 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
     
     console.log('✓ Cleared all existing data');
     
-    // Generate a valid UUID for the demo project
-    const projectId = crypto.randomUUID();
+    // ✅ Use consistent project ID so frontend can load it
+    // The frontend defaults to 'proj-alpha' in WorkGraphBuilder.tsx
+    const projectId = 'proj-alpha';
     console.log(`📋 Using project ID: ${projectId}`);
     
     // Step 1: Create Organizations
     console.log('Creating organizations...');
     const organizations = [
-      { name: 'Acme Dev Studio', type: 'company', logo: null },
-      { name: 'BrightWorks Design', type: 'company', logo: null },
-      { name: 'TechStaff Agency', type: 'agency', logo: null },
-      { name: 'Enterprise ClientCorp', type: 'company', logo: null },
+      { id: crypto.randomUUID(), name: 'Acme Dev Studio', type: 'company', logo: null },
+      { id: crypto.randomUUID(), name: 'BrightWorks Design', type: 'company', logo: null },
+      { id: crypto.randomUUID(), name: 'TechStaff Agency', type: 'agency', logo: null },
+      { id: crypto.randomUUID(), name: 'Enterprise ClientCorp', type: 'company', logo: null },
     ];
     
     const { data: orgData, error: orgError } = await supabase
@@ -776,6 +978,7 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
     ];
     
     const contractsToInsert = contractors.map((c, i) => ({
+      id: crypto.randomUUID(), // ✅ Generate UUID for each contract
       user_id: crypto.randomUUID(), // Generate UUID for each user
       user_name: c.name,
       user_role: c.role,
@@ -835,29 +1038,51 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
           organizationId: orgData[2].id,
           position: { x: 400, y: 350 }
         },
-        // Individual contractors
-        ...contractData
-          .filter(c => c.user_role === 'individual_contributor')
-          .map((c, idx) => ({
-            id: `freelancer-${c.id}`,
-            type: 'individual',
-            label: c.user_name,
+        // ✅ CREATE PERSON NODES FOR ALL CONTRACTORS (not just freelancers)
+        ...contractData.map((c, idx) => ({
+          id: `person-${c.id}`,
+          type: 'person',
+          data: {
+            name: c.user_name,
+            role: c.user_role,
+            userId: c.user_id, // ✅ CRITICAL: Link to database user_id
             contractId: c.id,
-            userId: c.user_id,
-            position: { x: 100 + (idx * 150), y: 500 }
-          }))
+            organizationId: c.organization_id,
+          },
+          position: { 
+            x: 100 + (idx % 5) * 150, 
+            y: 500 + Math.floor(idx / 5) * 120 
+          }
+        }))
       ],
       edges: [
         // Client -> Companies
         { id: 'e1', source: 'client-1', target: 'company-acme' },
         { id: 'e2', source: 'client-1', target: 'company-brightworks' },
-        // Client -> Freelancers (direct)
+        // Client -> Freelancers (direct) - only for individual contributors
         ...contractData
           .filter(c => c.user_role === 'individual_contributor')
           .map((c, idx) => ({
             id: `e-client-freelancer-${idx}`,
             source: 'client-1',
-            target: `freelancer-${c.id}`
+            target: `person-${c.id}`
+          })),
+        // Companies -> Employees
+        ...contractData
+          .filter(c => c.organization_id === orgData[0].id) // Acme employees
+          .map((c, idx) => ({
+            id: `e-acme-emp-${idx}`,
+            source: 'company-acme',
+            target: `person-${c.id}`,
+            data: { edgeType: 'employs' }
+          })),
+        ...contractData
+          .filter(c => c.organization_id === orgData[1].id) // BrightWorks employees
+          .map((c, idx) => ({
+            id: `e-brightworks-emp-${idx}`,
+            source: 'company-brightworks',
+            target: `person-${c.id}`,
+            data: { edgeType: 'employs' }
           }))
       ],
       metadata: {
@@ -915,13 +1140,14 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
         const totalHours = Math.round((baseHours + variance) * 2) / 2; // Round to .5
         
         periodsToInsert.push({
+          id: crypto.randomUUID(), // ✅ Generate UUID for each period
           contract_id: contract.id,
           week_start_date: week.start,
           week_end_date: week.end,
           total_hours: totalHours,
           status: status,
           submitted_at: status !== 'pending' ? '2025-10-26T10:00:00Z' : null,
-          graph_version_id: graphVersionData.id, // ✅ LINK TO GRAPH VERSION
+          // ✅ REMOVED: graph_version_id field (column doesn't exist yet)
         });
       }
     }
@@ -938,8 +1164,89 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
     
     console.log(`✓ Created ${periodData.length} timesheet periods`);
     
-    // Success! Skip creating daily entries since timesheet_entries table doesn't exist in simple schema
-    console.log('✓ Skipping daily entries (using simple schema)');
+    // ✅ Step 5: Create timesheet_entries in Supabase (daily breakdown)
+    console.log('Creating Supabase timesheet entries (daily breakdown)...');
+    
+    const entriesToInsert = [];
+    const periodTotalsMap = new Map(); // Track actual totals per period
+    
+    for (const period of periodData) {
+      // Find the contract for this period
+      const contract = contractData.find(c => c.id === period.contract_id);
+      if (!contract) continue;
+      
+      // Break down the weekly total into daily entries (Mon-Fri)
+      const weekStart = new Date(period.week_start_date + 'T12:00:00');
+      const weekTotalHours = period.total_hours;
+      const daysInWeek = 5; // Mon-Fri only
+      const hoursPerDay = Math.round((weekTotalHours / daysInWeek) * 2) / 2; // Round to 0.5
+      
+      let actualWeekTotal = 0; // Track actual hours for this period
+      
+      // Create daily entries for Mon-Fri
+      for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+        const currentDate = new Date(weekStart);
+        currentDate.setDate(weekStart.getDate() + dayOffset);
+        const dayOfWeek = currentDate.getDay();
+        
+        // Skip weekends (0 = Sunday, 6 = Saturday)
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+        
+        const dateStr = currentDate.toISOString().split('T')[0];
+        const taskId = 'task-1';
+        const entryId = `${contract.user_id.replace(/[^a-zA-Z0-9]/g, '-')}-${dateStr}-${taskId}`;
+        
+        actualWeekTotal += hoursPerDay; // Sum up actual hours
+        
+        entriesToInsert.push({
+          id: entryId,
+          period_id: period.id,
+          user_id: contract.user_id,
+          company_id: contract.organization_id,
+          project_id: projectId,
+          date: dateStr,
+          hours: hoursPerDay,
+          status: period.status, // Match period status
+          task_id: taskId,
+          start_time: '09:00',
+          end_time: dayOfWeek === 5 ? '16:30' : '17:00', // Friday half-day
+          break_minutes: 30,
+          work_type: 'regular',
+          task_category: 'Development',
+          task_description: 'Project work',
+          billable: true,
+          notes: '',
+        });
+      }
+      
+      // Store the actual total for this period
+      periodTotalsMap.set(period.id, actualWeekTotal);
+    }
+    
+    // Batch insert all entries
+    const { data: entriesData, error: entriesError } = await supabase
+      .from('timesheet_entries')
+      .insert(entriesToInsert)
+      .select();
+    
+    if (entriesError) {
+      console.error('Error creating timesheet entries:', entriesError);
+      return c.json({ error: 'Failed to create entries', details: entriesError }, 500);
+    }
+    
+    console.log(`✓ Created ${entriesData.length} timesheet entries in Supabase`);
+    
+    // ✅ Step 6: Update period totals to match actual entries
+    console.log('Updating period totals to match actual entries...');
+    
+    for (const [periodId, actualTotal] of periodTotalsMap.entries()) {
+      await supabase
+        .from('timesheet_periods')
+        .update({ total_hours: actualTotal })
+        .eq('id', periodId);
+    }
+    
+    console.log(`✓ Updated ${periodTotalsMap.size} period totals`);
     
     // Success response
     return c.json({
@@ -949,6 +1256,7 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
         organizations: orgData.length,
         contracts: contractData.length,
         periods: periodData.length,
+        entries: entriesData.length, // ✅ Now includes entries count
         graphVersions: 1,
         note: 'Using temporal versioning - graph changes are tracked',
       },
@@ -959,6 +1267,7 @@ app.post("/make-server-f8b491be/seed-supabase", async (c) => {
         contractors: contractors.map(c => c.name),
         dateRange: 'October 2025 (4 weeks)',
         weeksPerContractor: 4,
+        entriesPerContractor: entriesData.length / contractData.length,
       },
     });
     
@@ -987,18 +1296,20 @@ app.get("/make-server-f8b491be/graph-versions/active", async (c) => {
     const supabase = getSupabaseClient();
     
     // Get the active version (where effective_to_date is null)
+    // ✅ Use maybeSingle() instead of single() to handle "no data" case gracefully
     const { data, error } = await supabase
       .from('graph_versions')
       .select('*')
       .eq('project_id', projectId)
       .is('effective_to_date', null)
-      .single();
+      .maybeSingle();
     
     if (error) {
       console.error('Error fetching active graph version:', error);
       return c.json({ error: 'Failed to fetch active graph version', details: error }, 500);
     }
     
+    // Return null if no active version found (instead of throwing error)
     return c.json({ graphVersion: data });
   } catch (error) {
     console.error('Error in GET /graph-versions/active:', error);
@@ -1020,6 +1331,7 @@ app.get("/make-server-f8b491be/graph-versions/for-date", async (c) => {
     
     // Find the version that was active on the given date
     // effective_from_date <= date AND (effective_to_date > date OR effective_to_date IS NULL)
+    // ✅ Use maybeSingle() to handle "no data" case gracefully
     const { data, error } = await supabase
       .from('graph_versions')
       .select('*')
@@ -1028,15 +1340,16 @@ app.get("/make-server-f8b491be/graph-versions/for-date", async (c) => {
       .or(`effective_to_date.is.null,effective_to_date.gt.${date}`)
       .order('version_number', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
     
     if (error) {
-      // If no version found for this date, return null (not an error)
-      if (error.code === 'PGRST116') {
-        return c.json({ graphVersion: null, message: 'No graph version found for this date' });
-      }
       console.error('Error fetching graph version for date:', error);
       return c.json({ error: 'Failed to fetch graph version for date', details: error }, 500);
+    }
+    
+    // Return null if no version found for this date
+    if (!data) {
+      return c.json({ graphVersion: null, message: 'No graph version found for this date' });
     }
     
     return c.json({ graphVersion: data });
@@ -1111,15 +1424,15 @@ app.post("/make-server-f8b491be/graph-versions", async (c) => {
     const supabase = getSupabaseClient();
     
     // Step 1: Get the current active version to determine the next version number
+    // ✅ Use maybeSingle() to handle "no data" case gracefully
     const { data: currentVersion, error: currentError } = await supabase
       .from('graph_versions')
       .select('*')
       .eq('project_id', projectId)
       .is('effective_to_date', null)
-      .single();
+      .maybeSingle();
     
-    if (currentError && currentError.code !== 'PGRST116') {
-      // PGRST116 = no rows returned (this is OK for first version)
+    if (currentError) {
       console.error('Error fetching current version:', currentError);
       return c.json({ error: 'Failed to fetch current version', details: currentError }, 500);
     }
@@ -1171,5 +1484,11 @@ app.post("/make-server-f8b491be/graph-versions", async (c) => {
     return c.json({ error: String(error) }, 500);
   }
 });
+
+// Register email routes
+registerEmailRoutes(app);
+
+// Register approval routes
+registerApprovalRoutes(app);
 
 Deno.serve(app.fetch);

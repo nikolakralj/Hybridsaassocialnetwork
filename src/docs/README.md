@@ -1,8 +1,8 @@
 # 📚 WorkGraph Documentation
 
-**Last Updated:** November 6, 2025  
-**Current Phase:** Phase 5 - Integration & Real Data  
-**Status:** Days 1-4 Complete (4/14)
+**Last Updated:** November 12, 2025  
+**Current Phase:** Phase 1-3 Complete - Database Integration Active  
+**Status:** Production-Ready Core Features
 
 ---
 
@@ -11,11 +11,11 @@
 ### **New to WorkGraph?**
 → Start here: [`/docs/guides/START_HERE.md`](./guides/START_HERE.md)
 
-### **Want to test Phase 5 features?**
-→ Testing guide: [`/docs/guides/TEST_GRAPH_OVERLAY_NOW.md`](./guides/TEST_GRAPH_OVERLAY_NOW.md)
-
 ### **Want to understand the architecture?**
 → Architecture: [`/docs/architecture/MULTI_PARTY_ARCHITECTURE.md`](./architecture/MULTI_PARTY_ARCHITECTURE.md)
+
+### **Want to see the roadmap?**
+→ Roadmap: [`/docs/roadmap/MASTER_ROADMAP.md`](./roadmap/MASTER_ROADMAP.md)
 
 ---
 
@@ -23,90 +23,59 @@
 
 ```
 /docs/
-├── README.md                          ← You are here
-├── WORKGRAPH_MASTER_ROADMAP.md       ← Full product roadmap
-├── COMPREHENSIVE_APPROVAL_SYSTEM.md  ← Approval system architecture
-├── CONTRACT_SCOPED_RATE_VISIBILITY.md← Rate masking system
-├── CONTRACTOR_TYPES_AND_PERMISSIONS.md← Permission matrix
-├── MULTI_PARTY_APPROVAL_ARCHITECTURE.md← Multi-party design
-│
-├── /guides/                           ← Testing & How-To Guides
-│   ├── START_HERE.md                  ⭐ Start here!
-│   ├── TEST_GRAPH_OVERLAY_NOW.md      ⭐ 2-minute test
-│   ├── QUICK_TEST_CHECKLIST.md        📋 Printable checklist
-│   ├── CURRENT_STATUS_AND_TEST_PLAN.md📊 Full status
-│   ├── WHAT_HAS_BEEN_DONE.md          📖 Feature overview
-│   ├── PHASE_5_DAYS_1_4_SUMMARY.md    📅 Days 1-4 summary
-│   ├── PHASE_5_DAY_4_COMPLETE.md      ✅ Latest day
-│   ├── PHASE_5_SPRINT_GUIDE.md        🗓️ Sprint plan
-│   └── THREE_SURFACE_APPROVALS_ARCHITECTURE.md 🏗️ Architecture
-│
-├── /architecture/                     ← System Architecture
-│   ├── MULTI_PARTY_ARCHITECTURE.md    ← Multi-party design
-│   └── SYSTEM_ARCHITECTURE.md         ← Overall system
-│
-└── /roadmap/                          ← Product Roadmap
-    └── MASTER_ROADMAP.md              ← Complete roadmap
+├── README.md                          ← Updated index
+├── DOCUMENTATION_CLEANUP_LOG.md       ← Audit trail (NEW)
+├── Core docs (6 files)                ← Architecture & design
+├── /guides/                           ← User guides (9 files)
+├── /architecture/                     ← System design (5 files)
+├── /roadmap/                          ← Product roadmap (2 files)
+├── /database/                         ← Schemas (4 files)
+├── /api/                              ← API specs (1 file)
+└── /project-graph/                    ← Graph config (2 files)
 ```
 
 ---
 
-## 🎯 What's Been Built (Phase 5 Days 1-4)
+## 🎯 What's Been Built
 
-### **Day 1: Project Creation System** ✅
-- 4-step wizard to create multi-party projects
-- Add companies, agencies, clients
-- Assign roles and permissions
+### ✅ **Phase 1: Unified Calendar & Timesheets**
+- Multi-person timesheet calendar with drag-and-drop
+- Weekly table → monthly drawer workflow
+- Contract-based time entry with approval states
+- Real-time database synchronization
 
-### **Day 2: Policy Versioning** ✅
-- Publish immutable policy versions (v1, v2, v3...)
-- Version history with restore
-- In-flight approvals stay on old version
+### ✅ **Phase 2: Multi-Party Approval System**
+- 3-layer hierarchical approval flows
+- Contract-based visual grouping
+- Multi-party project architecture (companies → agencies → freelancers)
+- Rate visibility controls per contract
 
-### **Day 3: Global Approvals Workbench** ✅
-- Cross-project approval queue (18 items)
-- Smart filtering (project, party, step, SLA)
-- Bulk approve with safety threshold
-- Rate masking for sensitive data
+### ✅ **Phase 3: Database Integration**
+- Pure Supabase architecture (migrated from hybrid KV)
+- Real-time data synchronization across all views
+- Timezone-aware date handling
+- Fixed data consistency bugs (WorkGraph ↔ Timesheets matching)
 
-### **Day 4: Graph Overlay Integration** ✅
-- "View path on graph" button
-- Full-screen visual approval flow
-- Approve directly from graph
-- Auto-close and refresh
-
-**Progress:** 4/14 days complete (29%) | 10/13 features complete (77%)
+### 📋 **Current Focus: Documentation & Roadmap Planning**
+- Cleaning up outdated docs
+- Organizing roadmap for Phase 4+
+- Preparing for enterprise features
 
 ---
 
 ## 📖 Key Documentation Files
 
-### **Testing Guides:**
-- **[START_HERE.md](./guides/START_HERE.md)** - Documentation index, choose your path
-- **[TEST_GRAPH_OVERLAY_NOW.md](./guides/TEST_GRAPH_OVERLAY_NOW.md)** - 2-minute critical test
-- **[QUICK_TEST_CHECKLIST.md](./guides/QUICK_TEST_CHECKLIST.md)** - Printable checklist
-- **[CURRENT_STATUS_AND_TEST_PLAN.md](./guides/CURRENT_STATUS_AND_TEST_PLAN.md)** - Detailed status
-
-### **Phase 5 Documentation:**
-- **[PHASE_5_DAY_4_COMPLETE.md](./guides/PHASE_5_DAY_4_COMPLETE.md)** - Latest day summary
-- **[PHASE_5_DAYS_1_4_SUMMARY.md](./guides/PHASE_5_DAYS_1_4_SUMMARY.md)** - Full summary
-- **[PHASE_5_SPRINT_GUIDE.md](./guides/PHASE_5_SPRINT_GUIDE.md)** - 14-day sprint plan
-- **[WHAT_HAS_BEEN_DONE.md](./guides/WHAT_HAS_BEEN_DONE.md)** - Feature overview
-
-### **Architecture:**
-- **[THREE_SURFACE_APPROVALS_ARCHITECTURE.md](./guides/THREE_SURFACE_APPROVALS_ARCHITECTURE.md)** - Approval surfaces
-- **[MULTI_PARTY_ARCHITECTURE.md](./architecture/MULTI_PARTY_ARCHITECTURE.md)** - Multi-party design
-- **[SYSTEM_ARCHITECTURE.md](./architecture/SYSTEM_ARCHITECTURE.md)** - Overall system
-- **[COMPREHENSIVE_APPROVAL_SYSTEM.md](./COMPREHENSIVE_APPROVAL_SYSTEM.md)** - Approval architecture
-
-### **Core Concepts:**
-- **[CONTRACT_SCOPED_RATE_VISIBILITY.md](./CONTRACT_SCOPED_RATE_VISIBILITY.md)** - Rate masking
-- **[CONTRACTOR_TYPES_AND_PERMISSIONS.md](./CONTRACTOR_TYPES_AND_PERMISSIONS.md)** - Permissions
-- **[MULTI_PARTY_APPROVAL_ARCHITECTURE.md](./MULTI_PARTY_APPROVAL_ARCHITECTURE.md)** - Multi-party
-
-### **Roadmap:**
-- **[MASTER_ROADMAP.md](./roadmap/MASTER_ROADMAP.md)** - Complete product roadmap
-- **[WORKGRAPH_MASTER_ROADMAP.md](./WORKGRAPH_MASTER_ROADMAP.md)** - Full roadmap
+### **Core Architecture:**
+- **[COMPREHENSIVE_APPROVAL_SYSTEM.md](./COMPREHENSIVE_APPROVAL_SYSTEM.md)** - Complete approval system design
+- **[MULTI_PARTY_APPROVAL_ARCHITECTURE.md](./MULTI_PARTY_APPROVAL_ARCHITECTURE.md)** - Multi-party project architecture
+- **[CONTRACT_SCOPED_RATE_VISIBILITY.md](./CONTRACT_SCOPED_RATE_VISIBILITY.md)** - Rate masking & privacy system
+- **[CONTRACTOR_TYPES_AND_PERMISSIONS.md](./CONTRACTOR_TYPES_AND_PERMISSIONS.md)** - Permission matrix
+- **[TIMESHEET_ARCHITECTURE.md](./TIMESHEET_ARCHITECTURE.md)** - Timesheet system design
+- **[EXPENSE_MANAGEMENT_ARCHITECTURE.md](./EXPENSE_MANAGEMENT_ARCHITECTURE.md)** - Expense & receipt management
+- **[PROJECT_GRAPH_EXPLAINED.md](./PROJECT_GRAPH_EXPLAINED.md)** - Graph vs data flow architecture ⭐ NEW
+- **[TEMPORAL_GRAPH_VERSIONING.md](./TEMPORAL_GRAPH_VERSIONING.md)** - Graph structure versioning (companies leaving/joining)
+- **[VERSIONING_STRATEGY.md](./VERSIONING_STRATEGY.md)** - Policy vs Graph versioning explained
+- **[DATABASE_SETUP.md](./DATABASE_SETUP.md)** - Database configuration
 
 ---
 

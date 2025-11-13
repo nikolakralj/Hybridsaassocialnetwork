@@ -36,10 +36,20 @@ import {
 } from '../../utils/api/approvals-queue';
 import { GraphOverlayModal } from './GraphOverlayModal';
 
-export function ApprovalsWorkbench() {
+interface ApprovalsWorkbenchProps {
+  projectFilter?: string;  // Optional: filter to specific project
+  statusFilter?: "all" | "pending" | "approved" | "rejected";  // Optional: filter by status
+  embedded?: boolean;  // Optional: embedded mode (no header)
+}
+
+export function ApprovalsWorkbench({ 
+  projectFilter, 
+  statusFilter = "all",
+  embedded = false 
+}: ApprovalsWorkbenchProps = {}) {
   const [items, setItems] = useState<ApprovalQueueItem[]>([]);
   const [filters, setFilters] = useState<QueueFilters>({
-    projects: [],
+    projects: projectFilter ? [projectFilter] : [],
     parties: [],
     steps: [],
     workTypes: [],
@@ -204,131 +214,133 @@ export function ApprovalsWorkbench() {
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b px-6 py-4">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-2xl text-gray-900">My Approvals</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Cross-project approval workbench
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="outline" className="text-base px-4 py-2">
-              🔔 {items.length} pending
-            </Badge>
-            {breachedCount > 0 && (
-              <Badge variant="destructive" className="text-base px-4 py-2">
-                ⚠️ {breachedCount} breached
+      {!embedded && (
+        <div className="bg-white border-b px-6 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-2xl text-gray-900">My Approvals</h1>
+              <p className="text-sm text-gray-500 mt-1">
+                Cross-project approval workbench
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge variant="outline" className="text-base px-4 py-2">
+                🔔 {items.length} pending
               </Badge>
+              {breachedCount > 0 && (
+                <Badge variant="destructive" className="text-base px-4 py-2">
+                  ⚠️ {breachedCount} breached
+                </Badge>
+              )}
+            </div>
+          </div>
+          
+          {/* Stats Bar */}
+          <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+                <Clock className="h-4 w-4" />
+                Total Hours
+              </div>
+              <div className="text-2xl">{totalHours.toFixed(1)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+                <TrendingUp className="h-4 w-4" />
+                Total Amount
+              </div>
+              <div className="text-2xl">${(totalAmount / 1000).toFixed(1)}k</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+                <AlertTriangle className="h-4 w-4" />
+                SLA Breach
+              </div>
+              <div className="text-2xl text-red-600">{breachedCount}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
+                <BarChart3 className="h-4 w-4" />
+                Due Soon
+              </div>
+              <div className="text-2xl text-amber-600">{soonCount}</div>
+            </div>
+          </div>
+          
+          {/* Filters */}
+          <div className="flex items-center gap-3">
+            <Filter className="h-4 w-4 text-gray-400" />
+            
+            <Select value={selectedProject} onValueChange={setSelectedProject}>
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="All Projects" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Projects</SelectItem>
+                {filters.projects.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({p.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            <Select value={selectedParty} onValueChange={setSelectedParty}>
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="All Parties" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Parties</SelectItem>
+                {filters.parties.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({p.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            <Select value={selectedStep} onValueChange={setSelectedStep}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="All Steps" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Steps</SelectItem>
+                {filters.steps.map(s => (
+                  <SelectItem key={s.order} value={s.order.toString()}>
+                    {s.label} ({s.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            <Select value={selectedSLA} onValueChange={setSelectedSLA}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="All SLA" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All SLA</SelectItem>
+                <SelectItem value="breach">⚠️ Breached</SelectItem>
+                <SelectItem value="soon">🟡 Due Soon</SelectItem>
+              </SelectContent>
+            </Select>
+            
+            {(selectedProject !== 'all' || selectedParty !== 'all' || selectedStep !== 'all' || selectedSLA !== 'all') && (
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => {
+                  setSelectedProject('all');
+                  setSelectedParty('all');
+                  setSelectedStep('all');
+                  setSelectedSLA('all');
+                }}
+              >
+                Clear Filters
+              </Button>
             )}
           </div>
         </div>
-        
-        {/* Stats Bar */}
-        <div className="grid grid-cols-4 gap-4 mb-4">
-          <div className="bg-gray-50 rounded-lg p-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-              <Clock className="h-4 w-4" />
-              Total Hours
-            </div>
-            <div className="text-2xl">{totalHours.toFixed(1)}</div>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-              <TrendingUp className="h-4 w-4" />
-              Total Amount
-            </div>
-            <div className="text-2xl">${(totalAmount / 1000).toFixed(1)}k</div>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-              <AlertTriangle className="h-4 w-4" />
-              SLA Breach
-            </div>
-            <div className="text-2xl text-red-600">{breachedCount}</div>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
-              <BarChart3 className="h-4 w-4" />
-              Due Soon
-            </div>
-            <div className="text-2xl text-amber-600">{soonCount}</div>
-          </div>
-        </div>
-        
-        {/* Filters */}
-        <div className="flex items-center gap-3">
-          <Filter className="h-4 w-4 text-gray-400" />
-          
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="All Projects" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {filters.projects.map(p => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name} ({p.count})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Select value={selectedParty} onValueChange={setSelectedParty}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="All Parties" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Parties</SelectItem>
-              {filters.parties.map(p => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name} ({p.count})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Select value={selectedStep} onValueChange={setSelectedStep}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="All Steps" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Steps</SelectItem>
-              {filters.steps.map(s => (
-                <SelectItem key={s.order} value={s.order.toString()}>
-                  {s.label} ({s.count})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Select value={selectedSLA} onValueChange={setSelectedSLA}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="All SLA" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All SLA</SelectItem>
-              <SelectItem value="breach">⚠️ Breached</SelectItem>
-              <SelectItem value="soon">🟡 Due Soon</SelectItem>
-            </SelectContent>
-          </Select>
-          
-          {(selectedProject !== 'all' || selectedParty !== 'all' || selectedStep !== 'all' || selectedSLA !== 'all') && (
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={() => {
-                setSelectedProject('all');
-                setSelectedParty('all');
-                setSelectedStep('all');
-                setSelectedSLA('all');
-              }}
-            >
-              Clear Filters
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
       
       {/* Bulk Action Toolbar */}
       {selectedItems.size > 0 && (

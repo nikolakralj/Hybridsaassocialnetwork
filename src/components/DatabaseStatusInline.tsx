@@ -4,8 +4,11 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Database, CheckCircle, XCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { Database, CheckCircle, XCircle, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { verifySupabaseSetup } from '../utils/api/supabase-setup-check';
+import { Button } from './ui/button';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { toast } from 'sonner';
 
 export function DatabaseStatusInline() {
   const [status, setStatus] = useState<{
@@ -15,6 +18,7 @@ export function DatabaseStatusInline() {
     errors: string[];
   } | null>(null);
   const [isChecking, setIsChecking] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
 
   const checkStatus = async () => {
     setIsChecking(true);
@@ -31,6 +35,51 @@ export function DatabaseStatusInline() {
       });
     } finally {
       setIsChecking(false);
+    }
+  };
+
+  const seedDatabase = async () => {
+    setIsSeeding(true);
+    try {
+      console.log('🌱 Starting database seed...');
+      
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/seed-supabase`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok) {
+        console.log('✅ Seed successful:', result);
+        toast.success('Database seeded successfully!', {
+          description: `Created ${result.summary?.organizations || 0} organizations, ${result.summary?.contracts || 0} contracts, and ${result.summary?.periods || 0} timesheet periods. Reloading app...`,
+          duration: 3000,
+        });
+        
+        // ✅ Reload the entire page to force graph to reload from database
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        console.error('❌ Seed failed:', result);
+        toast.error('Failed to seed database', {
+          description: result.error || 'Unknown error occurred',
+        });
+      }
+    } catch (error) {
+      console.error('❌ Seed error:', error);
+      toast.error('Failed to seed database', {
+        description: String(error),
+      });
+    } finally {
+      setIsSeeding(false);
     }
   };
 
@@ -113,6 +162,25 @@ export function DatabaseStatusInline() {
               <div className="text-xs font-semibold text-green-700">
                 ✅ Found {Object.values(status.counts).reduce((a, b) => a + b, 0)} total records
               </div>
+              <Button
+                onClick={seedDatabase}
+                disabled={isSeeding}
+                size="sm"
+                variant="outline"
+                className="w-full text-xs mt-2"
+              >
+                {isSeeding ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                    Re-seeding database...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                    Re-seed Database
+                  </>
+                )}
+              </Button>
             </div>
           )}
 
@@ -143,6 +211,31 @@ export function DatabaseStatusInline() {
           )}
         </div>
       ) : null}
+
+      {/* Seed Button */}
+      {allTablesExist && !hasData && (
+        <div className="pt-2 border-t border-gray-200">
+          <Button
+            onClick={seedDatabase}
+            disabled={isSeeding}
+            size="sm"
+            variant="outline"
+            className="w-full text-xs"
+          >
+            {isSeeding ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                Seeding database...
+              </>
+            ) : (
+              <>
+                <Database className="w-3 h-3 mr-1.5" />
+                Seed Demo Data
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

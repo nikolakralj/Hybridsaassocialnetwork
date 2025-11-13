@@ -11,9 +11,11 @@ import { DatabaseSyncTest } from "./timesheets/DatabaseSyncTest"; // ✅ Databas
 import { ProjectsListView } from "./projects/ProjectsListView";
 import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
 import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench"; // ✅ DAY 3: Global approvals
+import { DeepLinkApprovalHandler, DeepLinkRejectionHandler } from "./approvals/DeepLinkHandler"; // ✅ DAY 7: Deep-link approvals
 import { TestDashboard } from "./TestDashboard"; // ✅ NEW: Comprehensive testing dashboard
 import { CheckboxTest } from "./CheckboxTest";
 import { DatabaseSetup } from "./DatabaseSetup"; // ✅ NEW: Database setup page
+import { EmailTest } from "./EmailTest"; // ✅ DAY 8: Email testing
 import { PersonaType } from "./social/IntentChips";
 import { Toaster } from "./ui/sonner";
 import { WorkGraphProvider } from "../contexts/WorkGraphContext";
@@ -32,8 +34,12 @@ type AppRoute =
   | "db-sync-test"
   | "projects" // ✅ Projects management route
   | "approvals" // ✅ DAY 3: Global approvals workbench
+  | "approve" // ✅ DAY 7: Deep-link approve
+  | "reject" // ✅ DAY 7: Deep-link reject
+  | "approval-view" // ✅ DAY 7: Deep-link view
   | "test-dashboard" // ✅ NEW: Comprehensive testing dashboard
   | "checkbox-test" // ✅ Checkbox debugging
+  | "email-test" // ✅ DAY 8: Email testing
   | "setup"; // ✅ NEW: Database setup
 
 interface UserData {
@@ -45,7 +51,16 @@ interface UserData {
 }
 
 function AppContent() {
-  const [currentRoute, setCurrentRoute] = useState<AppRoute>("projects");
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>(() => {
+    // Check URL on mount to handle deep-links
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      if (path.includes('/approve')) return 'approve';
+      if (path.includes('/reject')) return 'reject';
+      if (path.includes('/approval')) return 'approval-view';
+    }
+    return "projects";
+  });
   const [userIntent, setUserIntent] = useState<PersonaType | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [showNav, setShowNav] = useState(false);
@@ -201,6 +216,15 @@ function AppContent() {
       case "approvals": // ✅ DAY 3: Global approvals workbench
         return <ApprovalsWorkbench />;
 
+      case "approve": // ✅ DAY 7: Deep-link approve
+        return <DeepLinkApprovalHandler />;
+
+      case "reject": // ✅ DAY 7: Deep-link reject
+        return <DeepLinkRejectionHandler />;
+
+      case "approval-view": // ✅ DAY 7: Deep-link view
+        return <ApprovalsWorkbench />;
+
       case "test-dashboard": // ✅ Comprehensive testing dashboard
         return <TestDashboard />;
 
@@ -210,6 +234,9 @@ function AppContent() {
             <CheckboxTest />
           </div>
         );
+
+      case "email-test": // ✅ DAY 8: Email testing
+        return <EmailTest />;
 
       case "setup": // ✅ NEW: Database setup
         return <DatabaseSetup />;
@@ -229,6 +256,7 @@ function AppContent() {
     { route: "company-profile-demo", label: "🏢 Company Profile" },
     { route: "db-sync-test", label: "🔄 Database Sync Test" },
     { route: "checkbox-test", label: "✅ Checkbox Test" },
+    { route: "email-test", label: "📧 Email Test" }, // ✅ DAY 8: Email testing
     { route: "setup", label: "🔧 Database Setup" }, // ✅ NEW: Database setup
   ];
 

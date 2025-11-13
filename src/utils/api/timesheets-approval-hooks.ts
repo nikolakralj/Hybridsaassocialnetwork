@@ -443,7 +443,8 @@ export function useApprovalsData() {
   const data: OrganizationWithData[] = useMemo(() => {
     if (!organizations || !contracts) return [];
 
-    return organizations
+    // ✅ Build organization groups (including virtual group for freelancers)
+    const orgGroups = organizations
       .map(org => {
         const orgContracts = contracts
           .filter(c => c.organizationId === org.id)
@@ -462,8 +463,32 @@ export function useApprovalsData() {
           contracts: orgContracts,
         };
       })
-      // ✅ FIX: Filter out organizations with no contracts (prevents duplicates)
+      // ✅ Filter out organizations with no contracts
       .filter(org => org.contracts.length > 0);
+    
+    // ✅ NEW: Add virtual "Individual Contributors" organization for freelancers
+    const freelancerContracts = contracts
+      .filter(c => !c.organizationId) // Freelancers have null organizationId
+      .map((contract) => {
+        const periodResult = periodResults[contracts.indexOf(contract)];
+        const periods = periodResult?.data || [];
+        
+        return {
+          ...contract,
+          periods,
+        };
+      });
+    
+    if (freelancerContracts.length > 0) {
+      orgGroups.push({
+        id: 'freelancers-virtual',
+        name: 'Individual Contributors',
+        type: 'freelancer' as const,
+        contracts: freelancerContracts,
+      });
+    }
+    
+    return orgGroups;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizations, contracts, periodResultsKey]);
 

@@ -671,24 +671,31 @@ export function ProjectTimesheetsView({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="mb-1">Project Timesheets</h2>
-        <p className="text-sm text-muted-foreground mb-6">
-          Manage timesheets and approvals for all contractors on this project
-        </p>
+      <div className="flex gap-4">
+        <div className="flex-1">
+          <h2 className="mb-1">Project Timesheets</h2>
+          <p className="text-sm text-muted-foreground mb-6">
+            Manage timesheets and approvals for all contractors on this project
+          </p>
+          
+          {/* Unified Period Selector with View Mode Tabs */}
+          <PeriodSelector
+            view={viewMode}
+            onViewChange={(v) => setViewMode(v)}
+            startDate={periodStart}
+            endDate={periodEnd}
+            onNavigate={(start, end) => {
+              // Update the shared month context (will automatically update periodStart/periodEnd via useMemo)
+              setSelectedMonth(start);
+            }}
+            showCalendarTab={true}
+          />
+        </div>
         
-        {/* Unified Period Selector with View Mode Tabs */}
-        <PeriodSelector
-          view={viewMode}
-          onViewChange={(v) => setViewMode(v)}
-          startDate={periodStart}
-          endDate={periodEnd}
-          onNavigate={(start, end) => {
-            // Update the shared month context (will automatically update periodStart/periodEnd via useMemo)
-            setSelectedMonth(start);
-          }}
-          showCalendarTab={true}
-        />
+        {/* Database Status Panel (always visible) */}
+        <div className="w-80 flex-shrink-0">
+          <DatabaseStatusInline />
+        </div>
       </div>
 
       {/* Organization-Grouped Approval Table */}

@@ -39,7 +39,7 @@
           "cmdk": "^1.1.1",
           "date-fns": "*",
           "embla-carousel-react": "^8.6.0",
-          "hono": "*",
+          "hono": "^4",
           "input-otp": "^1.4.2",
           "lucide-react": "^0.487.0",
           "motion": "*",

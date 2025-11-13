@@ -19,8 +19,10 @@ import {
   Play,
   Book,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Mail
 } from 'lucide-react';
+import { EmailPreview } from './approvals/EmailPreview'; // ✅ DAY 7: Email templates
 
 interface TestItem {
   id: string;
@@ -35,6 +37,29 @@ interface TestItem {
 
 export function TestDashboard() {
   const [completedTests, setCompletedTests] = useState<Set<string>>(new Set());
+  const [showEmailPreview, setShowEmailPreview] = useState(false);
+
+  // Show email preview if requested
+  if (showEmailPreview) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-white border-b sticky top-0 z-10">
+          <div className="max-w-7xl mx-auto px-6 py-4">
+            <div className="flex items-center justify-between">
+              <h1 className="text-2xl font-semibold">Email Template Preview</h1>
+              <Button
+                variant="outline"
+                onClick={() => setShowEmailPreview(false)}
+              >
+                ← Back to Test Dashboard
+              </Button>
+            </div>
+          </div>
+        </div>
+        <EmailPreview />
+      </div>
+    );
+  }
 
   const testSections: { category: string; items: TestItem[] }[] = [
     {
@@ -341,6 +366,32 @@ export function TestDashboard() {
             </div>
           </Card>
         </div>
+
+        {/* Day 7 Feature: Email Templates */}
+        <Card className="p-6 mb-8 bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-100 rounded-lg">
+                <Mail className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold m-0 mb-1">
+                  📧 Email Templates
+                </h3>
+                <p className="text-sm text-gray-600 m-0">
+                  Preview approval notification emails (Day 7 Feature)
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={() => setShowEmailPreview(true)}
+              className="gap-2"
+            >
+              <Mail className="w-4 h-4" />
+              Preview Templates
+            </Button>
+          </div>
+        </Card>
 
         {/* Test Sections */}
         <div className="space-y-8">

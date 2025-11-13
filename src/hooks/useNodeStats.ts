@@ -164,6 +164,13 @@ async function fetchPersonStats(
     // For testing with mock data, we'll use node.data?.userId or fall back to node.id
     const userId = node.data?.userId || node.id;
     
+    console.log('🔍 Fetching stats for person node:', {
+      nodeId: node.id,
+      userId: userId,
+      nodeName: node.data?.name,
+      nodeRole: node.data?.role,
+    });
+    
     // 1. Get all contracts for this user
     const { data: contracts, error: contractsError } = await supabase
       .from('project_contracts')
@@ -184,8 +191,10 @@ async function fetchPersonStats(
       throw new Error(`Database error: ${contractsError.message}`);
     }
     
+    console.log('📋 Found contracts:', contracts?.length || 0, contracts);
+    
     if (!contracts || contracts.length === 0) {
-      console.warn('No contracts found for user:', userId);
+      console.warn('❌ No contracts found for user:', userId);
       return getDefaultPersonStats();
     }
     
@@ -209,7 +218,23 @@ async function fetchPersonStats(
       return getDefaultPersonStats();
     }
     
-    // 3. Calculate stats based on selectedMonth instead of current month
+    console.log('📊 Found timesheet periods:', periods?.length || 0, periods);
+    
+    // 3. Get actual daily entries to calculate month-accurate hours
+    // ✅ FIX: Query timesheet_entries directly instead of using period totals
+    // This prevents counting entire week's hours when only part of the week is in the viewing month
+    const { data: entries, error: entriesError } = await supabase
+      .from('timesheet_entries')
+      .select('date, hours, period_id')
+      .eq('user_id', userId);
+    
+    if (entriesError) {
+      console.warn('Could not fetch entries, falling back to period totals:', entriesError);
+    }
+    
+    console.log('📊 Found timesheet entries:', entries?.length || 0);
+    
+    // 4. Calculate stats based on selectedMonth instead of current month
     const viewingMonth = selectedMonth.getMonth();
     const viewingYear = selectedMonth.getFullYear();
     
@@ -223,26 +248,19 @@ async function fetchPersonStats(
     firstMonday.setDate(firstMonday.getDate() + daysUntilMonday);
     firstMonday.setHours(0, 0, 0, 0);
     
+    const firstMondayEnd = new Date(firstMonday);
+    firstMondayEnd.setDate(firstMonday.getDate() + 6); // Sunday of first week
+    
     let totalHours = 0;
     let currentMonthHours = 0;
     let currentWeekHours = 0;
     let lastSubmitted: Date | null = null;
     let pendingCount = 0;
     
+    // Calculate total hours from periods (all-time)
     periods?.forEach(period => {
       const hours = parseFloat(period.total_hours?.toString() || '0');
       totalHours += hours;
-      
-      // Check if period is in viewing month
-      const weekStart = new Date(period.week_start_date);
-      if (weekStart.getMonth() === viewingMonth && weekStart.getFullYear() === viewingYear) {
-        currentMonthHours += hours;
-        
-        // Count hours from the first week of the viewing month as "current week"
-        if (weekStart.getTime() === firstMonday.getTime()) {
-          currentWeekHours += hours;
-        }
-      }
       
       // Track latest submission
       if (period.submitted_at) {
@@ -257,6 +275,52 @@ async function fetchPersonStats(
         pendingCount++;
       }
     });
+    
+    // Calculate current month hours from DAILY ENTRIES (accurate)
+    if (entries && entries.length > 0) {
+      console.log(`📊 Calculating month hours for ${viewingYear}-${viewingMonth + 1} (0-indexed month: ${viewingMonth})`);
+      
+      entries.forEach(entry => {
+        // ✅ FIX: Parse date in LOCAL timezone to avoid UTC offset issues
+        // entry.date is 'YYYY-MM-DD' format, which Date() interprets as UTC midnight
+        // In PDT (UTC-7), '2025-10-01' becomes Sep 30 at 5pm, causing wrong month!
+        const [year, month, day] = entry.date.split('-').map(Number);
+        const entryDate = new Date(year, month - 1, day); // month is 0-indexed
+        
+        const entryMonth = entryDate.getMonth();
+        const entryYear = entryDate.getFullYear();
+        const entryHours = parseFloat(entry.hours?.toString() || '0');
+        
+        // Check if entry is in viewing month
+        if (entryMonth === viewingMonth && entryYear === viewingYear) {
+          currentMonthHours += entryHours;
+          console.log(`  ✓ ${entry.date}: ${entryHours}h (running total: ${currentMonthHours}h)`);
+          
+          // Check if entry is in the first week
+          if (entryDate >= firstMonday && entryDate <= firstMondayEnd) {
+            currentWeekHours += entryHours;
+          }
+        } else {
+          console.log(`  ✗ ${entry.date}: ${entryHours}h (month: ${entryMonth}, year: ${entryYear}) - SKIPPED`);
+        }
+      });
+      
+      console.log(`📊 Final month total: ${currentMonthHours}h from ${entries.length} total entries`);
+    } else {
+      // Fallback: Use period totals (less accurate for cross-month weeks)
+      periods?.forEach(period => {
+        const weekStart = new Date(period.week_start_date);
+        if (weekStart.getMonth() === viewingMonth && weekStart.getFullYear() === viewingYear) {
+          const hours = parseFloat(period.total_hours?.toString() || '0');
+          currentMonthHours += hours;
+          
+          // Count hours from the first week of the viewing month as "current week"
+          if (weekStart.getTime() === firstMonday.getTime()) {
+            currentWeekHours += hours;
+          }
+        }
+      });
+    }
     
     return {
       totalHoursWorked: totalHours,

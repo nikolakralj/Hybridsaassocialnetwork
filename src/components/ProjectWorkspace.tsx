@@ -4,6 +4,7 @@ import {
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
 } from "lucide-react";
 import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
+import { ProjectApprovalsTab } from "./approvals/ProjectApprovalsTab";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card } from "./ui/card";
@@ -25,7 +26,7 @@ import { MonthProvider } from "../contexts/MonthContext";
 const WorkGraphBuilder = lazy(() => import("./workgraph/WorkGraphBuilder").then(m => ({ default: m.WorkGraphBuilder })));
 
 // Module definitions
-type ModuleId = "overview" | "project-graph" | "timesheets" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
+type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
 
 interface Module {
   id: ModuleId;
@@ -82,6 +83,14 @@ export function ProjectWorkspace({
       name: "Timesheets",
       icon: Clock,
       description: "Track and approve contractor hours",
+      category: "core",
+      isEnabled: true,
+    },
+    {
+      id: "approvals",
+      name: "Approvals",
+      icon: CheckSquare,
+      description: "Manage pending approvals and tasks",
       category: "core",
       isEnabled: true,
     },
@@ -351,6 +360,13 @@ export function ProjectWorkspace({
                   { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
                 ]}
                 hourlyRate={95}
+              />
+            </TabsContent>
+
+            <TabsContent value="approvals" className="space-y-6">
+              <ProjectApprovalsTab
+                projectId={projectId}
+                projectName={projectName}
               />
             </TabsContent>
 

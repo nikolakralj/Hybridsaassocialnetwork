@@ -68,9 +68,18 @@ export function MonthlyTimesheetDrawer({
     const firstDayOfMonth = new Date(year, month, 1);
     const lastDayOfMonth = new Date(year, month + 1, 0);
     
+    // ✅ FIX: Format dates in local timezone, not UTC
+    // toISOString() converts to UTC which can shift the date in some timezones
+    const formatLocalDate = (date: Date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+    
     return {
-      startDate: firstDayOfMonth.toISOString().split('T')[0],
-      endDate: lastDayOfMonth.toISOString().split('T')[0],
+      startDate: formatLocalDate(firstDayOfMonth),
+      endDate: formatLocalDate(lastDayOfMonth),
     };
   }, [safePeriods]);
 
