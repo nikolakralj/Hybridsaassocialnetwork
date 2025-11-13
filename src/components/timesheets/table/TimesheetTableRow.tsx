@@ -303,11 +303,7 @@ export function TimesheetTableRow({
 
         {/* Actions */}
         <td className="sticky right-0 bg-white px-4 py-3 border-l border-gray-200">
-          {pendingDays > 0 && (
-            <Button size="sm" variant="outline" className="text-xs">
-              Approve
-            </Button>
-          )}
+          {/* Actions removed - approval handled in OrganizationGroupedTable */}
         </td>
       </tr>
 

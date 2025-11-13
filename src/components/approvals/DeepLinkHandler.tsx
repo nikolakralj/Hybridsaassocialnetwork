@@ -39,6 +39,16 @@ export function DeepLinkApprovalHandler() {
   const [result, setResult] = useState<ApprovalResult | null>(null);
   const [countdown, setCountdown] = useState(5);
 
+  // Debug: Log component mount
+  useEffect(() => {
+    console.log('[DEEP LINK HANDLER] Component mounted!', {
+      token,
+      action,
+      pathname: window.location.pathname,
+      search: window.location.search,
+    });
+  }, []);
+
   useEffect(() => {
     if (token) {
       handleApprovalAction();
@@ -384,5 +394,18 @@ export function DeepLinkRejectionHandler() {
   }
 
   // If reason provided, proceed with rejection
+  return <DeepLinkApprovalHandler />;
+}
+
+// Default export for easy routing
+export function DeepLinkHandler() {
+  const searchParams = getSearchParams();
+  const path = typeof window !== 'undefined' ? window.location.pathname : '';
+  
+  // Determine which handler to use based on path
+  if (path === '/reject' || searchParams.get('action') === 'reject') {
+    return <DeepLinkRejectionHandler />;
+  }
+  
   return <DeepLinkApprovalHandler />;
 }

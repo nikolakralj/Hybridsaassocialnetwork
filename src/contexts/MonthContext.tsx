@@ -21,8 +21,8 @@ interface MonthContextType {
 const MonthContext = createContext<MonthContextType | undefined>(undefined);
 
 export function MonthProvider({ children }: { children: ReactNode }) {
-  // Default to October 2025 (seed data month)
-  const [selectedMonth, setSelectedMonth] = useState(new Date('2025-10-01'));
+  // Default to November 2025 (matches seed data: Nov 4-10)
+  const [selectedMonth, setSelectedMonth] = useState(new Date('2025-11-01'));
 
   return (
     <MonthContext.Provider value={{ selectedMonth, setSelectedMonth }}>

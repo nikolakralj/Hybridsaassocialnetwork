@@ -36,6 +36,8 @@ interface MonthlyTimesheetDrawerProps {
   contract: ProjectContract;
   isOpen: boolean;
   onClose: () => void;
+  currentUserId?: string; // NEW: Current logged-in user ID
+  currentUserRole?: 'contractor' | 'manager' | 'client'; // NEW: Current user's role
 }
 
 export function MonthlyTimesheetDrawer({
@@ -44,6 +46,8 @@ export function MonthlyTimesheetDrawer({
   contract,
   isOpen,
   onClose,
+  currentUserId,
+  currentUserRole,
 }: MonthlyTimesheetDrawerProps) {
   // Safety check: ensure periods is an array
   const safePeriods = useMemo(() => periods || [], [periods]);
@@ -620,32 +624,62 @@ export function MonthlyTimesheetDrawer({
           <div className="text-[10px] text-gray-600">
             {safePeriods.filter(p => p.status === 'pending').length} week(s) pending
           </div>
-          <div className="flex gap-1.5">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRejectMonth}
-              disabled={rejectMutation.isPending}
-              className="h-7 text-[10px] px-2"
-            >
-              <XCircle className="h-3 w-3 mr-1" />
-              Reject
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleApproveMonth}
-              disabled={approveMutation.isPending}
-              className="bg-green-600 hover:bg-green-700 h-7 text-[10px] px-2"
-            >
-              {approveMutation.isPending ? (
-                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-              ) : (
-                <CheckCircle className="h-3 w-3 mr-1" />
-              )}
-              Approve Month
-            </Button>
-          </div>
+          
+          {/* ✅ ROLE-BASED ACTION BUTTONS */}
+          {(() => {
+            const isOwnTimesheet = currentUserId === contract.userId;
+            
+            console.log('🔍 MonthlyTimesheetDrawer footer buttons:', {
+              currentUserId,
+              contractUserId: contract.userId,
+              isOwnTimesheet,
+              currentUserRole,
+            });
+            
+            // Contractor viewing their own timesheet - NO BUTTONS (can't approve own work)
+            if (currentUserRole === 'contractor' && isOwnTimesheet) {
+              return (
+                <div className="text-[10px] text-gray-500 italic">
+                  View only - submit from timesheet table above
+                </div>
+              );
+            }
+            
+            // Manager or Client viewing contractor's timesheet - SHOW APPROVE/REJECT
+            if (currentUserRole === 'manager' || currentUserRole === 'client') {
+              return (
+                <div className="flex gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRejectMonth}
+                    disabled={rejectMutation.isPending}
+                    className="h-7 text-[10px] px-2"
+                  >
+                    <XCircle className="h-3 w-3 mr-1" />
+                    Reject
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleApproveMonth}
+                    disabled={approveMutation.isPending}
+                    className="bg-green-600 hover:bg-green-700 h-7 text-[10px] px-2"
+                  >
+                    {approveMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                    )}
+                    Approve Month
+                  </Button>
+                </div>
+              );
+            }
+            
+            // Default: no buttons
+            return null;
+          })()}
         </div>
       </div>
     </>

@@ -39,7 +39,7 @@ interface Timesheet {
   weekStart: Date;
   weekEnd: Date;
   entries: TimesheetEntry[];
-  status: "draft" | "submitted" | "approved" | "rejected";
+  status: "draft" | "submitted" | "approved" | "manager_approved" | "rejected";
   submittedAt?: Date;
   reviewedAt?: Date;
   reviewedBy?: string;
@@ -164,6 +164,7 @@ export function TimesheetModule({
       draft: { variant: "secondary" as const, icon: AlertCircle, text: "Draft" },
       submitted: { variant: "default" as const, icon: Clock, text: "Pending Approval" },
       approved: { variant: "default" as const, icon: CheckCircle2, text: "Approved", color: "bg-success" },
+      manager_approved: { variant: "default" as const, icon: CheckCircle2, text: "Approved", color: "bg-success" },
       rejected: { variant: "destructive" as const, icon: XCircle, text: "Rejected" },
     };
     

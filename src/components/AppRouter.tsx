@@ -7,20 +7,17 @@ import { AgencyOnboardingNew } from "./onboarding/AgencyOnboardingNew";
 import { FeedHome } from "./FeedHome";
 import { CompanyProfileDemo } from "./CompanyProfileDemo";
 import { ProjectWorkspace } from "./ProjectWorkspace";
-import { DatabaseSyncTest } from "./timesheets/DatabaseSyncTest"; // ✅ Database test (development only)
 import { ProjectsListView } from "./projects/ProjectsListView";
-import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
-import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench"; // ✅ DAY 3: Global approvals
-import { DeepLinkApprovalHandler, DeepLinkRejectionHandler } from "./approvals/DeepLinkHandler"; // ✅ DAY 7: Deep-link approvals
-import { TestDashboard } from "./TestDashboard"; // ✅ NEW: Comprehensive testing dashboard
-import { CheckboxTest } from "./CheckboxTest";
-import { DatabaseSetup } from "./DatabaseSetup"; // ✅ NEW: Database setup page
-import { EmailTest } from "./EmailTest"; // ✅ DAY 8: Email testing
+import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench";
+import { DeepLinkHandler } from "./approvals/DeepLinkHandler"; // ✅ DAY 7: Deep-link approvals
+import { DatabaseSetupPage } from "./DatabaseSetupPage"; // ✅ UNIFIED: One setup page to rule them all
 import { PersonaType } from "./social/IntentChips";
 import { Toaster } from "./ui/sonner";
 import { WorkGraphProvider } from "../contexts/WorkGraphContext";
 import { QueryProvider } from "./QueryProvider";
-import { Menu, X } from "lucide-react";
+import { TestModeBanner } from "./TestModeBanner"; // ✅ TEST MODE: Banner
+import { PersonaSwitcher } from "./PersonaSwitcher"; // ✅ TEST MODE: Persona switcher
+import { Menu, X } from "lucide-react"; // ✅ Icons for nav
 
 type AppRoute = 
   | "landing" 
@@ -31,15 +28,11 @@ type AppRoute =
   | "feed"
   | "company-profile-demo"
   | "project-workspace"
-  | "db-sync-test"
   | "projects" // ✅ Projects management route
   | "approvals" // ✅ DAY 3: Global approvals workbench
   | "approve" // ✅ DAY 7: Deep-link approve
   | "reject" // ✅ DAY 7: Deep-link reject
   | "approval-view" // ✅ DAY 7: Deep-link view
-  | "test-dashboard" // ✅ NEW: Comprehensive testing dashboard
-  | "checkbox-test" // ✅ Checkbox debugging
-  | "email-test" // ✅ DAY 8: Email testing
   | "setup"; // ✅ NEW: Database setup
 
 interface UserData {
@@ -55,10 +48,47 @@ function AppContent() {
     // Check URL on mount to handle deep-links
     if (typeof window !== 'undefined') {
       const path = window.location.pathname;
-      if (path.includes('/approve')) return 'approve';
-      if (path.includes('/reject')) return 'reject';
-      if (path.includes('/approval')) return 'approval-view';
+      const search = window.location.search;
+      const hash = window.location.hash;
+      const params = new URLSearchParams(search);
+      
+      // ✅ Priority 1: Check hash-based routing #/route?params (works everywhere)
+      if (hash.startsWith('#/')) {
+        const hashPath = hash.substring(2); // Remove '#/'
+        const [hashRoute, hashSearch] = hashPath.split('?');
+        console.log('[ROUTER] ✅ DETECTED HASH ROUTE:', hashRoute);
+        if (hashRoute) return hashRoute as AppRoute;
+      }
+      
+      // ✅ Priority 2: Check query parameter ?route=xxx (works in most environments)
+      const routeParam = params.get('route');
+      if (routeParam) {
+        console.log('[ROUTER] ✅ DETECTED ROUTE FROM QUERY PARAM:', routeParam);
+        return routeParam as AppRoute;
+      }
+      
+      console.log('[ROUTER] Initial URL:', { path, search, hash, full: window.location.href });
+      
+      // ✅ Priority 3: Check pathname (fallback for environments that support it)
+      // Deep-link detection
+      if (path === '/approve' || path.includes('/approve') || search.includes('approve')) {
+        console.log('[ROUTER] ✅ DETECTED APPROVE ROUTE');
+        return 'approve';
+      }
+      if (path === '/reject' || path.includes('/reject') || search.includes('reject')) {
+        console.log('[ROUTER] ✅ DETECTED REJECT ROUTE');
+        return 'reject';
+      }
+      if (path === '/approval-view' || path === '/approval' || search.includes('approval')) {
+        console.log('[ROUTER] ✅ DETECTED APPROVAL VIEW ROUTE');
+        return 'approval-view';
+      }
+      if (path === '/setup' || path.includes('/setup')) {
+        console.log('[ROUTER] ✅ DETECTED SETUP ROUTE');
+        return 'setup';
+      }
     }
+    console.log('[ROUTER] ⚠️ No route detected, defaulting to projects');
     return "projects";
   });
   const [userIntent, setUserIntent] = useState<PersonaType | null>(null);
@@ -68,11 +98,61 @@ function AppContent() {
   // Listen for navigation events from child components
   useEffect(() => {
     const handleNavigate = (event: CustomEvent<AppRoute>) => {
-      setCurrentRoute(event.detail);
+      const route = event.detail;
+      setCurrentRoute(route);
+      // ✅ Update URL so refresh works
+      window.history.pushState({}, '', `#/${route}`);
     };
     
     window.addEventListener('navigate', handleNavigate as EventListener);
     return () => window.removeEventListener('navigate', handleNavigate as EventListener);
+  }, []);
+  
+  // Listen for URL changes (for deep-links and browser back/forward)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#/')) {
+        const hashPath = hash.substring(2); // Remove '#/'
+        const [hashRoute] = hashPath.split('?');
+        console.log('[ROUTER] Hash changed to:', hashRoute);
+        if (hashRoute) {
+          setCurrentRoute(hashRoute as AppRoute);
+        }
+      }
+    };
+
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      const search = window.location.search;
+      const hash = window.location.hash;
+      
+      console.log('[ROUTER] URL changed:', { path, search, hash });
+      
+      // First check hash
+      if (hash.startsWith('#/')) {
+        handleHashChange();
+        return;
+      }
+      
+      // Then check pathname/search
+      if (path === '/approve' || path.includes('/approve') || search.includes('approve')) {
+        setCurrentRoute('approve');
+      } else if (path === '/reject' || path.includes('/reject') || search.includes('reject')) {
+        setCurrentRoute('reject');
+      } else if (path === '/approval-view' || path === '/approval') {
+        setCurrentRoute('approval-view');
+      } else if (path === '/setup' || path.includes('/setup')) {
+        setCurrentRoute('setup');
+      }
+    };
+    
+    window.addEventListener('hashchange', handleHashChange);
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   // Handle signup from landing page
@@ -207,9 +287,6 @@ function AppContent() {
       case "project-workspace":
         return <ProjectWorkspace />;
 
-      case "db-sync-test": // ✅ NEW: Database sync test route
-        return <DatabaseSyncTest />;
-
       case "projects": // ✅ NEW: Projects management
         return <ProjectsListView />;
 
@@ -217,29 +294,16 @@ function AppContent() {
         return <ApprovalsWorkbench />;
 
       case "approve": // ✅ DAY 7: Deep-link approve
-        return <DeepLinkApprovalHandler />;
+        return <DeepLinkHandler />;
 
       case "reject": // ✅ DAY 7: Deep-link reject
-        return <DeepLinkRejectionHandler />;
+        return <DeepLinkHandler />;
 
       case "approval-view": // ✅ DAY 7: Deep-link view
         return <ApprovalsWorkbench />;
 
-      case "test-dashboard": // ✅ Comprehensive testing dashboard
-        return <TestDashboard />;
-
-      case "checkbox-test": // ✅ Checkbox debugging
-        return (
-          <div className="min-h-screen bg-gray-100 flex items-center justify-center p-8">
-            <CheckboxTest />
-          </div>
-        );
-
-      case "email-test": // ✅ DAY 8: Email testing
-        return <EmailTest />;
-
       case "setup": // ✅ NEW: Database setup
-        return <DatabaseSetup />;
+        return <DatabaseSetupPage />;
 
       default:
         return <Landing onSignIn={handleSignIn} onSignUp={handleSignUp} />;
@@ -247,23 +311,22 @@ function AppContent() {
   };
 
   const navigationRoutes: { route: AppRoute; label: string }[] = [
-    { route: "test-dashboard", label: "🧪 TEST DASHBOARD" }, // ✅ NEW: Featured at top
     { route: "landing", label: "🏠 Landing" },
     { route: "feed", label: "📰 Feed" },
     { route: "projects", label: "📋 Projects" },
     { route: "approvals", label: "✅ My Approvals" }, // ✅ DAY 3: Global approvals
     { route: "project-workspace", label: "📁 Project Workspace" },
     { route: "company-profile-demo", label: "🏢 Company Profile" },
-    { route: "db-sync-test", label: "🔄 Database Sync Test" },
-    { route: "checkbox-test", label: "✅ Checkbox Test" },
-    { route: "email-test", label: "📧 Email Test" }, // ✅ DAY 8: Email testing
     { route: "setup", label: "🔧 Database Setup" }, // ✅ NEW: Database setup
   ];
 
   return (
     <div className="min-h-screen bg-background">
+      {/* ✅ TEST MODE BANNER */}
+      <TestModeBanner />
+      
       {/* Developer Navigation Bar - ENHANCED */}
-      <div className="fixed top-0 left-0 right-0 z-[99999] bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-2xl border-b border-slate-700">
+      <div className="fixed top-12 left-0 right-0 z-[99999] bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-2xl border-b border-slate-700">
         <div className="flex items-center justify-between px-6 py-3">
           <div className="flex items-center gap-3">
             <span className="text-sm font-bold tracking-wide bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
@@ -273,34 +336,39 @@ function AppContent() {
             <span className="text-sm font-medium text-blue-300">{currentRoute}</span>
           </div>
           
-          <button
-            onClick={() => setShowNav(!showNav)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              border: '1px solid #475569',
-              backgroundColor: showNav ? '#2563eb' : '#334155',
-              color: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontWeight: '500',
-              fontSize: '14px',
-              transition: 'all 0.2s',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = showNav ? '#1d4ed8' : '#475569';
-              e.currentTarget.style.transform = 'translateY(-1px)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = showNav ? '#2563eb' : '#334155';
-              e.currentTarget.style.transform = 'translateY(0)';
-            }}
-          >
-            {showNav ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            <span>{showNav ? 'Close' : 'Navigate'}</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {/* ✅ PERSONA SWITCHER */}
+            <PersonaSwitcher />
+            
+            <button
+              onClick={() => setShowNav(!showNav)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid #475569',
+                backgroundColor: showNav ? '#2563eb' : '#334155',
+                color: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: '500',
+                fontSize: '14px',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = showNav ? '#1d4ed8' : '#475569';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = showNav ? '#2563eb' : '#334155';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              {showNav ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              <span>{showNav ? 'Close' : 'Navigate'}</span>
+            </button>
+          </div>
         </div>
         
         {showNav && (
@@ -314,6 +382,8 @@ function AppContent() {
                     e.stopPropagation();
                     console.log('Navigating to:', route);
                     setCurrentRoute(route);
+                    // ✅ Update URL so refresh works
+                    window.history.pushState({}, '', `#/${route}`);
                     setShowNav(false);
                   }}
                   style={{
@@ -347,8 +417,8 @@ function AppContent() {
         )}
       </div>
       
-      {/* Add top padding to account for fixed nav */}
-      <div className="pt-10">
+      {/* Add top padding to account for fixed nav + banner */}
+      <div className="pt-[120px]">
         {renderRoute()}
       </div>
       <Toaster />

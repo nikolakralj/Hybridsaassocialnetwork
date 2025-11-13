@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner@2.0.3';
+import { format, endOfMonth } from 'date-fns';
 import { 
   getTimesheetEntries, 
   createTimesheetEntry, 
@@ -51,11 +52,9 @@ export function useTimesheetState(options: UseTimesheetStateOptions = {}) {
     setIsLoading(true);
     try {
       const targetMonth = month || currentMonth;
-      const year = targetMonth.getFullYear();
-      const monthNum = targetMonth.getMonth() + 1;
-
-      const startDate = `${year}-${String(monthNum).padStart(2, '0')}-01`;
-      const endDate = `${year}-${String(monthNum).padStart(2, '0')}-31`;
+      
+      const startDate = format(targetMonth, 'yyyy-MM-01');
+      const endDate = format(endOfMonth(targetMonth), 'yyyy-MM-dd');
 
       const result = await getTimesheetEntries({
         companyId: ownerId,

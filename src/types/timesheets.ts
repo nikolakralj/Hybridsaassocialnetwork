@@ -44,7 +44,18 @@ export interface ProjectContract {
 // APPROVAL STATUS & FLAGS
 // ============================================================================
 
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'changes_requested';
+// Database status values (matches Postgres CHECK constraint)
+export type ApprovalStatus = 
+  | 'draft' 
+  | 'submitted' 
+  | 'manager_approved' 
+  | 'client_approved' 
+  | 'fully_approved' 
+  | 'rejected'
+  // Legacy values for backward compatibility
+  | 'pending' 
+  | 'approved' 
+  | 'changes_requested';
 
 export interface ReviewFlag {
   id: string;

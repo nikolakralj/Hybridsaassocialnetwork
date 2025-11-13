@@ -17,6 +17,9 @@ import type {
 } from '../../types';
 import { useMemo } from 'react';
 
+// ✅ TEST MODE: Import persona context
+import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
+
 // ============================================================================
 // QUERY KEYS (for cache management)
 // ============================================================================
@@ -410,10 +413,15 @@ export interface OrganizationWithData extends Organization {
  * Organizations → Contracts → Periods (with all related data)
  * 
  * This is the main hook for the approval table view
+ * 
+ * ✅ TEST MODE: Filters by persona (will be removed in Phase 9)
  */
 export function useApprovalsData() {
   const { data: organizations, isLoading: orgsLoading, error: orgsError } = useOrganizations();
   const { data: contracts, isLoading: contractsLoading, error: contractsError } = useAllContracts();
+  
+  // ✅ TEST MODE: Get current persona
+  const { currentPersona } = usePersona();
   
   // Fetch periods for all contracts in parallel
   const contractIds = contracts?.map(c => c.id) || [];
@@ -492,8 +500,44 @@ export function useApprovalsData() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizations, contracts, periodResultsKey]);
 
+  // ✅ TEST MODE: Filter by persona
+  const filteredData = useMemo(() => {
+    if (!currentPersona) {
+      console.log('[TEST MODE] No persona selected - returning empty array');
+      return [];
+    }
+
+    console.log(`[TEST MODE] Filtering ${data.length} orgs for persona: ${currentPersona.name} (${currentPersona.role})`);
+
+    // Filter based on role
+    switch (currentPersona.role) {
+      case 'contractor':
+        // Contractors only see their own timesheets
+        const contractorFiltered = data.map(org => ({
+          ...org,
+          contracts: org.contracts.filter(contract => 
+            contract.userId === currentPersona.id || 
+            contract.userName === currentPersona.name ||
+            contract.userName.toLowerCase() === currentPersona.name.toLowerCase()
+          ),
+        })).filter(org => org.contracts.length > 0);
+        
+        console.log(`[TEST MODE] Contractor filtered: ${contractorFiltered.flatMap(o => o.contracts).length} contracts`);
+        return contractorFiltered;
+
+      case 'manager':
+      case 'client':
+        // Managers and clients see all timesheets
+        console.log(`[TEST MODE] ${currentPersona.role} view - showing all ${data.flatMap(o => o.contracts).length} contracts`);
+        return data;
+
+      default:
+        return data;
+    }
+  }, [data, currentPersona]);
+
   return {
-    data,
+    data: filteredData,
     isLoading,
     error: error as Error | null,
   };

@@ -20,6 +20,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { verifySupabaseSetup } from "../../utils/api/supabase-setup-check";
 import { DatabaseStatusInline } from "../DatabaseStatusInline";
 import { useMonthContextSafe } from "../../contexts/MonthContext";
+import { usePersona } from "../../contexts/PersonaContext"; // ✅ TEST MODE: Filter by persona
 
 /**
  * PROJECT-SCOPED Timesheets View - UNIFIED
@@ -58,6 +59,16 @@ export function ProjectTimesheetsView({
   hourlyRate = 95
 }: ProjectTimesheetsViewProps) {
   const [viewMode, setViewMode] = useState<"month" | "week" | "calendar">("month");
+  
+  // ✅ Get current persona to determine role
+  const { currentPersona } = usePersona();
+  
+  // 🔍 DEBUG: Log current persona
+  console.log('🔍 ProjectTimesheetsView - Current Persona:', {
+    personaId: currentPersona?.id,
+    personaRole: currentPersona?.role,
+    personaName: currentPersona?.name,
+  });
   
   // ✅ USE SHARED MONTH CONTEXT (synchronized with WorkGraph tab)
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
@@ -213,34 +224,153 @@ export function ProjectTimesheetsView({
   }, [selectedDrawerState]);
 
   // ✅ Stable callbacks: Quick approve/reject handlers
-  const handleQuickApprove = useCallback((periodId: string, contractId: string) => {
-    // Find contract from real data
-    const contract = organizationsWithData
-      .flatMap(org => org.contracts)
-      .find(c => c.id === contractId);
-    
-    if (contract) {
-      toast.success(`Approved timesheet for ${contract.userName}`);
-      // TODO: Update backend
-    }
-  }, [organizationsWithData]);
+  const handleQuickApprove = useCallback(async (periodId: string, contractId: string) => {
+    try {
+      // Find contract from real data
+      const contract = organizationsWithData
+        .flatMap(org => org.contracts)
+        .find(c => c.id === contractId);
+      
+      if (!contract) {
+        toast.error('Contract not found');
+        return;
+      }
 
-  const handleQuickReject = useCallback((periodId: string, contractId: string) => {
-    // Find contract from real data
-    const contract = organizationsWithData
-      .flatMap(org => org.contracts)
-      .find(c => c.id === contractId);
-    
-    if (contract) {
+      // Find period data
+      let periodData: TimesheetPeriod | undefined;
+      for (const org of organizationsWithData) {
+        for (const c of org.contracts) {
+          if (c.id === contractId) {
+            periodData = c.periods?.find(p => p.id === periodId);
+            if (periodData) break;
+          }
+        }
+        if (periodData) break;
+      }
+
+      // Call backend to approve
+      const { projectId, publicAnonKey } = await import('../../utils/supabase/info');
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/approvals/approve`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            periodId,
+            contractId,
+            approverId: currentPersona?.id || ownerId,
+            approverName: currentPersona?.name || 'Manager',
+            approverEmail: currentPersona?.email,
+            submitterName: contract.userName,
+            submitterEmail: contract.userId + '@example.com', // TODO: Get real email
+            projectName: 'WorkGraph Project',
+            periodLabel: periodData 
+              ? `${periodData.weekStartDate} - ${periodData.weekEndDate}` 
+              : 'Period',
+            hours: periodData?.totalHours || 0,
+            amount: periodData?.totalAmount,
+          }),
+        }
+      );
+
+      const result = await response.json();
+      
+      if (result.success) {
+        toast.success(`Approved timesheet for ${contract.userName}`);
+        
+        // Refetch data to get updated status
+        await queryClient.invalidateQueries({ queryKey: ['periods'] });
+        await queryClient.invalidateQueries({ queryKey: ['organizations'] });
+        await queryClient.invalidateQueries({ queryKey: ['contracts'] });
+      } else {
+        console.error('[APPROVE] Backend error:', result);
+        toast.error('Failed to approve timesheet: ' + (result.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('[APPROVE] Error:', error);
+      toast.error('Failed to approve timesheet');
+    }
+  }, [organizationsWithData, currentPersona, ownerId, queryClient]);
+
+  const handleQuickReject = useCallback(async (periodId: string, contractId: string) => {
+    try {
+      // Find contract from real data
+      const contract = organizationsWithData
+        .flatMap(org => org.contracts)
+        .find(c => c.id === contractId);
+      
+      if (!contract) {
+        toast.error('Contract not found');
+        return;
+      }
+
       const reason = prompt(`Reject timesheet for ${contract.userName}?\n\nReason:`);
-      if (reason) {
+      if (!reason) return; // User cancelled
+
+      // Find period data
+      let periodData: TimesheetPeriod | undefined;
+      for (const org of organizationsWithData) {
+        for (const c of org.contracts) {
+          if (c.id === contractId) {
+            periodData = c.periods?.find(p => p.id === periodId);
+            if (periodData) break;
+          }
+        }
+        if (periodData) break;
+      }
+
+      // Call backend to reject
+      const { projectId, publicAnonKey } = await import('../../utils/supabase/info');
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/approvals/reject`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            periodId,
+            contractId,
+            approverId: currentPersona?.id || ownerId,
+            approverName: currentPersona?.name || 'Manager',
+            approverEmail: currentPersona?.email,
+            submitterName: contract.userName,
+            submitterEmail: contract.userId + '@example.com', // TODO: Get real email
+            reason,
+            projectName: 'WorkGraph Project',
+            periodLabel: periodData 
+              ? `${periodData.weekStartDate} - ${periodData.weekEndDate}` 
+              : 'Period',
+            hours: periodData?.totalHours || 0,
+            amount: periodData?.totalAmount,
+          }),
+        }
+      );
+
+      const result = await response.json();
+      
+      if (result.success) {
         toast.error(`Rejected timesheet for ${contract.userName}`, {
           description: reason
         });
-        // TODO: Update backend
+        
+        // Refetch data to get updated status
+        await queryClient.invalidateQueries({ queryKey: ['periods'] });
+        await queryClient.invalidateQueries({ queryKey: ['organizations'] });
+        await queryClient.invalidateQueries({ queryKey: ['contracts'] });
+      } else {
+        console.error('[REJECT] Backend error:', result);
+        toast.error('Failed to reject timesheet: ' + (result.message || 'Unknown error'));
       }
+    } catch (error) {
+      console.error('[REJECT] Error:', error);
+      toast.error('Failed to reject timesheet');
     }
-  }, [organizationsWithData]);
+  }, [organizationsWithData, currentPersona, ownerId, queryClient]);
 
   // ✅ PHASE 3: Deep link to graph from timesheet row
   const handleViewInGraph = useCallback((userId: string, submittedAt?: string) => {
@@ -711,6 +841,71 @@ export function ProjectTimesheetsView({
         viewMode={viewMode === 'calendar' ? 'month' : viewMode} // Calendar uses month view
         filterPeriodStart={periodStart}
         filterPeriodEnd={periodEnd}
+        currentUserId={currentPersona?.id || ownerId}
+        currentUserRole={currentPersona?.role as 'contractor' | 'manager' | 'client'}
+        onSubmitForApproval={async (periodId, contractId) => {
+          try {
+            // Find the period and contract data
+            let periodData: TimesheetPeriod | undefined;
+            let contractData: ProjectContract | undefined;
+            
+            for (const org of organizationsWithData) {
+              for (const contract of org.contracts) {
+                if (contract.id === contractId) {
+                  contractData = contract;
+                  periodData = contract.periods?.find(p => p.id === periodId);
+                  if (periodData) break;
+                }
+              }
+              if (periodData) break;
+            }
+
+            // Call backend to submit for approval
+            const { projectId, publicAnonKey } = await import('../../utils/supabase/info');
+            const response = await fetch(
+              `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/approvals/submit`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${publicAnonKey}`,
+                },
+                body: JSON.stringify({
+                  periodId,
+                  contractId,
+                  submitterId: currentPersona?.id || ownerId,
+                  submitterName: currentPersona?.name || 'Alice Chen',
+                  submitterEmail: currentPersona?.email,
+                  approverName: 'Nikola Kralj',
+                  approverEmail: 'nikola.kralj86@gmail.com',
+                  projectName: 'WorkGraph Project',
+                  periodLabel: periodData 
+                    ? `${periodData.weekStartDate} - ${periodData.weekEndDate}` 
+                    : 'Period',
+                  hours: periodData?.totalHours || 0,
+                  amount: periodData?.totalAmount,
+                }),
+              }
+            );
+
+            const result = await response.json();
+            
+            if (result.success) {
+              toast.success('Timesheet submitted for approval! Email sent to approver.');
+              
+              // Refetch approvals data to get updated status
+              await queryClient.invalidateQueries({ queryKey: ['periods'] });
+              await queryClient.invalidateQueries({ queryKey: ['organizations'] });
+              await queryClient.invalidateQueries({ queryKey: ['contracts'] });
+            } else {
+              console.error('[SUBMIT] Backend error:', result);
+              toast.error('Failed to submit timesheet: ' + (result.message || 'Unknown error'));
+            }
+          } catch (error) {
+            console.error('[SUBMIT] Error submitting timesheet:', error);
+            toast.error('Failed to submit timesheet');
+          }
+        }}
       />
 
       {/* Detailed Timesheet View (changes based on selected view mode) */}
@@ -774,6 +969,8 @@ export function ProjectTimesheetsView({
           contract={selectedDrawerState.contract}
           isOpen={!!selectedDrawerState}
           onClose={() => setSelectedDrawerState(null)}
+          currentUserId={currentPersona?.id || ownerId}
+          currentUserRole={currentPersona?.role as 'contractor' | 'manager' | 'client'}
         />
       )}
     </div>

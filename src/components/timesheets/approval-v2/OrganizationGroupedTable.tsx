@@ -41,6 +41,9 @@ interface OrganizationGroupedTableProps {
   viewMode?: 'month' | 'week'; // NEW: Control whether to show monthly or weekly periods
   filterPeriodStart?: Date; // NEW: Filter to only show periods within this range
   filterPeriodEnd?: Date; // NEW: Filter to only show periods within this range
+  currentUserId?: string; // NEW: Current logged-in user ID
+  currentUserRole?: 'contractor' | 'manager' | 'client'; // NEW: Current user's role
+  onSubmitForApproval?: (periodId: string, contractId: string) => void; // NEW: Submit timesheet
 }
 
 export function OrganizationGroupedTable({
@@ -55,6 +58,9 @@ export function OrganizationGroupedTable({
   viewMode = 'week', // DEFAULT: Show weekly periods
   filterPeriodStart,
   filterPeriodEnd,
+  currentUserId,
+  currentUserRole,
+  onSubmitForApproval,
 }: OrganizationGroupedTableProps) {
   const [expandedOrgs, setExpandedOrgs] = useState<Set<string>>(
     new Set(organizations.map(o => o.id))
@@ -114,14 +120,22 @@ export function OrganizationGroupedTable({
   };
 
   const getStatusBadge = (status: ApprovalStatus) => {
-    const variants: Record<ApprovalStatus, { variant: any; label: string }> = {
+    // Map database status values to UI variants
+    const variants: Record<string, { variant: any; label: string }> = {
+      // Database status values
+      draft: { variant: 'secondary', label: 'Draft' },
+      submitted: { variant: 'outline', label: 'Submitted' },
+      manager_approved: { variant: 'default', label: 'Manager Approved' },
+      client_approved: { variant: 'default', label: 'Client Approved' },
+      fully_approved: { variant: 'default', label: 'Approved' },
+      rejected: { variant: 'destructive', label: 'Rejected' },
+      // Legacy values (for backward compatibility)
       pending: { variant: 'outline', label: 'Pending' },
       approved: { variant: 'default', label: 'Approved' },
-      rejected: { variant: 'destructive', label: 'Rejected' },
       changes_requested: { variant: 'secondary', label: 'Changes Requested' },
     };
     
-    const config = variants[status];
+    const config = variants[status] || { variant: 'outline', label: status }; // Fallback for unknown status
     return (
       <Badge variant={config.variant} className="text-xs">
         {config.label}
@@ -146,6 +160,93 @@ export function OrganizationGroupedTable({
       default:
         return 'Custom';
     }
+  };
+
+  // Helper to determine what actions the current user can take on a period
+  const getActionButtons = (period: TimesheetPeriod, contract: ProjectContract) => {
+    const isOwnTimesheet = currentUserId === contract.userId;
+    
+    console.log('🔍 getActionButtons DEBUG:', {
+      currentUserId,
+      contractUserId: contract.userId,
+      isOwnTimesheet,
+      currentUserRole,
+      periodStatus: period.status,
+      periodId: period.id,
+      periodWeek: period.weekStartDate,
+      contractUserName: contract.userName,
+    });
+    
+    // ✅ ROLE-BASED BUTTON LOGIC
+    
+    // Contractor viewing their own timesheet
+    if (currentUserRole === 'contractor' && isOwnTimesheet) {
+      console.log('✅ Contractor viewing own timesheet');
+      
+      if (period.status === 'draft') {
+        console.log('📝 Status is draft - showing Submit button');
+        return (
+          <Button
+            size="sm"
+            variant="default"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSubmitForApproval(period.id, contract.id);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 h-7 text-xs px-2 ml-2"
+          >
+            Submit for Approval
+          </Button>
+        );
+      } else {
+        console.log(`ℹ️ Status is ${period.status} - no button for contractor`);
+        return null;
+      }
+    }
+    
+    // Manager or Client viewing contractor's timesheet
+    if (currentUserRole === 'manager' || currentUserRole === 'client') {
+      console.log('👔 Manager/Client viewing contractor timesheet');
+      
+      if (period.status === 'pending' || period.status === 'submitted') {
+        console.log('✅ Status is pending/submitted - showing Approve/Reject buttons');
+        return (
+          <div className="flex gap-1.5 ml-2" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickReject(period.id, contract.id);
+              }}
+              className="h-7 text-xs px-2"
+            >
+              <XCircle className="h-3.5 w-3.5 mr-1" />
+              Reject
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickApprove(period.id, contract.id);
+              }}
+              className="bg-green-600 hover:bg-green-700 h-7 text-xs px-2"
+            >
+              <CheckCircle className="h-3.5 w-3.5 mr-1" />
+              Approve
+            </Button>
+          </div>
+        );
+      } else {
+        console.log(`ℹ️ Status is ${period.status} - no approval buttons needed`);
+        return null;
+      }
+    }
+    
+    // Default: no buttons
+    console.log('❌ No role match - no buttons');
+    return null;
   };
 
   return (
@@ -401,88 +502,8 @@ export function OrganizationGroupedTable({
                                   </div>
                                 </div>
 
-                                {/* Actions Menu */}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                    <Button 
-                                      variant="ghost" 
-                                      size="sm" 
-                                      className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    >
-                                      <MoreVertical className="h-4 w-4" />
-                                      <span className="sr-only">Open menu</span>
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-48">
-                                    <DropdownMenuItem onClick={(e) => {
-                                      console.log('🟠 View Details menu item clicked!');
-                                      e.stopPropagation();
-                                      handlePeriodClickWithLog(monthlyPeriods[0], contract);
-                                    }}>
-                                      <Eye className="mr-2 h-4 w-4" />
-                                      View Details
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      onViewInGraph?.(contract.userId, monthlyPeriods[0].submittedAt);
-                                    }}>
-                                      <Network className="mr-2 h-4 w-4" />
-                                      View on graph
-                                    </DropdownMenuItem>
-                                    
-                                    {monthlyPeriods[0].status === 'pending' && (
-                                      <>
-                                        <DropdownMenuItem 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onQuickApprove?.(monthlyPeriods[0].id, contract.id);
-                                          }}
-                                          className="text-green-600"
-                                        >
-                                          <CheckCircle className="mr-2 h-4 w-4" />
-                                          Quick Approve
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onQuickReject?.(monthlyPeriods[0].id, contract.id);
-                                          }}
-                                          className="text-red-600"
-                                        >
-                                          <XCircle className="mr-2 h-4 w-4" />
-                                          Request Changes
-                                        </DropdownMenuItem>
-                                      </>
-                                    )}
-                                    
-                                    <DropdownMenuSeparator />
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('Download PDF for period:', monthlyPeriods[0].id);
-                                    }}>
-                                      <Download className="mr-2 h-4 w-4" />
-                                      Download PDF
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('Add comment for period:', monthlyPeriods[0].id);
-                                    }}>
-                                      <MessageSquare className="mr-2 h-4 w-4" />
-                                      Add Comment
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('View history for period:', monthlyPeriods[0].id);
-                                    }}>
-                                      <History className="mr-2 h-4 w-4" />
-                                      View History
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                {/* Action Buttons (Role-based) */}
+                                {getActionButtons(monthlyPeriods[0], contract)}
                               </div>
                             );
                           })
@@ -564,88 +585,8 @@ export function OrganizationGroupedTable({
                                   </div>
                                 </div>
 
-                                {/* Actions Menu */}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                    <Button 
-                                      variant="ghost" 
-                                      size="sm" 
-                                      className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    >
-                                      <MoreVertical className="h-4 w-4" />
-                                      <span className="sr-only">Open menu</span>
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-48">
-                                    <DropdownMenuItem onClick={(e) => {
-                                      console.log('🟠 View Details menu item clicked!');
-                                      e.stopPropagation();
-                                      handlePeriodClickWithLog(period, contract);
-                                    }}>
-                                      <Eye className="mr-2 h-4 w-4" />
-                                      View Details
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      onViewInGraph?.(contract.userId, period.submittedAt);
-                                    }}>
-                                      <Network className="mr-2 h-4 w-4" />
-                                      View on graph
-                                    </DropdownMenuItem>
-                                    
-                                    {period.status === 'pending' && (
-                                      <>
-                                        <DropdownMenuItem 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onQuickApprove?.(period.id, contract.id);
-                                          }}
-                                          className="text-green-600"
-                                        >
-                                          <CheckCircle className="mr-2 h-4 w-4" />
-                                          Quick Approve
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onQuickReject?.(period.id, contract.id);
-                                          }}
-                                          className="text-red-600"
-                                        >
-                                          <XCircle className="mr-2 h-4 w-4" />
-                                          Request Changes
-                                        </DropdownMenuItem>
-                                      </>
-                                    )}
-                                    
-                                    <DropdownMenuSeparator />
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('Download PDF for period:', period.id);
-                                    }}>
-                                      <Download className="mr-2 h-4 w-4" />
-                                      Download PDF
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('Add comment for period:', period.id);
-                                    }}>
-                                      <MessageSquare className="mr-2 h-4 w-4" />
-                                      Add Comment
-                                    </DropdownMenuItem>
-                                    
-                                    <DropdownMenuItem onClick={(e) => {
-                                      e.stopPropagation();
-                                      console.log('View history for period:', period.id);
-                                    }}>
-                                      <History className="mr-2 h-4 w-4" />
-                                      View History
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                {/* Action Buttons (Role-based) */}
+                                {getActionButtons(period, contract)}
                               </div>
                             );
                           })

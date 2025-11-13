@@ -245,18 +245,13 @@ export function MonthlyTable({
       {/* Month Summary */}
       {contractors.length > 0 && (
         <div className="border-2 border-gray-300 rounded-lg bg-gray-50 p-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <div className="text-sm uppercase tracking-wide text-gray-600">
-                {format(startDate, 'MMMM yyyy')} Total
-              </div>
-              <div className="text-2xl tabular-nums">
-                {monthTotal.toFixed(1)} hours
-              </div>
+          <div className="space-y-1">
+            <div className="text-sm uppercase tracking-wide text-gray-600">
+              {format(startDate, 'MMMM yyyy')} Total
             </div>
-            <Button size="lg">
-              Approve Month
-            </Button>
+            <div className="text-2xl tabular-nums">
+              {monthTotal.toFixed(1)} hours
+            </div>
           </div>
         </div>
       )}

@@ -1,5 +1,8 @@
-// Phase 5 Day 8: Real Email Sending with Resend
+// Phase 5 Day 8: Real Email Sending with Resend API
 import type { Hono } from "npm:hono@4";
+import * as kv from "./kv_store.tsx"; // ✅ Store tokens in KV
+
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
 export interface EmailPayload {
   to: string;
@@ -12,9 +15,7 @@ export interface EmailPayload {
  * Send email using Resend API
  */
 export async function sendEmail(payload: EmailPayload): Promise<{ success: boolean; error?: string; id?: string }> {
-  const apiKey = Deno.env.get('RESEND_API_KEY');
-  
-  if (!apiKey) {
+  if (!RESEND_API_KEY) {
     console.error('[EMAIL] Missing RESEND_API_KEY environment variable');
     return { success: false, error: 'Email service not configured' };
   }
@@ -23,7 +24,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ success: boole
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -147,14 +148,27 @@ export function registerEmailRoutes(app: Hono) {
         periodLabel,
         hours,
         amount,
-        approveUrl,
-        rejectUrl,
-        viewUrl,
+        baseUrl, // ✅ Accept baseUrl from client
       } = body;
 
       if (!to || !approverName || !submitterName) {
         return c.json({ error: 'Missing required fields' }, 400);
       }
+
+      // Use provided baseUrl or fallback to env variable or default
+      const appUrl = baseUrl || Deno.env.get('PUBLIC_URL') || 'http://localhost:3000';
+      console.log('[EMAIL] Using base URL:', appUrl);
+      
+      const approveToken = `token-${Date.now()}-approve-${Math.random().toString(36).substring(7)}`;
+      const rejectToken = `token-${Date.now()}-reject-${Math.random().toString(36).substring(7)}`;
+      const viewToken = `token-${Date.now()}-view-${Math.random().toString(36).substring(7)}`;
+
+      // ✅ Use hash-based routing (works in ALL hosting environments including Figma preview)
+      const approveUrl = `${appUrl}/#/approve?token=${approveToken}`;
+      const rejectUrl = `${appUrl}/#/reject?token=${rejectToken}`;
+      const viewUrl = `${appUrl}/#/approval-view?token=${viewToken}`;
+      
+      console.log('[EMAIL] Generated URLs:', { approveUrl, rejectUrl, viewUrl });
 
       const html = generateApprovalRequestEmail({
         approverName,
@@ -175,6 +189,9 @@ export function registerEmailRoutes(app: Hono) {
       });
 
       if (result.success) {
+        await kv.set(approveToken, { type: 'approve', emailId: result.id });
+        await kv.set(rejectToken, { type: 'reject', emailId: result.id });
+        await kv.set(viewToken, { type: 'view', emailId: result.id });
         return c.json({ success: true, emailId: result.id });
       } else {
         return c.json({ success: false, error: result.error }, 500);

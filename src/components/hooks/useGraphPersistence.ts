@@ -98,7 +98,13 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
+        // Graceful fallback if endpoint doesn't exist yet
+        if (response.status === 404) {
+          console.log(`ℹ️ Graph persistence not yet implemented for project ${pid}`);
+          return null;
+        }
+        
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         throw new Error(errorData.error || 'Failed to load active version');
       }
 
@@ -115,7 +121,10 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
       console.error('Error loading active graph version:', error);
       const err = error instanceof Error ? error : new Error(String(error));
       onLoadError?.(err);
-      toast.error('Failed to load graph');
+      // Don't show toast for expected 404s
+      if (!error.message?.includes('not yet implemented')) {
+        toast.error('Failed to load graph');
+      }
       return null;
     } finally {
       setIsLoading(false);
@@ -143,7 +152,13 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
+        // Graceful fallback if endpoint doesn't exist yet
+        if (response.status === 404) {
+          console.log(`ℹ️ Graph persistence not yet implemented for project ${pid}`);
+          return null;
+        }
+        
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         throw new Error(errorData.error || 'Failed to load version for date');
       }
 

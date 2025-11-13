@@ -6,7 +6,6 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '../utils/supabase/client';
-import { DatabaseSetupGuide } from './DatabaseSetupGuide';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Loader2, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
@@ -76,22 +75,27 @@ export function DatabaseHealthCheck({ children }: { children?: React.ReactNode }
               <XCircle className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <p className="m-0 mb-1"><strong>Database tables not found</strong></p>
-                <p className="text-sm text-muted-foreground m-0">
+                <p className="text-sm text-muted-foreground m-0 mb-3">
                   Missing tables: {missingTables.join(', ')}
                 </p>
+                <Button
+                  size="sm"
+                  onClick={() => window.location.href = '/setup'}
+                  className="mr-2"
+                >
+                  Go to Database Setup
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={checkDatabase}
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Recheck
+                </Button>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={checkDatabase}
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Recheck
-              </Button>
             </div>
           </Card>
-
-          <DatabaseSetupGuide />
         </div>
       </div>
     );

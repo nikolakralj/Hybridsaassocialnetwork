@@ -5,7 +5,7 @@ import { Card } from "../../ui/card";
 import { Button } from "../../ui/button";
 import { Progress } from "../../ui/progress";
 
-export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected" | "amended" | "partial";
+export type TimesheetStatus = "draft" | "submitted" | "approved" | "manager_approved" | "rejected" | "amended" | "partial";
 
 interface PersonPeriodCardProps {
   personId: string;
@@ -83,6 +83,8 @@ export function PersonPeriodCard({
         return <Badge variant="secondary" className="bg-blue-100 text-blue-700">Submitted</Badge>;
       case "approved":
         return <Badge variant="secondary" className="bg-green-100 text-green-700">Approved</Badge>;
+      case "manager_approved":
+        return <Badge variant="secondary" className="bg-green-100 text-green-700">Manager Approved</Badge>;
       case "rejected":
         return <Badge variant="destructive">Rejected</Badge>;
       case "amended":
@@ -93,7 +95,7 @@ export function PersonPeriodCard({
   };
 
   const getSLABadge = () => {
-    if (status === "approved" || status === "rejected") return null;
+    if (status === "approved" || status === "manager_approved" || status === "rejected") return null;
     
     switch (slaStatus) {
       case "overdue":

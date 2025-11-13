@@ -253,8 +253,12 @@ export function MultiPersonTimesheetCalendar({
   
   const loadTimesheetData = async () => {
     try {
+      // ✅ FIX: Use proper last day of month instead of hardcoded 31
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0); // Day 0 of next month = last day of current month
+      
       const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-      const endDate = `${year}-${String(month + 1).padStart(2, '0')}-31`;
+      const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
       
       console.log('📅 Calendar loadTimesheetData:', {
         startDate,
