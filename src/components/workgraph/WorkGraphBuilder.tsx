@@ -77,6 +77,7 @@ import {
 } from '../../utils/api/projects';
 import { savePolicyVersionMock } from '../../utils/api/policy-versions';
 import { UIPermissions } from '../../utils/collaboration/permissions';
+import { projectId as supabaseProjectId, publicAnonKey } from '../../utils/supabase/info';
 
 // Custom node types for React Flow
 const nodeTypes = {
@@ -232,8 +233,71 @@ export function WorkGraphBuilder({
         setEdges(defaultTemplate.edges as any);
         setIsLoadingGraph(false);
       }
+      // After loading static nodes, load dynamic timesheet nodes
+      loadDynamicTimesheetNodes();
     });
   }, []); // Only on mount
+  
+  // ✅ NEW: Load dynamic timesheet nodes from KV store
+  const loadDynamicTimesheetNodes = async () => {
+    try {
+      console.log('📋 Loading dynamic timesheet nodes from KV store...');
+      console.log('🔗 API endpoint:', `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/graph/dynamic-nodes`);
+      
+      const response = await fetch(
+        `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/graph/dynamic-nodes`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      
+      console.log('📡 Response status:', response.status, response.statusText);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('⚠️ Dynamic nodes endpoint error:', response.status, errorText);
+        return;
+      }
+      
+      const data = await response.json();
+      console.log('📦 Dynamic nodes response:', data);
+      
+      const { timesheetNodes, timesheetEdges } = data;
+      
+      if (timesheetNodes && timesheetNodes.length > 0) {
+        console.log(`✅ Loaded ${timesheetNodes.length} dynamic timesheet nodes`);
+        
+        // Merge with existing nodes (remove duplicates by ID)
+        setNodes((currentNodes) => {
+          const nodeMap = new Map();
+          // Add existing nodes first
+          currentNodes.forEach(n => nodeMap.set(n.id, n));
+          // Add/update with dynamic nodes
+          timesheetNodes.forEach((n: any) => nodeMap.set(n.id, n));
+          return Array.from(nodeMap.values());
+        });
+        
+        // Merge edges
+        if (timesheetEdges && timesheetEdges.length > 0) {
+          setEdges((currentEdges) => {
+            const edgeMap = new Map();
+            currentEdges.forEach(e => edgeMap.set(e.id, e));
+            timesheetEdges.forEach((e: any) => edgeMap.set(e.id, e));
+            return Array.from(edgeMap.values());
+          });
+        }
+      } else {
+        console.log('ℹ️ No dynamic timesheet nodes found');
+      }
+    } catch (error) {
+      console.error('❌ Error loading dynamic nodes:', error);
+      // Don't fail - just continue with static nodes
+    }
+  };
   
   // ✅ MONTH-AWARE LOADING: Reload graph when month changes
   useEffect(() => {
@@ -252,9 +316,13 @@ export function WorkGraphBuilder({
             setEdges(defaultTemplate.edges as any);
           }
           setIsLoadingGraph(false);
+          // Load dynamic nodes after static nodes
+          loadDynamicTimesheetNodes();
         });
       } else {
         setIsLoadingGraph(false);
+        // Load dynamic nodes after static nodes
+        loadDynamicTimesheetNodes();
       }
     });
   }, [selectedMonth]); // Reload when month changes

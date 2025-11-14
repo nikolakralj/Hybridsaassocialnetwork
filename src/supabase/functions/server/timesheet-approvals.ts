@@ -510,6 +510,103 @@ timesheetApprovalsRouter.post('/reset-to-draft', async (c) => {
 });
 
 // ============================================================================
+// RESET ALL APPROVED PERIODS (for testing) - NEW!
+// ============================================================================
+
+timesheetApprovalsRouter.post('/reset-all-approved', async (c) => {
+  try {
+    console.log('🔄 Resetting ALL non-draft timesheets to draft...');
+    
+    // 1. Get all periods that are NOT in draft status
+    // This includes: submitted, manager_approved, approved, finance_approved, rejected
+    // NOTE: Only select columns that exist in the table
+    const { data: periods, error: fetchError } = await supabase
+      .from('timesheet_periods')
+      .select('id, status')
+      .not('status', 'eq', 'draft'); // Get everything except draft
+    
+    if (fetchError) {
+      console.error('Failed to fetch periods:', fetchError);
+      return c.json({ error: 'Failed to fetch periods', details: fetchError }, 500);
+    }
+    
+    if (!periods || periods.length === 0) {
+      console.log('⚠️ No periods found to reset');
+      return c.json({
+        success: true,
+        message: 'No periods found to reset - all are already in draft status',
+        count: 0,
+      });
+    }
+    
+    console.log(`📋 Found ${periods.length} period(s) to reset:`);
+    
+    // 2. Clean up graph nodes for all periods (search KV store by period IDs)
+    for (const period of periods) {
+      console.log(`🗑️ Cleaning up graph nodes for period ${period.id}`);
+      
+      // Search for any graph nodes that reference this period
+      const { data: kvData } = await supabase
+        .from('kv_store_f8b491be')
+        .select('key, value')
+        .like('key', '%graph:%');
+      
+      if (kvData) {
+        for (const item of kvData) {
+          try {
+            const value = typeof item.value === 'string' ? JSON.parse(item.value) : item.value;
+            // If this graph node references our period, delete it
+            if (value?.period_id === period.id || value?.timesheet_period_id === period.id) {
+              console.log(`  🗑️ Deleting graph node: ${item.key}`);
+              await supabase
+                .from('kv_store_f8b491be')
+                .delete()
+                .eq('key', item.key);
+            }
+          } catch (err) {
+            // Skip items that can't be parsed
+          }
+        }
+      }
+    }
+    
+    // 3. Reset ALL periods to draft (only update columns that exist)
+    const updateData: any = {
+      status: 'draft',
+      submitted_at: null,
+      approved_at: null,
+    };
+    
+    // Update ALL non-draft periods
+    const { error: updateError } = await supabase
+      .from('timesheet_periods')
+      .update(updateData)
+      .not('status', 'eq', 'draft'); // Update everything except draft
+    
+    if (updateError) {
+      console.error('Failed to update periods:', updateError);
+      return c.json({ error: 'Failed to reset periods', details: updateError }, 500);
+    }
+    
+    console.log(`✅ Successfully reset ${periods.length} timesheets to draft`);
+    
+    return c.json({
+      success: true,
+      message: `Reset ${periods.length} timesheet(s) back to draft status`,
+      count: periods.length,
+      resetPeriods: periods.map(p => ({ id: p.id, previousStatus: p.status })),
+    });
+    
+  } catch (error) {
+    console.error('❌ Error resetting timesheets:', error);
+    return c.json({ 
+      error: 'Failed to reset timesheets', 
+      details: error instanceof Error ? error.message : 'Unknown error' 
+    }, 500);
+  }
+});
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 

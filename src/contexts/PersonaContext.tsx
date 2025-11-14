@@ -21,22 +21,22 @@ export interface TestPersona {
 // Test personas for validation
 export const TEST_PERSONAS: TestPersona[] = [
   {
-    id: 'alice-contractor',
-    email: 'alice@contractor.com',
-    name: 'Alice Chen',
+    id: 'user-alex-chen',
+    email: 'alex@contractor.com',
+    name: 'Alex Chen',
     role: 'contractor',
     contractorId: 'contractor-001',
   },
   {
-    id: 'bob-manager',
-    email: 'bob@techcorp.com',
+    id: 'user-bob-martinez',
+    email: 'bob@acmedev.com',
     name: 'Bob Martinez',
     role: 'manager',
     companyId: 'company-001',
   },
   {
-    id: 'charlie-client',
-    email: 'charlie@megacorp.com',
+    id: 'user-charlie-davis',
+    email: 'charlie@enterprisecli.com',
     name: 'Charlie Davis',
     role: 'client',
     companyId: 'company-002',

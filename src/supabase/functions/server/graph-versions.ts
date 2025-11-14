@@ -30,7 +30,7 @@ graphVersionsRouter.get('/active', async (c) => {
     // For now, return null (no graph version exists)
     // Later this will query the graph_versions table
     return c.json({ 
-      version: null,
+      graphVersion: null, // ✅ Fixed: Changed from 'version' to 'graphVersion'
       message: 'No active graph version found (this is expected for new projects)' 
     });
     
@@ -60,7 +60,7 @@ graphVersionsRouter.get('/for-date', async (c) => {
     
     // For now, return null
     return c.json({ 
-      version: null,
+      graphVersion: null, // ✅ Fixed: Changed from 'version' to 'graphVersion'
       message: 'Month-specific graph versions not yet implemented' 
     });
     

@@ -116,13 +116,18 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
         return graphVersion;
       }
       
+      // No graph version yet - this is expected for new projects
+      console.log(`ℹ️ No active graph version for project ${pid} (using template)`);
       return null;
     } catch (error) {
-      console.error('Error loading active graph version:', error);
+      // Only log errors that are NOT expected (network issues, etc.)
+      if (error instanceof Error && !error.message.includes('Failed to fetch')) {
+        console.error('Error loading active graph version:', error);
+      }
       const err = error instanceof Error ? error : new Error(String(error));
-      onLoadError?.(err);
-      // Don't show toast for expected 404s
-      if (!error.message?.includes('not yet implemented')) {
+      // Only call onLoadError for real errors, not expected null responses
+      if (!err.message.includes('Failed to fetch')) {
+        onLoadError?.(err);
         toast.error('Failed to load graph');
       }
       return null;

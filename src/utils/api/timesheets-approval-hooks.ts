@@ -508,6 +508,25 @@ export function useApprovalsData() {
     }
 
     console.log(`[TEST MODE] Filtering ${data.length} orgs for persona: ${currentPersona.name} (${currentPersona.role})`);
+    console.log('[TEST MODE] Current persona details:', {
+      id: currentPersona.id,
+      name: currentPersona.name,
+      role: currentPersona.role,
+    });
+    
+    // 🔍 DEBUG: Log all contracts before filtering
+    const allContracts = data.flatMap(org => org.contracts);
+    console.log(`[TEST MODE] Total contracts before filtering: ${allContracts.length}`);
+    allContracts.forEach((contract, index) => {
+      console.log(`[TEST MODE] Contract ${index + 1}:`, {
+        id: contract.id,
+        userId: contract.userId,
+        userName: contract.userName,
+        matchesId: contract.userId === currentPersona.id,
+        matchesName: contract.userName === currentPersona.name,
+        matchesNameLower: contract.userName.toLowerCase() === currentPersona.name.toLowerCase(),
+      });
+    });
 
     // Filter based on role
     switch (currentPersona.role) {
@@ -515,11 +534,21 @@ export function useApprovalsData() {
         // Contractors only see their own timesheets
         const contractorFiltered = data.map(org => ({
           ...org,
-          contracts: org.contracts.filter(contract => 
-            contract.userId === currentPersona.id || 
-            contract.userName === currentPersona.name ||
-            contract.userName.toLowerCase() === currentPersona.name.toLowerCase()
-          ),
+          contracts: org.contracts.filter(contract => {
+            const matches = contract.userId === currentPersona.id || 
+              contract.userName === currentPersona.name ||
+              contract.userName.toLowerCase() === currentPersona.name.toLowerCase();
+            
+            console.log(`[TEST MODE] Filtering contract ${contract.id} for contractor:`, {
+              contractUserId: contract.userId,
+              personaId: currentPersona.id,
+              contractUserName: contract.userName,
+              personaName: currentPersona.name,
+              matches,
+            });
+            
+            return matches;
+          }),
         })).filter(org => org.contracts.length > 0);
         
         console.log(`[TEST MODE] Contractor filtered: ${contractorFiltered.flatMap(o => o.contracts).length} contracts`);

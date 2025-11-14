@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { CheckCircle, XCircle, Filter, Loader2, Database } from 'lucide-react';
+import { CheckCircle, XCircle, Filter, Loader2, Database, RotateCcw } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { toast } from 'sonner@2.0.3';
 import { migrateTimesheetEntries } from '../../../utils/api/migrate-timesheets';
+import { resetTimesheetToDraft } from '../../../utils/api/reset-timesheet';
+import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import {
   Select,
   SelectContent,
@@ -513,6 +515,49 @@ export function ApprovalsV2Tab() {
               ✓ Live Data
             </Badge>
             <Badge variant="secondary">Multi-Party Architecture</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  console.log('🔄 Starting reset all approved to draft...');
+                  
+                  const response = await fetch(
+                    `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/timesheet-approvals/reset-all-approved`,
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${publicAnonKey}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({}),
+                    }
+                  );
+                  
+                  const result = await response.json();
+                  
+                  if (!response.ok) {
+                    throw new Error(result.error || 'Failed to reset');
+                  }
+                  
+                  console.log('✅ Reset result:', result);
+                  
+                  if (result.count === 0) {
+                    toast.info('No approved timesheets found to reset');
+                  } else {
+                    toast.success(`Reset ${result.count} approved timesheet(s)! Page will reload...`);
+                    setTimeout(() => window.location.reload(), 1500);
+                  }
+                } catch (error) {
+                  console.error('❌ Reset error:', error);
+                  toast.error(`Failed to reset: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              }}
+              className="gap-2"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset Test Data
+            </Button>
           </div>
         </div>
         <p className="text-sm text-gray-600">

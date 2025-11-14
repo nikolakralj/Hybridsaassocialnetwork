@@ -742,6 +742,42 @@ CREATE INDEX idx_periods_contract ON timesheet_periods(contract_id);`;
         </>
       )}
 
+      {/* Timesheet-specific fields */}
+      {(node.type === 'TimesheetPeriod' || node.type === 'timesheet') && (
+        <>
+          <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-lg">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-6 w-6 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-amber-900 space-y-2">
+                <div className="font-semibold text-base">⚠️ Architecture Change</div>
+                <p>
+                  <strong>Timesheet nodes have been removed from the WorkGraph.</strong>
+                </p>
+                <p className="text-xs leading-relaxed">
+                  The WorkGraph now focuses on <strong>POLICY</strong> (organizational structure, contracts, approval chains) 
+                  instead of <strong>TRANSACTIONS</strong> (individual timesheets).
+                </p>
+                <div className="mt-3 p-3 bg-white rounded border border-amber-200">
+                  <div className="text-xs space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <span className="text-green-600">✅</span>
+                      <span><strong>WorkGraph:</strong> Companies, employees, contracts, approval rules</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-green-600">✅</span>
+                      <span><strong>Approvals Tab:</strong> Timesheet submissions, invoices, expenses</span>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-800 italic mt-2">
+                  This prevents graph pollution at scale (50 people × 52 weeks = 2,600+ nodes per year).
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Phase 5: Stats & Activity Section */}
       {stats && (
         <>

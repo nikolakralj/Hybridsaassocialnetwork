@@ -494,6 +494,27 @@ export function registerApprovalKVRoutes(app: Hono) {
         console.log('[SUBMIT] Updated KV period status to submitted:', periodId);
       }
 
+      // ✅ Create timesheet graph node for visualization
+      try {
+        const { data: period, error: periodError } = await supabase
+          .from('timesheet_periods')
+          .select('*')
+          .eq('id', periodId)
+          .single();
+        
+        // ✅ ARCHITECTURE DECISION: Do NOT create graph nodes for timesheets
+        // The WorkGraph is for POLICY (structure, rules, approval chains)
+        // Timesheets are TRANSACTIONS that follow the policies
+        // This prevents graph pollution (50 people × 52 weeks = 2600+ nodes/year)
+        if (!periodError && period) {
+          console.log('[SUBMIT] Timesheet submitted - following approval policy from WorkGraph');
+          console.log('[SUBMIT] Period:', period.week_start_date, 'to', period.week_end_date);
+          // The approval logic is handled via the approvals table, not graph nodes
+        }
+      } catch (error) {
+        console.error('[SUBMIT] Error fetching period data:', error);
+      }
+
       // Send email notification to approver (nikola.kralj86@gmail.com)
       if (approverEmail && approverName) {
         try {

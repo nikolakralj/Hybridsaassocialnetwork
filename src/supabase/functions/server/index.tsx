@@ -7,8 +7,9 @@ import { registerEmailRoutes } from "./email.tsx"; // ✅ Phase 5 Day 8: Email s
 import { registerApprovalKVRoutes } from "./approvals-kv.tsx"; // ✅ Phase 5 Days 9-10: KV-based approval
 import { timesheetApprovalsRouter } from "./timesheet-approvals.ts"; // ✅ Phase 5B: Graph-based approvals
 import { graphVersionsRouter } from "./graph-versions.ts"; // ✅ Phase 5B: Graph versions API
+import { graphDynamicNodesRouter } from "./graph-dynamic-nodes.ts"; // ✅ NEW: Dynamic graph nodes
 
-// Force rebuild - 2025-01-23-v8 (Fix graph API routes)
+// Force rebuild - 2025-01-23-v9 (Add dynamic nodes endpoint)
 
 // Initialize Hono app
 const app = new Hono();
@@ -28,3 +29,7 @@ registerEmailRoutes(app); // ✅ Phase 5 Day 8: Email sending
 registerApprovalKVRoutes(app); // ✅ Phase 5 Days 9-10: KV-based approval
 app.route('/make-server-f8b491be/timesheet-approvals', timesheetApprovalsRouter); // ✅ Phase 5B: Graph approvals
 app.route('/make-server-f8b491be/graph-versions', graphVersionsRouter); // ✅ Phase 5B: Graph versions
+app.route('/make-server-f8b491be/graph/dynamic-nodes', graphDynamicNodesRouter); // ✅ NEW: Dynamic nodes
+
+// Start the server
+Deno.serve(app.fetch);

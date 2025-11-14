@@ -88,6 +88,24 @@ CREATE TABLE IF NOT EXISTS project_contracts (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Add approval columns if they don't exist (for backward compatibility)
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'project_contracts' AND column_name = 'requires_client_approval'
+  ) THEN
+    ALTER TABLE project_contracts ADD COLUMN requires_client_approval BOOLEAN DEFAULT false;
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'project_contracts' AND column_name = 'client_timesheet_visibility'
+  ) THEN
+    ALTER TABLE project_contracts ADD COLUMN client_timesheet_visibility TEXT DEFAULT 'full' CHECK (client_timesheet_visibility IN ('full', 'hours_only', 'none'));
+  END IF;
+END $$;
+
 -- Timesheet Periods (weekly/monthly summaries)
 CREATE TABLE IF NOT EXISTS timesheet_periods (
   id TEXT PRIMARY KEY,
@@ -169,15 +187,11 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
   // STEP 2: Seed Demo Data (Alice, Bob, Charlie + Timesheets)
   // ============================================================================
 
-  const seedDemoData = async () => {
+  const runSeedDemoData = async () => {
     setSeedStatus('loading');
     setSeedMessage('Seeding demo data...');
 
     try {
-      const alice = TEST_PERSONAS.find(p => p.role === 'contractor')!;
-      const bob = TEST_PERSONAS.find(p => p.role === 'manager')!;
-      const charlie = TEST_PERSONAS.find(p => p.role === 'client')!;
-
       // 1. Create organizations
       const { data: orgs, error: orgError } = await supabase
         .from('organizations')
@@ -199,14 +213,14 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
 
       if (projectError) throw projectError;
 
-      // 3. Create contracts for Alice, Bob, Charlie
+      // 3. Create contracts for Alex, Bob, Charlie
       const { data: contracts, error: contractError } = await supabase
         .from('project_contracts')
         .upsert([
           {
-            id: 'contract-alice',
-            user_id: alice.id,
-            user_name: alice.name,
+            id: 'contract-alex',
+            user_id: 'user-alex-chen',
+            user_name: 'Alex Chen',
             user_role: 'indie_freelancer',
             organization_id: 'company-1', // ✅ Changed to company-1
             project_id: 'proj-workgraph-mvp',
@@ -219,25 +233,25 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
 
       if (contractError) throw contractError;
 
-      // 4. Create timesheet period for Alice (current week)
+      // 4. Create timesheet period for Alex (current week)
       const { data: periods, error: periodError } = await supabase
         .from('timesheet_periods')
         .upsert([
           {
             id: 'period-2025-11-04',
-            contract_id: 'contract-alice',
+            contract_id: 'contract-alex',
             week_start_date: '2025-11-04',
             week_end_date: '2025-11-10',
             total_hours: 40,
-            status: 'submitted',
-            submitted_at: new Date().toISOString(),
+            status: 'draft', // ✅ Changed from 'submitted' to 'draft'
+            submitted_at: null, // ✅ Changed from date to null
           },
         ], { onConflict: 'id' })
         .select();
 
       if (periodError) throw periodError;
 
-      // 5. Create daily time entries for Alice
+      // 5. Create daily time entries for Alex
       const entries = [
         { entry_date: '2025-11-04', hours: 8, description: 'Phase 5 - Approval system backend' },
         { entry_date: '2025-11-05', hours: 8, description: 'Phase 5 - Email integration' },
@@ -250,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
         .from('timesheet_entries')
         .upsert(
           entries.map((e, i) => ({
-            id: `entry-alice-${i + 1}`,
+            id: `entry-alex-${i + 1}`,
             period_id: 'period-2025-11-04',
             ...e,
             billable: true,
@@ -262,7 +276,7 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
       if (entryError) throw entryError;
 
       setSeedStatus('success');
-      setSeedMessage(`✅ Demo data created!\n\n👥 Users: Alice, Bob, Charlie\n📋 Timesheet: 40h @ $150/hr = $6,000\n📅 Period: Nov 4-10, 2025\n\n🎯 Now switch to Alice to see her timesheet!`);
+      setSeedMessage(`✅ Demo data created!\n\n👥 Users: Alex Chen, Bob Martinez, Charlie Davis\n📋 Timesheet: 40h @ $150/hr = $6,000\n📅 Period: Nov 4-10, 2025\n\n🎯 Now switch to Alex Chen to see his timesheet!`);
     } catch (error: any) {
       setSeedStatus('error');
       setSeedMessage('Error seeding data: ' + (error.message || String(error)));
@@ -403,22 +417,20 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
   const [resetStatus, setResetStatus] = useState<Status>('idle');
   const [resetMessage, setResetMessage] = useState('');
 
-  const resetTimesheetToDraft = async () => {
+  const handleResetTimesheet = async () => {
     setResetStatus('loading');
-    setResetMessage('Resetting timesheet to draft...');
-
+    setResetMessage('Resetting timesheet...');
+    
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/timesheet-approvals/reset-to-draft`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/timesheet-approvals/reset-all-approved`,
         {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            periodId: 'period-test-001', // The period created by seed data
-          }),
+          body: JSON.stringify({}),
         }
       );
 
@@ -426,7 +438,11 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
 
       if (response.ok) {
         setResetStatus('success');
-        setResetMessage(`✅ Timesheet reset to draft!\n\n${data.message}\n\n📝 You can now test the submit/approve workflow again.`);
+        if (data.count === 0) {
+          setResetMessage(`⚠️ No approved timesheets found to reset.\n\nAll timesheets are already in draft status.`);
+        } else {
+          setResetMessage(`✅ Timesheet reset to draft!\n\nReset ${data.count} approved timesheet(s) back to draft status.\n\n📝 You can now test the submit/approve workflow again.`);
+        }
       } else {
         setResetStatus('error');
         setResetMessage(data.error || 'Failed to reset timesheet');
@@ -434,6 +450,55 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
     } catch (error) {
       setResetStatus('error');
       setResetMessage('Network error: ' + String(error));
+    }
+  };
+
+  // ============================================================================
+  // STEP 6: Enable 2-Step Approval (Manager → Client)
+  // ============================================================================
+
+  const [clientApprovalStatus, setClientApprovalStatus] = useState<Status>('idle');
+  const [clientApprovalMessage, setClientApprovalMessage] = useState('');
+
+  const handleEnableClientApproval = async () => {
+    setClientApprovalStatus('loading');
+    setClientApprovalMessage('Enabling 2-step approval...');
+    
+    try {
+      // First, check if the column exists by querying the table
+      console.log('🔍 Checking if requires_client_approval column exists...');
+      
+      const { data: testQuery, error: testError } = await supabase
+        .from('project_contracts')
+        .select('id, requires_client_approval')
+        .limit(1);
+      
+      if (testError) {
+        console.error('❌ Column check failed:', testError);
+        throw new Error(`Column "requires_client_approval" does not exist. Please run the SQL schema first.\n\nError: ${testError.message}\n\n📋 Go to Step 1 and click "Copy SQL" to add the missing column.`);
+      }
+      
+      console.log('✅ Column exists, updating contracts...');
+      
+      // Update ALL contracts to require client approval
+      const { data, error } = await supabase
+        .from('project_contracts')
+        .update({ requires_client_approval: true })
+        .neq('id', '');  // Update all rows
+      
+      if (error) {
+        console.error('❌ Update failed:', error);
+        throw new Error(`Failed to update contracts: ${error.message}\n\nDetails: ${error.hint || 'No additional details'}`);
+      }
+      
+      console.log('✅ Successfully enabled 2-step approval!');
+      
+      setClientApprovalStatus('success');
+      setClientApprovalMessage(`✅ 2-Step Approval Enabled!\n\nAll contracts now require:\n1️⃣  Manager Approval (Bob Martinez)\n2️⃣  Client Approval (Charlie Davis)\n\n📝 Next: Reset timesheet to draft, then submit to test the full workflow.`);
+    } catch (error) {
+      console.error('❌ handleEnableClientApproval error:', error);
+      setClientApprovalStatus('error');
+      setClientApprovalMessage(error instanceof Error ? error.message : JSON.stringify(error, null, 2));
     }
   };
 
@@ -516,7 +581,7 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
           </div>
 
           <Button 
-            onClick={seedDemoData}
+            onClick={runSeedDemoData}
             disabled={seedStatus === 'loading' || sqlStatus !== 'success'}
             className="w-full"
             variant="default"
@@ -615,7 +680,7 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
           </div>
 
           <Button 
-            onClick={resetTimesheetToDraft}
+            onClick={handleResetTimesheet}
             disabled={resetStatus === 'loading'}
             className="w-full"
             variant="outline"
@@ -635,15 +700,48 @@ CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
           )}
         </Card>
 
+        {/* Enable 2-Step Approval */}
+        <Card className="p-6 space-y-4 border-blue-200">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+              <CheckCircle2 className="w-4 h-4 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="font-semibold">Step 6: Enable 2-Step Approval (Manager → Client)</h2>
+              <p className="text-sm text-muted-foreground">Require client approval for all contracts</p>
+            </div>
+          </div>
+
+          <Button 
+            onClick={handleEnableClientApproval}
+            disabled={clientApprovalStatus === 'loading'}
+            className="w-full"
+            variant="outline"
+          >
+            {clientApprovalStatus === 'loading' && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Enable 2-Step Approval
+          </Button>
+
+          {clientApprovalMessage && (
+            <div className={`p-4 rounded-lg ${
+              clientApprovalStatus === 'success' ? 'bg-green-50 text-green-900' :
+              clientApprovalStatus === 'error' ? 'bg-red-50 text-red-900' :
+              'bg-gray-50'
+            }`}>
+              <pre className="text-sm whitespace-pre-wrap">{clientApprovalMessage}</pre>
+            </div>
+          )}
+        </Card>
+
         {/* Next Steps */}
         <Card className="p-6 bg-blue-50 border-blue-200">
           <h3 className="font-semibold mb-2 text-blue-900">✅ Next Steps After Setup:</h3>
           <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-            <li>Switch to <strong>Alice Chen</strong> (Contractor) using the persona switcher</li>
+            <li>Switch to <strong>Alex Chen</strong> (Contractor) using the persona switcher</li>
             <li>Go to <strong>Projects</strong> → <strong>Timesheets</strong></li>
-            <li>You should see ONLY Alice's timesheet (40h, $6,000)</li>
+            <li>You should see ONLY Alex's timesheet (40h, $6,000)</li>
             <li>Switch to <strong>Bob Martinez</strong> (Manager)</li>
-            <li>Go to <strong>My Approvals</strong> to approve Alice's timesheet</li>
+            <li>Go to <strong>My Approvals</strong> to approve Alex's timesheet</li>
             <li>Switch to <strong>Charlie Davis</strong> (Client) for final approval</li>
           </ol>
         </Card>
