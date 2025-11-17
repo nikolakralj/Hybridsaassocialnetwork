@@ -100,7 +100,23 @@ WorkGraph is a hybrid SaaS + social work network for technical freelancers with:
 
 ## 🎯 Current Status (2025-11-12)
 
-### **✅ Just Completed (November 12):**
+### **✅ Just Completed (November 14):**
+1. **Local Scope Visibility Architecture** - Critical multi-tenant scalability feature ✅
+   - ✅ Replaced complex projection model with simple "show my contracts only" approach
+   - ✅ Each org sees only their direct contracts (1st-degree neighbors)
+   - ✅ Database schema: `project_contracts`, `project_participants`, `project_role_assignments`
+   - ✅ API service with graph projection (no masking needed!)
+   - ✅ TypeScript types and React hooks (`useProjectContracts`)
+   - ✅ Documentation: `/docs/architecture/LOCAL_SCOPE_VISIBILITY.md`
+   - ✅ Impact: Scales to any project size, clear privacy model, matches real business workflows
+
+2. **WorkGraph Transaction Separation** - Scalability fix ✅
+   - ✅ Removed timesheet nodes from WorkGraph (prevented 2,600+ nodes/year pollution)
+   - ✅ WorkGraph = POLICY (structure, contracts, approval rules)
+   - ✅ Approvals Tab = TRANSACTIONS (timesheet submissions, invoices)
+   - ✅ Documentation: `/docs/architecture/WORKGRAPH_TRANSACTION_SEPARATION.md`
+
+### **Previously Completed (November 12):**
 1. **Database Timezone Bug Fix** - Critical data sync issue resolved
    - ✅ Fixed WorkGraph showing 229.5h vs Timesheets showing 228.0h for same month
    - ✅ Root cause: UTC vs local timezone parsing in date filters
@@ -114,14 +130,14 @@ WorkGraph is a hybrid SaaS + social work network for technical freelancers with:
    - ✅ Updated `/docs/README.md` with clean navigation structure
    - ✅ 56% reduction in doc files (46 → 20)
 
-### **Previous Completions:**
+### **Earlier Completions:**
 1. **Phase 5 Day 1-2** - Policy Versioning + Storage ✅
 2. **M5.1 Minimal (80% Complete)** - Project creation system
 3. **Roadmap expansion** - Enterprise requirements for Phases 5-13
 
-**Status:** Core features (Phases 1-4) are production-ready. Documentation is clean and organized.  
-**Next:** Focus on roadmap planning and Phase 5+ implementation strategy  
-**Priority:** Determine next critical features for MVP vs enterprise expansion
+**Status:** Core features (Phases 1-4) are production-ready. Local scope visibility implemented. Documentation is clean and organized.  
+**Next:** Build UI components for contract management and invitations  
+**Priority:** Finish Phase 5 with email notifications, then move to Enhanced Project Creation
 
 ---
 

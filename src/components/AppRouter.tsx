@@ -11,6 +11,10 @@ import { ProjectsListView } from "./projects/ProjectsListView";
 import { ApprovalsWorkbench } from "./approvals/ApprovalsWorkbench";
 import { DeepLinkHandler } from "./approvals/DeepLinkHandler"; // ✅ DAY 7: Deep-link approvals
 import { DatabaseSetupPage } from "./DatabaseSetupPage"; // ✅ UNIFIED: One setup page to rule them all
+import { ContractsDemoPage } from "./contracts/ContractsDemoPage"; // ✅ LOCAL SCOPE: Contracts demo
+import { NotificationDropdown } from "./notifications/NotificationDropdown"; // ✅ PHASE 6: Notifications
+import { ActivityFeedPage } from "./notifications/ActivityFeedPage"; // ✅ PHASE 6: Activity feed
+import { DashboardPage } from "./dashboard/DashboardPage"; // ✅ PHASE 7: Hybrid Dashboard
 import { PersonaType } from "./social/IntentChips";
 import { Toaster } from "./ui/sonner";
 import { WorkGraphProvider } from "../contexts/WorkGraphContext";
@@ -33,6 +37,9 @@ type AppRoute =
   | "approve" // ✅ DAY 7: Deep-link approve
   | "reject" // ✅ DAY 7: Deep-link reject
   | "approval-view" // ✅ DAY 7: Deep-link view
+  | "contracts" // ✅ LOCAL SCOPE: Contracts visibility demo
+  | "notifications" // ✅ PHASE 6: Activity feed
+  | "dashboard" // ✅ PHASE 7: Hybrid dashboard
   | "setup"; // ✅ NEW: Database setup
 
 interface UserData {
@@ -44,13 +51,12 @@ interface UserData {
 }
 
 function AppContent() {
-  const [currentRoute, setCurrentRoute] = useState<AppRoute>(() => {
-    // Check URL on mount to handle deep-links
+  const getInitialRoute = (): AppRoute => {
     if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
       const path = window.location.pathname;
-      const search = window.location.search;
       const hash = window.location.hash;
-      const params = new URLSearchParams(search);
+      const search = window.location.search; // ✅ FIX: Declare search variable
       
       // ✅ Priority 1: Check hash-based routing #/route?params (works everywhere)
       if (hash.startsWith('#/')) {
@@ -90,10 +96,18 @@ function AppContent() {
     }
     console.log('[ROUTER] ⚠️ No route detected, defaulting to projects');
     return "projects";
-  });
-  const [userIntent, setUserIntent] = useState<PersonaType | null>(null);
+  };
+
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>(getInitialRoute());
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [showNav, setShowNav] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasSeenIntro, setHasSeenIntro] = useState(() => {
+    // Check localStorage to see if user has seen intro before
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('workgraph_intro_seen') === 'true';
+    }
+    return false;
+  });
 
   // Listen for navigation events from child components
   useEffect(() => {
@@ -159,7 +173,6 @@ function AppContent() {
   const handleSignUp = (email: string, intent?: PersonaType) => {
     // Store the user's email and intent
     setUserData({ email, fullName: "", headline: "", bio: "" });
-    setUserIntent(intent || null);
     
     // Always go to personal profile setup first (Phase 1)
     setCurrentRoute("personal-profile-setup");
@@ -171,11 +184,11 @@ function AppContent() {
     setUserData(prev => ({ ...prev!, ...profileData }));
     
     // Route based on original intent (Phase 2)
-    if (userIntent === "company") {
+    if (profileData.intent === "company") {
       setCurrentRoute("company-onboarding");
-    } else if (userIntent === "agency") {
+    } else if (profileData.intent === "agency") {
       setCurrentRoute("agency-onboarding");
-    } else if (userIntent === "freelancer") {
+    } else if (profileData.intent === "freelancer") {
       // Freelancers go to extended freelancer onboarding
       setCurrentRoute("freelancer-onboarding");
     } else {
@@ -190,14 +203,14 @@ function AppContent() {
     const minimalProfile = {
       ...userData!,
       fullName: userData!.email.split("@")[0], // Extract from email
-      headline: userIntent === "company" ? "Company Admin" : "Agency Admin"
+      headline: userData!.intent === "company" ? "Company Admin" : "Agency Admin"
     };
     setUserData(minimalProfile);
     
     // Route to workspace setup
-    if (userIntent === "company") {
+    if (userData!.intent === "company") {
       setCurrentRoute("company-onboarding");
-    } else if (userIntent === "agency") {
+    } else if (userData!.intent === "agency") {
       setCurrentRoute("agency-onboarding");
     } else {
       setCurrentRoute("feed");
@@ -231,7 +244,8 @@ function AppContent() {
         return (
           <Landing 
             onSignIn={handleSignIn} 
-            onSignUp={handleSignUp} 
+            onSignUp={handleSignUp}
+            showIntro={!hasSeenIntro}
           />
         );
 
@@ -241,7 +255,7 @@ function AppContent() {
             userEmail={userData?.email || ""}
             onComplete={handlePersonalProfileComplete}
             onSkip={handleSkipPersonalProfile}
-            mode={userIntent === "company" || userIntent === "agency" ? "optional" : "required"}
+            mode={userData?.intent === "company" || userData?.intent === "agency" ? "optional" : "required"}
           />
         );
 
@@ -277,7 +291,7 @@ function AppContent() {
           <FeedHome 
             isNewUser={true} 
             userName={userData?.fullName || "User"} 
-            persona={userIntent} 
+            persona={userData?.intent} 
           />
         );
 
@@ -302,6 +316,32 @@ function AppContent() {
       case "approval-view": // ✅ DAY 7: Deep-link view
         return <ApprovalsWorkbench />;
 
+      case "contracts": // ✅ LOCAL SCOPE: Contracts visibility demo
+        return <ContractsDemoPage />;
+
+      case "notifications": // ✅ PHASE 6: Activity feed
+        return (
+          <ActivityFeedPage 
+            userId="user-123" 
+            onNavigate={(url) => {
+              // Parse route from URL (e.g., "#/approvals")
+              const route = url.replace('#/', '');
+              setCurrentRoute(route as AppRoute);
+            }}
+          />
+        );
+
+      case "dashboard": // ✅ PHASE 7: Hybrid dashboard
+        return (
+          <DashboardPage 
+            userId="user-123"
+            onNavigate={(route) => {
+              setCurrentRoute(route.replace('#/', '') as AppRoute);
+              window.history.pushState({}, '', route);
+            }}
+          />
+        );
+
       case "setup": // ✅ NEW: Database setup
         return <DatabaseSetupPage />;
 
@@ -312,9 +352,11 @@ function AppContent() {
 
   const navigationRoutes: { route: AppRoute; label: string }[] = [
     { route: "landing", label: "🏠 Landing" },
+    { route: "dashboard", label: "📊 Dashboard" }, // ✅ PHASE 7: Hybrid dashboard
     { route: "feed", label: "📰 Feed" },
     { route: "projects", label: "📋 Projects" },
     { route: "approvals", label: "✅ My Approvals" }, // ✅ DAY 3: Global approvals
+    { route: "contracts", label: "🤝 Contracts Demo" }, // ✅ LOCAL SCOPE: Contracts visibility
     { route: "project-workspace", label: "📁 Project Workspace" },
     { route: "company-profile-demo", label: "🏢 Company Profile" },
     { route: "setup", label: "🔧 Database Setup" }, // ✅ NEW: Database setup
@@ -337,16 +379,30 @@ function AppContent() {
           </div>
           
           <div className="flex items-center gap-3">
+            {/* ✅ NOTIFICATION BELL */}
+            <NotificationDropdown 
+              userId="user-123"
+              onNavigate={(url) => {
+                const route = url.replace('#/', '');
+                setCurrentRoute(route as AppRoute);
+                window.history.pushState({}, '', url);
+              }}
+              onViewAll={() => {
+                setCurrentRoute('notifications');
+                window.history.pushState({}, '', '#/notifications');
+              }}
+            />
+            
             {/* ✅ PERSONA SWITCHER */}
             <PersonaSwitcher />
             
             <button
-              onClick={() => setShowNav(!showNav)}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
               style={{
                 padding: '8px 16px',
                 borderRadius: '8px',
                 border: '1px solid #475569',
-                backgroundColor: showNav ? '#2563eb' : '#334155',
+                backgroundColor: sidebarOpen ? '#2563eb' : '#334155',
                 color: 'white',
                 cursor: 'pointer',
                 display: 'flex',
@@ -357,21 +413,21 @@ function AppContent() {
                 transition: 'all 0.2s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = showNav ? '#1d4ed8' : '#475569';
+                e.currentTarget.style.backgroundColor = sidebarOpen ? '#1d4ed8' : '#475569';
                 e.currentTarget.style.transform = 'translateY(-1px)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = showNav ? '#2563eb' : '#334155';
+                e.currentTarget.style.backgroundColor = sidebarOpen ? '#2563eb' : '#334155';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              {showNav ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-              <span>{showNav ? 'Close' : 'Navigate'}</span>
+              {sidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              <span>{sidebarOpen ? 'Close' : 'Navigate'}</span>
             </button>
           </div>
         </div>
         
-        {showNav && (
+        {sidebarOpen && (
           <div className="border-t border-slate-700 bg-slate-800/95 backdrop-blur-sm p-4">
             <div className="flex flex-wrap gap-3">
               {navigationRoutes.map(({ route, label }) => (
@@ -384,7 +440,7 @@ function AppContent() {
                     setCurrentRoute(route);
                     // ✅ Update URL so refresh works
                     window.history.pushState({}, '', `#/${route}`);
-                    setShowNav(false);
+                    setSidebarOpen(false);
                   }}
                   style={{
                     padding: '10px 16px',
@@ -412,6 +468,39 @@ function AppContent() {
                   {label}
                 </button>
               ))}
+            </div>
+            
+            {/* Dev utilities */}
+            <div className="mt-4 pt-4 border-t border-slate-700">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  localStorage.removeItem('workgraph_intro_seen');
+                  setHasSeenIntro(false);
+                  setCurrentRoute('landing');
+                  window.history.pushState({}, '', '#/landing');
+                  setSidebarOpen(false);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #475569',
+                  backgroundColor: '#334155',
+                  color: '#fbbf24',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#475569';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#334155';
+                }}
+              >
+                ✨ Reset Intro (Test)
+              </button>
             </div>
           </div>
         )}

@@ -11,13 +11,17 @@ import { PricingFAQ } from "./PricingFAQ";
 import { FinalCTABanner } from "./FinalCTABanner";
 import { Footer } from "./Footer";
 import { PersonaType } from "./social/IntentChips";
+import { IntroPage } from "./IntroPage";
 
 interface LandingProps {
   onSignIn?: () => void;
   onSignUp?: (email: string, intent?: PersonaType) => void;
+  showIntro?: boolean;
 }
 
-export function Landing({ onSignIn, onSignUp }: LandingProps) {
+export function Landing({ onSignIn, onSignUp, showIntro = false }: LandingProps) {
+  const [introComplete, setIntroComplete] = useState(!showIntro);
+
   const handleGetStarted = (emailOrIntent?: string | PersonaType, intent?: PersonaType) => {
     // If first param is email (from HeroWarp)
     if (typeof emailOrIntent === "string" && emailOrIntent.includes("@")) {
@@ -28,6 +32,19 @@ export function Landing({ onSignIn, onSignUp }: LandingProps) {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
+
+  const handleIntroComplete = () => {
+    // Mark intro as seen in localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('workgraph_intro_seen', 'true');
+    }
+    setIntroComplete(true);
+  };
+
+  // Show intro page first
+  if (!introComplete) {
+    return <IntroPage onEnter={handleIntroComplete} />;
+  }
 
   return (
     <div className="min-h-screen bg-background">
