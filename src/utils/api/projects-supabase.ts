@@ -1,14 +1,10 @@
 // Supabase-backed Projects API
 // Replaces mock implementations with real database queries
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '../supabase/client';
 import { Project, ProjectMember, ProjectRole } from '../../types/collaboration';
 
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient();
 
 /**
  * Create a new project with initial members

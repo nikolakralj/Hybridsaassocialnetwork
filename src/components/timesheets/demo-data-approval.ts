@@ -2,7 +2,7 @@
 // Shows 3 freelancers + 2 companies scenario with contract-based grouping
 
 import type { Contract } from '../../types/contracts';
-import type { Person } from './selection/PeopleChipSelector';
+import type { Person } from '../../types/people';
 import type { TimesheetEntry } from '../../utils/api/timesheets';
 
 // ============================================================================

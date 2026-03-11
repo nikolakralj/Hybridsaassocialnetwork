@@ -225,8 +225,8 @@ async function fetchPersonStats(
     // This prevents counting entire week's hours when only part of the week is in the viewing month
     const { data: entries, error: entriesError } = await supabase
       .from('timesheet_entries')
-      .select('date, hours, period_id')
-      .eq('user_id', userId);
+      .select('entry_date, hours, period_id, timesheet_periods!inner(project_contracts!inner(user_id))')
+      .eq('timesheet_periods.project_contracts.user_id', userId);
     
     if (entriesError) {
       console.warn('Could not fetch entries, falling back to period totals:', entriesError);
@@ -282,9 +282,9 @@ async function fetchPersonStats(
       
       entries.forEach(entry => {
         // ✅ FIX: Parse date in LOCAL timezone to avoid UTC offset issues
-        // entry.date is 'YYYY-MM-DD' format, which Date() interprets as UTC midnight
+        // entry.entry_date is 'YYYY-MM-DD' format, which Date() interprets as UTC midnight
         // In PDT (UTC-7), '2025-10-01' becomes Sep 30 at 5pm, causing wrong month!
-        const [year, month, day] = entry.date.split('-').map(Number);
+        const [year, month, day] = entry.entry_date.split('-').map(Number);
         const entryDate = new Date(year, month - 1, day); // month is 0-indexed
         
         const entryMonth = entryDate.getMonth();
@@ -294,14 +294,14 @@ async function fetchPersonStats(
         // Check if entry is in viewing month
         if (entryMonth === viewingMonth && entryYear === viewingYear) {
           currentMonthHours += entryHours;
-          console.log(`  ✓ ${entry.date}: ${entryHours}h (running total: ${currentMonthHours}h)`);
+          console.log(`  ✓ ${entry.entry_date}: ${entryHours}h (running total: ${currentMonthHours}h)`);
           
           // Check if entry is in the first week
           if (entryDate >= firstMonday && entryDate <= firstMondayEnd) {
             currentWeekHours += entryHours;
           }
         } else {
-          console.log(`  ✗ ${entry.date}: ${entryHours}h (month: ${entryMonth}, year: ${entryYear}) - SKIPPED`);
+          console.log(`  ✗ ${entry.entry_date}: ${entryHours}h (month: ${entryMonth}, year: ${entryYear}) - SKIPPED`);
         }
       });
       

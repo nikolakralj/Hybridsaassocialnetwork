@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { ArrowRight, ArrowLeft, Users, UserCheck, Briefcase } from "lucide-react";
+import { useNavigate } from "react-router";
+import { ArrowRight, ArrowLeft, Users, UserCheck, Briefcase, Loader2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { toast } from "sonner@2.0.3";
+import { useAuth } from "../../contexts/AuthContext";
+import { projectId, publicAnonKey } from "../../utils/supabase/info";
 
 interface AgencyOnboardingNewProps {
   userEmail: string;
@@ -14,8 +17,16 @@ interface AgencyOnboardingNewProps {
 
 type Step = 1 | 2;
 
-export function AgencyOnboardingNew({ userEmail, userName, onComplete, onSkip }: AgencyOnboardingNewProps) {
+export function AgencyOnboardingNew({ 
+  userEmail = "demo@example.com", 
+  userName = "Demo User", 
+  onComplete, 
+  onSkip 
+}: Partial<AgencyOnboardingNewProps> = {}) {
+  const navigate = useNavigate();
+  const { user, updateProfile } = useAuth();
   const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     agencyName: "",
     website: "",
@@ -23,20 +34,49 @@ export function AgencyOnboardingNew({ userEmail, userName, onComplete, onSkip }:
     workMode: null as "recruiting" | "staffing" | "both" | null,
   });
 
-  const handleCreateAgency = () => {
-    if (formData.agencyName) {
+  const displayName = user?.name || userName;
+
+  const handleCreateAgency = async () => {
+    if (!formData.agencyName) return;
+    setSaving(true);
+    try {
+      await updateProfile({ persona_type: 'agency' });
+
+      const agencyId = `agency-${user?.id || 'anon'}-${Date.now()}`;
+      const url = `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/kv`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({
+          key: `agency:${agencyId}`,
+          value: JSON.stringify({
+            id: agencyId,
+            owner_id: user?.id,
+            name: formData.agencyName,
+            website: formData.website,
+            regions: formData.regions,
+            created_at: new Date().toISOString(),
+          }),
+        }),
+      });
+
       toast.success(`${formData.agencyName} created!`);
       setCurrentStep(2);
+    } catch (err: any) {
+      console.error("Failed to create agency:", err);
+      toast.error(err.message || "Failed to create agency");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleWorkModeSelect = (mode: "recruiting" | "staffing" | "both") => {
+  const handleWorkModeSelect = async (mode: "recruiting" | "staffing" | "both") => {
     setFormData({ ...formData, workMode: mode });
     toast.success(`Work mode set to ${mode === "recruiting" ? "Recruiting" : mode === "staffing" ? "Staff Augmentation" : "Both"}`);
     
-    // Small delay then complete
     setTimeout(() => {
-      onComplete(formData.agencyName);
+      onComplete?.(formData.agencyName);
+      navigate('/app');
     }, 500);
   };
 
@@ -102,7 +142,7 @@ export function AgencyOnboardingNew({ userEmail, userName, onComplete, onSkip }:
                 </p>
                 <div className="mt-4 bg-accent/30 border border-border rounded-xl p-3">
                   <p className="text-sm m-0">
-                    ✓ Personal profile created for {userName}
+                    ✓ Personal profile created for {displayName}
                   </p>
                 </div>
               </div>
@@ -176,17 +216,21 @@ export function AgencyOnboardingNew({ userEmail, userName, onComplete, onSkip }:
                     variant="ghost"
                     onClick={onSkip}
                     className="flex-1"
+                    disabled={saving}
                   >
                     I'll do this later
                   </Button>
                 )}
                 <Button
                   onClick={handleCreateAgency}
-                  disabled={!canCreateAgency}
+                  disabled={!canCreateAgency || saving}
                   className="flex-1"
                 >
-                  Create agency
-                  <ArrowRight className="w-4 h-4 ml-2" />
+                  {saving ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</>
+                  ) : (
+                    <>Create agency <ArrowRight className="w-4 h-4 ml-2" /></>
+                  )}
                 </Button>
               </div>
             </div>

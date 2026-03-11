@@ -1,11 +1,9 @@
 // ============================================================================
-// EarningsChart - Visual earnings over time
+// EarningsChart - Apple-minimalistic earnings visualization
 // ============================================================================
 
 import React from 'react';
 import {
-  LineChart,
-  Line,
   AreaChart,
   Area,
   XAxis,
@@ -24,59 +22,62 @@ interface EarningsChartProps {
 }
 
 export function EarningsChart({ data, currency = 'USD' }: EarningsChartProps) {
-  const formattedData = data.map(point => ({
+  const formattedData = data.map((point, index) => ({
     ...point,
+    // Use index suffix to guarantee uniqueness even if dates format the same
     displayDate: format(new Date(point.date), 'MMM d'),
     displayAmount: `$${point.amount.toLocaleString()}`,
+    _key: `${point.date}-${index}`,
   }));
 
-  const maxAmount = Math.max(...data.map(d => d.amount));
-  const minAmount = Math.min(...data.map(d => d.amount));
-
   return (
-    <Card>
-      <CardHeader className="border-b">
+    <Card className="border-border/60">
+      <CardHeader className="border-b border-border/60">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">Earnings Trend</h3>
-            <p className="text-sm text-gray-500 mt-1">Last 30 days</p>
+            <h3 className="text-sm font-semibold text-foreground">Earnings Trend</h3>
+            <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-gray-900">
+            <p className="text-lg font-semibold text-foreground tracking-tight">
               ${data.reduce((sum, d) => sum + d.amount, 0).toLocaleString()}
             </p>
-            <p className="text-sm text-gray-500">Total</p>
+            <p className="text-xs text-muted-foreground">Total</p>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="p-6">
-        <ResponsiveContainer width="100%" height={250}>
+      <CardContent className="p-5">
+        <ResponsiveContainer width="100%" height={220}>
           <AreaChart data={formattedData}>
             <defs>
               <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                <stop key="stop-top" offset="5%" stopColor="var(--accent-brand)" stopOpacity={0.15} />
+                <stop key="stop-bottom" offset="95%" stopColor="var(--accent-brand)" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.5} />
             <XAxis
               dataKey="displayDate"
-              stroke="#9ca3af"
-              fontSize={12}
+              stroke="var(--muted-foreground)"
+              fontSize={11}
               tickLine={false}
+              axisLine={false}
             />
             <YAxis
-              stroke="#9ca3af"
-              fontSize={12}
+              stroke="var(--muted-foreground)"
+              fontSize={11}
               tickLine={false}
+              axisLine={false}
               tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: 'white',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                padding: '12px',
+                backgroundColor: 'var(--card)',
+                border: '1px solid var(--border)',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                fontSize: '13px',
+                boxShadow: 'var(--shadow-lg)',
               }}
               formatter={(value: number) => [`$${value.toLocaleString()}`, 'Earned']}
               labelFormatter={(label) => label}
@@ -84,7 +85,7 @@ export function EarningsChart({ data, currency = 'USD' }: EarningsChartProps) {
             <Area
               type="monotone"
               dataKey="amount"
-              stroke="#3b82f6"
+              stroke="var(--accent-brand)"
               strokeWidth={2}
               fill="url(#colorAmount)"
             />

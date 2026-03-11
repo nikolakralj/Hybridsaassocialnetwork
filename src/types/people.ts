@@ -8,4 +8,6 @@ export interface Person {
   initials?: string;
   avatar?: string;
   role?: string;
+  email?: string;
+  organizationId?: string;
 }

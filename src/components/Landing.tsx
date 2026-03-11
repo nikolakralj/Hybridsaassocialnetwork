@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { AnnouncementBar, TopBar } from "./TopBar";
 import { HeroWarp } from "./HeroWarp";
 import { LogoStrip } from "./LogoStrip";
@@ -12,25 +13,38 @@ import { FinalCTABanner } from "./FinalCTABanner";
 import { Footer } from "./Footer";
 import { PersonaType } from "./social/IntentChips";
 import { IntroPage } from "./IntroPage";
+import { useAuth } from "../contexts/AuthContext";
+import { AuthModal } from "./AuthModal";
 
-interface LandingProps {
-  onSignIn?: () => void;
-  onSignUp?: (email: string, intent?: PersonaType) => void;
-  showIntro?: boolean;
-}
+export function Landing() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [introComplete, setIntroComplete] = useState(true);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signup');
 
-export function Landing({ onSignIn, onSignUp, showIntro = false }: LandingProps) {
-  const [introComplete, setIntroComplete] = useState(!showIntro);
+  // If already authenticated, redirect to app
+  useEffect(() => {
+    if (user) {
+      navigate('/app');
+    }
+  }, [user, navigate]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hasSeenIntro = localStorage.getItem('workgraph_intro_seen') === 'true';
+      setIntroComplete(hasSeenIntro);
+    }
+  }, []);
 
   const handleGetStarted = (emailOrIntent?: string | PersonaType, intent?: PersonaType) => {
-    // If first param is email (from HeroWarp)
-    if (typeof emailOrIntent === "string" && emailOrIntent.includes("@")) {
-      onSignUp?.(emailOrIntent, intent);
-    } else {
-      // Generic get started without email (from other CTAs)
-      // This shouldn't happen in new flow, but fallback to scroll to hero
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    setAuthMode('signup');
+    setAuthOpen(true);
+  };
+
+  const handleSignIn = () => {
+    setAuthMode('signin');
+    setAuthOpen(true);
   };
 
   const handleIntroComplete = () => {
@@ -49,7 +63,7 @@ export function Landing({ onSignIn, onSignUp, showIntro = false }: LandingProps)
   return (
     <div className="min-h-screen bg-background">
       <AnnouncementBar />
-      <TopBar onSignIn={onSignIn} onGetStarted={() => handleGetStarted()} />
+      <TopBar onSignIn={handleSignIn} onGetStarted={() => handleGetStarted()} />
       
       {/* 1. Hero - Single email + CTA, trust signal */}
       <HeroWarp onGetStarted={handleGetStarted} />
@@ -83,6 +97,8 @@ export function Landing({ onSignIn, onSignUp, showIntro = false }: LandingProps)
       <FinalCTABanner onGetStarted={() => handleGetStarted()} />
       
       <Footer />
+
+      <AuthModal open={authOpen} onOpenChange={setAuthOpen} defaultMode={authMode} />
     </div>
   );
 }

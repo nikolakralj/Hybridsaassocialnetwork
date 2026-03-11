@@ -1,69 +1,68 @@
 import { useState } from "react";
-import { ArrowRight, Upload, Check } from "lucide-react";
+import { useNavigate } from "react-router";
+import { ArrowRight, Upload, Check, Loader2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Progress } from "../ui/progress";
+import { useAuth } from "../../contexts/AuthContext";
+import { toast } from "sonner@2.0.3";
 
-interface PersonalProfileSetupProps {
-  userEmail: string;
-  onComplete: (profileData: any) => void;
-  onSkip?: () => void;
-  mode?: "required" | "optional";
-}
-
-export function PersonalProfileSetup({ 
-  userEmail, 
-  onComplete, 
-  onSkip,
-  mode = "required" 
-}: PersonalProfileSetupProps) {
+export function PersonalProfileSetup() {
+  const navigate = useNavigate();
+  const { user, updateProfile } = useAuth();
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
-    fullName: "",
-    headline: "",
-    bio: "",
+    fullName: user?.name || "",
+    headline: user?.headline || "",
+    bio: user?.bio || "",
   });
 
   const canProceed = formData.fullName && formData.headline;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("📝 Form submitted. Can proceed:", canProceed, "Data:", formData);
-    if (canProceed) {
-      console.log("✅ Calling onComplete with:", formData);
-      onComplete(formData);
-    } else {
-      console.log("❌ Cannot proceed. Missing:", {
-        fullName: !formData.fullName,
-        headline: !formData.headline
+    if (!canProceed) return;
+
+    setSaving(true);
+    try {
+      await updateProfile({
+        name: formData.fullName,
+        headline: formData.headline,
+        bio: formData.bio,
       });
+      toast.success("Profile saved!");
+      navigate("/onboarding/freelancer");
+    } catch (err: any) {
+      console.error("Failed to save personal profile:", err);
+      toast.error(err.message || "Failed to save profile");
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleSkip = () => {
+    navigate("/app");
   };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
       <div className="w-full max-w-xl">
-        {/* Progress indicator */}
-        {mode === "required" && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground m-0">Step 1 of 2</p>
-              {onSkip && (
-                <button
-                  onClick={onSkip}
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  I'll do this later
-                </button>
-              )}
-            </div>
-            <Progress value={50} className="h-1.5" />
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-muted-foreground m-0">Step 1 of 2</p>
+            <button
+              onClick={handleSkip}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer"
+            >
+              I'll do this later
+            </button>
           </div>
-        )}
+          <Progress value={50} className="h-1.5" />
+        </div>
 
         <div className="bg-card border border-border rounded-2xl p-8 shadow-lg">
-          {/* Header */}
           <div className="mb-8">
             <div className="w-12 h-12 rounded-2xl bg-accent-brand/10 flex items-center justify-center mb-4">
               <Check className="w-6 h-6 text-accent-brand" />
@@ -75,19 +74,17 @@ export function PersonalProfileSetup({
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email (readonly) */}
             <div>
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                value={userEmail}
+                value={user?.email || ""}
                 disabled
                 className="mt-2 bg-muted"
               />
             </div>
 
-            {/* Full name */}
             <div>
               <Label htmlFor="fullName">Full name *</Label>
               <Input
@@ -100,7 +97,6 @@ export function PersonalProfileSetup({
               />
             </div>
 
-            {/* Professional headline */}
             <div>
               <Label htmlFor="headline">Professional headline *</Label>
               <Input
@@ -116,7 +112,6 @@ export function PersonalProfileSetup({
               </p>
             </div>
 
-            {/* Bio (optional) */}
             <div>
               <Label htmlFor="bio">About you (optional)</Label>
               <Textarea
@@ -129,44 +124,41 @@ export function PersonalProfileSetup({
               />
             </div>
 
-            {/* Info callout */}
             <div className="bg-accent/30 border border-border rounded-xl p-4">
               <p className="text-sm m-0">
-                💡 Your personal profile is separate from any workspaces you create or join. 
+                Your personal profile is separate from any workspaces you create or join. 
                 You'll always have this profile, even if you switch companies or agencies.
               </p>
             </div>
 
-            {/* Submit */}
             <div className="flex gap-3 pt-4">
-              {onSkip && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={onSkip}
-                  className="flex-1"
-                >
-                  I'll do this later
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleSkip}
+                className="flex-1"
+                disabled={saving}
+              >
+                I'll do this later
+              </Button>
               <Button
                 type="submit"
-                disabled={!canProceed}
+                disabled={!canProceed || saving}
                 className="flex-1 rounded-xl"
               >
-                Continue
-                <ArrowRight className="w-4 h-4 ml-2" />
+                {saving ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>
+                ) : (
+                  <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>
+                )}
               </Button>
             </div>
           </form>
         </div>
 
-        {/* Helper text */}
-        {mode === "required" && (
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Next: {onSkip ? "You can complete your workspace setup" : "Set up your workspace"}
-          </p>
-        )}
+        <p className="text-center text-sm text-muted-foreground mt-6">
+          Next: Set up your workspace
+        </p>
       </div>
     </div>
   );

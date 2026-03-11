@@ -1,13 +1,9 @@
 // Supabase-backed Approvals API
 // Handles approval records and queue
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '../supabase/client';
 
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient();
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -98,12 +94,17 @@ export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
 ): Promise<ApprovalQueueItem[]> {
   try {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    // Always query approval_records directly to avoid view schema cache issues
     let query = supabase
-      .from('approval_queue')
+      .from('approval_records')
       .select('*');
 
-    // Apply filters
-    if (filters.status && filters.status !== 'all') {
+    // Apply status filter (default to pending if not specified)
+    if (!filters.status || filters.status === 'pending') {
+      query = query.eq('status', 'pending');
+    } else if (filters.status !== 'all') {
       query = query.eq('status', filters.status);
     }
 
@@ -111,7 +112,9 @@ export async function getApprovalQueue(
       query = query.eq('subject_type', filters.subjectType);
     }
 
-    if (filters.projectId) {
+    // Only filter by project_id when it's a valid UUID — seed IDs like
+    // "proj-alpha" would cause a Postgres 22P02 parse error on UUID columns.
+    if (filters.projectId && uuidRegex.test(filters.projectId)) {
       query = query.eq('project_id', filters.projectId);
     }
 
@@ -129,7 +132,66 @@ export async function getApprovalQueue(
       throw new Error(`Failed to fetch approval queue: ${error.message}`);
     }
 
-    return (data || []).map(transformQueueItem);
+    if (!data || data.length === 0) return [];
+
+    // Manually fetch related data since we're bypassing the view
+    // Filter out non-UUID project IDs to avoid Postgres UUID parse errors
+    const projectIds = [...new Set(data.map(d => d.project_id))].filter(Boolean);
+    const validUuidProjectIds = projectIds.filter(id => uuidRegex.test(id));
+    let projectMap = new Map<string, string>();
+    if (validUuidProjectIds.length > 0) {
+      const { data: projectsData } = await supabase
+        .from('projects')
+        .select('id, name')
+        .in('id', validUuidProjectIds);
+      projectMap = new Map(projectsData?.map(p => [p.id, p.name]) || []);
+    }
+    // Also map non-UUID project IDs using their raw ID as a display name
+    projectIds.filter(id => !uuidRegex.test(id)).forEach(id => {
+      projectMap.set(id, id);
+    });
+
+    const timesheetIds = data.filter(d => d.subject_type === 'timesheet').map(d => d.subject_id).filter(Boolean);
+    const validUuidTimesheetIds = timesheetIds.filter(id => uuidRegex.test(id));
+    let timesheetMap = new Map();
+    if (validUuidTimesheetIds.length > 0) {
+      const { data: timesheetData } = await supabase
+        .from('timesheet_periods')
+        .select(`
+          id,
+          week_start_date,
+          week_end_date,
+          total_hours,
+          project_contracts (
+            user_name,
+            hourly_rate
+          )
+        `)
+        .in('id', validUuidTimesheetIds);
+      timesheetMap = new Map(timesheetData?.map((t: any) => [t.id, t]) || []);
+    }
+
+    return data.map((dbItem: any) => {
+      const approval = transformApproval(dbItem);
+      approval.projectName = projectMap.get(dbItem.project_id) || 'Unknown Project';
+
+      if (dbItem.subject_type === 'timesheet') {
+        const ts = timesheetMap.get(dbItem.subject_id);
+        if (ts) {
+          // Handle arrays from Supabase relationship depending on exactly how it returns
+          const contract = Array.isArray(ts.project_contracts) ? ts.project_contracts[0] : ts.project_contracts;
+          (approval as ApprovalQueueItem).timesheetData = {
+            weekStart: ts.week_start_date,
+            weekEnd: ts.week_end_date,
+            totalHours: parseFloat(ts.total_hours || '0'),
+            contractorName: contract?.user_name || 'Unknown Contractor',
+            hourlyRate: contract?.hourly_rate ? parseFloat(contract.hourly_rate) : undefined,
+          };
+        }
+      }
+
+      return approval as ApprovalQueueItem;
+    });
   } catch (error) {
     console.error('Error in getApprovalQueue:', error);
     throw error;
@@ -141,15 +203,15 @@ export async function getApprovalQueue(
  */
 export async function approveItem(
   approvalId: string,
-  notes?: string
+  data?: { approvedBy?: string; notes?: string }
 ): Promise<ApprovalRecord> {
   try {
-    const { data, error } = await supabase
+    const { data: result, error } = await supabase
       .from('approval_records')
       .update({
         status: 'approved',
         decided_at: new Date().toISOString(),
-        notes: notes || null,
+        notes: data?.notes || null,
       })
       .eq('id', approvalId)
       .select()
@@ -162,7 +224,7 @@ export async function approveItem(
 
     // TODO: Trigger next approval layer or mark as complete
 
-    return transformApproval(data);
+    return transformApproval(result);
   } catch (error) {
     console.error('Error in approveItem:', error);
     throw error;
@@ -174,15 +236,15 @@ export async function approveItem(
  */
 export async function rejectItem(
   approvalId: string,
-  notes?: string
+  data?: { rejectedBy?: string; reason?: string }
 ): Promise<ApprovalRecord> {
   try {
-    const { data, error } = await supabase
+    const { data: result, error } = await supabase
       .from('approval_records')
       .update({
         status: 'rejected',
         decided_at: new Date().toISOString(),
-        notes: notes || null,
+        notes: data?.reason || null,
       })
       .eq('id', approvalId)
       .select()
@@ -193,7 +255,7 @@ export async function rejectItem(
       throw new Error(`Failed to reject item: ${error.message}`);
     }
 
-    return transformApproval(data);
+    return transformApproval(result);
   } catch (error) {
     console.error('Error in rejectItem:', error);
     throw error;
@@ -234,19 +296,20 @@ export async function requestChanges(
 /**
  * Bulk approve multiple items
  */
-export async function bulkApprove(
-  approvalIds: string[],
-  notes?: string
-): Promise<ApprovalRecord[]> {
+export async function bulkApprove(data: {
+  approvedBy?: string;
+  itemIds: string[];
+  notes?: string;
+}): Promise<ApprovalRecord[]> {
   try {
-    const { data, error } = await supabase
+    const { data: result, error } = await supabase
       .from('approval_records')
       .update({
         status: 'approved',
         decided_at: new Date().toISOString(),
-        notes: notes || null,
+        notes: data.notes || null,
       })
-      .in('id', approvalIds)
+      .in('id', data.itemIds)
       .select();
 
     if (error) {
@@ -254,7 +317,7 @@ export async function bulkApprove(
       throw new Error(`Failed to bulk approve: ${error.message}`);
     }
 
-    return (data || []).map(transformApproval);
+    return (result || []).map(transformApproval);
   } catch (error) {
     console.error('Error in bulkApprove:', error);
     throw error;
@@ -363,25 +426,4 @@ function transformApproval(dbApproval: any): ApprovalRecord {
     createdAt: dbApproval.created_at,
     updatedAt: dbApproval.updated_at,
   };
-}
-
-function transformQueueItem(dbItem: any): ApprovalQueueItem {
-  const approval = transformApproval(dbItem);
-  
-  // Add project name
-  approval.projectName = dbItem.project_name;
-  
-  // Add timesheet data if available
-  if (dbItem.timesheet_data) {
-    const ts = dbItem.timesheet_data;
-    (approval as ApprovalQueueItem).timesheetData = {
-      weekStart: ts.week_start,
-      weekEnd: ts.week_end,
-      totalHours: parseFloat(ts.total_hours),
-      contractorName: ts.contractor_name,
-      hourlyRate: ts.hourly_rate ? parseFloat(ts.hourly_rate) : undefined,
-    };
-  }
-  
-  return approval as ApprovalQueueItem;
 }

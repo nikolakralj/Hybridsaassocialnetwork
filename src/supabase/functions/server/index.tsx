@@ -10,6 +10,8 @@ import { graphVersionsRouter } from "./graph-versions.ts"; // ✅ Phase 5B: Grap
 import { graphDynamicNodesRouter } from "./graph-dynamic-nodes.ts"; // ✅ NEW: Dynamic graph nodes
 import migrateContractsRouter from "./migrate-contracts.ts"; // ✅ LOCAL SCOPE: Contracts migration
 import runMigrationRouter from "./run-migration.ts"; // ✅ LOCAL SCOPE: Direct SQL migration
+import { authRouter } from "./auth.tsx"; // ✅ Phase 0.5: Auth routes
+import { kvApiRouter } from "./kv-api.tsx"; // ✅ Phase 0.5: Generic KV API
 
 // Force rebuild - 2025-01-23-v11 (Add direct SQL migration endpoint)
 
@@ -27,6 +29,8 @@ app.use("/*", cors({
 app.use('*', logger(console.log));
 
 // Register all routes
+app.route('/', authRouter); // ✅ Phase 0.5: Auth
+app.route('/', kvApiRouter); // ✅ Phase 0.5: KV API
 registerEmailRoutes(app); // ✅ Phase 5 Day 8: Email sending
 registerApprovalKVRoutes(app); // ✅ Phase 5 Days 9-10: KV-based approval
 app.route('/make-server-f8b491be/timesheet-approvals', timesheetApprovalsRouter); // ✅ Phase 5B: Graph approvals

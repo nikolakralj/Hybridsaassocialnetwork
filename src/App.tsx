@@ -1,27 +1,32 @@
 import React from 'react';
-import { AppRouter } from './components/AppRouter';
+import { RouterProvider } from 'react-router';
+import { router } from './routes';
 import { QueryProvider } from './components/QueryProvider';
-import { PersonaProvider } from './contexts/PersonaContext'; // ✅ TEST MODE: Persona switching
-import { Toaster } from './components/ui/sonner';
+import { PersonaProvider } from './contexts/PersonaContext';
+import { WorkGraphProvider } from './contexts/WorkGraphContext';
+import { TimesheetStoreProvider } from './contexts/TimesheetDataContext';
+import { NotificationProvider } from './contexts/NotificationContext';
+import { AuthProvider } from './contexts/AuthContext';
 
-// FORCE REBUILD: 2025-01-23-18:00:00 - Fixed import error ApprovalsWorkbench
+// Force light mode globally — runs before any React renders
+if (typeof document !== 'undefined') {
+  document.documentElement.classList.remove('dark');
+}
+
 export default function App() {
-  // Debug: Log when App.tsx renders
-  React.useEffect(() => {
-    console.log('[APP.TSX] App mounted!', {
-      pathname: window.location.pathname,
-      search: window.location.search,
-      hash: window.location.hash,
-      href: window.location.href,
-    });
-  }, []);
-
   return (
     <QueryProvider>
-      <PersonaProvider>
-        <AppRouter />
-        <Toaster />
-      </PersonaProvider>
+      <AuthProvider>
+        <PersonaProvider>
+          <WorkGraphProvider>
+            <TimesheetStoreProvider>
+              <NotificationProvider>
+                <RouterProvider router={router} />
+              </NotificationProvider>
+            </TimesheetStoreProvider>
+          </WorkGraphProvider>
+        </PersonaProvider>
+      </AuthProvider>
     </QueryProvider>
   );
 }

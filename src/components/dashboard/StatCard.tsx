@@ -1,5 +1,5 @@
 // ============================================================================
-// StatCard - Reusable stat display card
+// StatCard - Apple-minimalistic stat display
 // ============================================================================
 
 import React from 'react';
@@ -22,7 +22,7 @@ export function StatCard({
   subtitle,
   trend,
   icon,
-  color = 'text-blue-600',
+  color = 'text-accent-brand',
   onClick,
 }: StatCardProps) {
   const hasPositiveTrend = trend !== undefined && trend > 0;
@@ -30,31 +30,31 @@ export function StatCard({
 
   return (
     <Card 
-      className={`${onClick ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
+      className={`border-border/60 ${onClick ? 'cursor-pointer hover:shadow-md transition-all duration-200' : ''}`}
       onClick={onClick}
     >
-      <CardContent className="p-6">
+      <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <p className="text-sm text-gray-600 mb-1">{title}</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold text-gray-900">{value}</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
+            <div className="flex items-baseline gap-2 mt-2">
+              <p className="text-2xl font-semibold text-foreground tracking-tight">{value}</p>
               {trend !== undefined && (
-                <div className={`flex items-center gap-1 ${hasPositiveTrend ? 'text-green-600' : hasNegativeTrend ? 'text-red-600' : 'text-gray-500'}`}>
-                  {hasPositiveTrend && <TrendingUp className="w-4 h-4" />}
-                  {hasNegativeTrend && <TrendingDown className="w-4 h-4" />}
-                  <span className="text-sm font-medium">
+                <div className={`flex items-center gap-0.5 ${hasPositiveTrend ? 'text-emerald-600' : hasNegativeTrend ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  {hasPositiveTrend && <TrendingUp className="w-3.5 h-3.5" />}
+                  {hasNegativeTrend && <TrendingDown className="w-3.5 h-3.5" />}
+                  <span className="text-xs font-medium">
                     {Math.abs(trend).toFixed(1)}%
                   </span>
                 </div>
               )}
             </div>
             {subtitle && (
-              <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
+              <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
             )}
           </div>
           {icon && (
-            <div className={`p-3 rounded-lg bg-gray-50 ${color}`}>
+            <div className={`p-2.5 rounded-xl bg-muted/50 ${color}`}>
               {icon}
             </div>
           )}

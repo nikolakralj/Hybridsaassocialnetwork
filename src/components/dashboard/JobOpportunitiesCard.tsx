@@ -1,11 +1,10 @@
 // ============================================================================
-// JobOpportunitiesCard - Display job opportunities
+// JobOpportunitiesCard - Apple-minimalistic job display
 // ============================================================================
 
 import React from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Briefcase,
   MapPin,
   DollarSign,
   Users,
@@ -27,23 +26,23 @@ export function JobOpportunitiesCard({
   onViewAll,
 }: JobOpportunitiesCardProps) {
   return (
-    <Card>
-      <CardHeader className="border-b">
+    <Card className="border-border/60">
+      <CardHeader className="border-b border-border/60">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold">Job Opportunities</h3>
-            <p className="text-sm text-gray-500 mt-1">Matches in your network</p>
+            <h3 className="text-sm font-semibold text-foreground">Job Opportunities</h3>
+            <p className="text-xs text-muted-foreground mt-1">Matches in your network</p>
           </div>
           {onViewAll && (
-            <Button variant="ghost" size="sm" onClick={onViewAll}>
+            <Button variant="ghost" size="sm" onClick={onViewAll} className="text-xs text-muted-foreground hover:text-foreground">
               View all
-              <ExternalLink className="w-4 h-4 ml-1" />
+              <ExternalLink className="w-3.5 h-3.5 ml-1" />
             </Button>
           )}
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="divide-y">
+        <div className="divide-y divide-border/60">
           {opportunities.slice(0, 3).map((job) => (
             <JobItem key={job.id} job={job} />
           ))}
@@ -59,11 +58,10 @@ function JobItem({ job }: { job: JobOpportunity }) {
   });
 
   return (
-    <div className="p-4 hover:bg-gray-50 transition-colors cursor-pointer">
+    <div className="p-4 hover:bg-muted/30 transition-colors cursor-pointer">
       <div className="flex gap-3">
-        {/* Company Logo */}
         {job.company_logo && (
-          <div className="w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
+          <div className="w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-muted/50 flex items-center justify-center">
             <img
               src={job.company_logo}
               alt={job.company_name}
@@ -72,24 +70,20 @@ function JobItem({ job }: { job: JobOpportunity }) {
           </div>
         )}
 
-        {/* Content */}
         <div className="flex-1 min-w-0">
-          {/* Title */}
           <div className="flex items-start justify-between gap-2 mb-1">
-            <h4 className="font-semibold text-gray-900">{job.title}</h4>
+            <h4 className="font-medium text-sm text-foreground">{job.title}</h4>
             {job.in_your_network && (
-              <Badge variant="secondary" className="flex items-center gap-1">
+              <Badge variant="secondary" className="flex items-center gap-1 text-[10px]">
                 <Network className="w-3 h-3" />
                 Network
               </Badge>
             )}
           </div>
 
-          {/* Company */}
-          <p className="text-sm text-gray-600 mb-2">{job.company_name}</p>
+          <p className="text-xs text-muted-foreground mb-2">{job.company_name}</p>
 
-          {/* Details */}
-          <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500 mb-2">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground mb-2">
             {job.remote && (
               <span className="flex items-center gap-1">
                 <MapPin className="w-3 h-3" />
@@ -108,20 +102,18 @@ function JobItem({ job }: { job: JobOpportunity }) {
             </span>
           </div>
 
-          {/* Skills */}
           <div className="flex flex-wrap gap-1 mb-2">
             {job.skills.slice(0, 4).map((skill) => (
-              <Badge key={skill} variant="outline" className="text-xs">
+              <Badge key={skill} variant="outline" className="text-[10px] border-border/60">
                 {skill}
               </Badge>
             ))}
           </div>
 
-          {/* Footer */}
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">Posted {timeAgo}</p>
-            <Button variant="link" size="sm" className="h-auto p-0 text-xs">
-              View details →
+            <p className="text-[11px] text-muted-foreground/70">Posted {timeAgo}</p>
+            <Button variant="link" size="sm" className="h-auto p-0 text-xs text-accent-brand">
+              View details &rarr;
             </Button>
           </div>
         </div>

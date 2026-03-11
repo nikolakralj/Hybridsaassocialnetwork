@@ -3,7 +3,7 @@
 
 import type { TimesheetEntry } from './timesheets';
 import type { Contract } from '../../types/contracts';
-import type { Person } from '../../components/timesheets/selection/PeopleChipSelector';
+import type { Person } from '../../types/people';
 
 export interface ContractGroup {
   contract: Contract;

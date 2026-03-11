@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ArrowRight, Check, Upload, Sparkles } from "lucide-react";
+import { useNavigate } from "react-router";
+import { ArrowRight, Check, Upload, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -7,6 +8,8 @@ import { Textarea } from "../ui/textarea";
 import { Card } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Progress } from "../ui/progress";
+import { useAuth } from "../../contexts/AuthContext";
+import { toast } from "sonner@2.0.3";
 
 interface FreelancerOnboardingProps {
   onComplete?: () => void;
@@ -15,12 +18,15 @@ interface FreelancerOnboardingProps {
 type OnboardingStep = "welcome" | "profile" | "skills" | "preferences" | "complete";
 
 export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) {
+  const navigate = useNavigate();
+  const { user, updateProfile } = useAuth();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>("welcome");
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
-    displayName: "",
-    headline: "",
-    bio: "",
-    skills: [] as string[],
+    displayName: user?.name || "",
+    headline: user?.headline || "",
+    bio: user?.bio || "",
+    skills: user?.skills || ([] as string[]),
     hourlyRate: "",
     availability: "",
     isPublic: true,
@@ -40,23 +46,81 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
 
   const handleSkip = () => {
     onComplete?.();
+    navigate('/app');
+  };
+
+  // Save profile data when moving from profile step
+  const handleProfileNext = async () => {
+    setSaving(true);
+    try {
+      await updateProfile({
+        name: formData.displayName || user?.name,
+        headline: formData.headline,
+        bio: formData.bio,
+        persona_type: 'freelancer',
+      });
+      handleNext();
+    } catch (err: any) {
+      console.error("Failed to save profile data:", err);
+      toast.error(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Save skills when moving from skills step
+  const handleSkillsNext = async () => {
+    setSaving(true);
+    try {
+      await updateProfile({ skills: formData.skills });
+      handleNext();
+    } catch (err: any) {
+      console.error("Failed to save skills:", err);
+      toast.error(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Save preferences and complete
+  const handlePreferencesComplete = async () => {
+    setSaving(true);
+    try {
+      // Save any remaining profile data as metadata
+      const meta: Record<string, any> = {};
+      if (formData.hourlyRate) meta.hourly_rate = formData.hourlyRate;
+      if (formData.availability) meta.availability = formData.availability;
+      meta.is_public = formData.isPublic;
+      await updateProfile(meta);
+      handleNext(); // Go to complete step
+    } catch (err: any) {
+      console.error("Failed to save preferences:", err);
+      toast.error(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleComplete = () => {
     onComplete?.();
+    navigate('/app/feed');
+  };
+
+  const handleViewProfile = () => {
+    onComplete?.();
+    navigate('/app/profile');
   };
 
   if (currentStep === "welcome") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
         <div className="max-w-2xl w-full text-center">
-          {/* Hero icon */}
           <div className="w-20 h-20 rounded-3xl bg-accent-brand/10 flex items-center justify-center mx-auto mb-8">
             <Sparkles className="w-10 h-10 text-accent-brand" />
           </div>
 
           <h1 className="text-5xl md:text-6xl mb-6 font-semibold tracking-tight">
-            Welcome to WorkGraph
+            Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}!
           </h1>
 
           <p className="text-xl text-muted-foreground mb-12 max-w-xl mx-auto">
@@ -73,7 +137,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
             </Button>
           </div>
 
-          {/* What you'll get */}
           <div className="grid md:grid-cols-3 gap-6 text-left">
             <Card className="p-6">
               <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center mb-4">
@@ -114,13 +177,12 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
     return (
       <div className="min-h-screen bg-background px-6 py-12">
         <div className="max-w-2xl mx-auto">
-          {/* Progress */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground m-0">Step 1 of 3</p>
               <button
                 onClick={handleSkip}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer"
               >
                 Skip for now
               </button>
@@ -134,7 +196,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
           </p>
 
           <div className="space-y-6">
-            {/* Profile photo */}
             <div>
               <Label htmlFor="photo">Profile photo</Label>
               <div className="mt-2 flex items-center gap-4">
@@ -145,7 +206,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </div>
             </div>
 
-            {/* Display name */}
             <div>
               <Label htmlFor="displayName">Full name *</Label>
               <Input
@@ -157,7 +217,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               />
             </div>
 
-            {/* Headline */}
             <div>
               <Label htmlFor="headline">Professional headline *</Label>
               <Input
@@ -172,7 +231,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </p>
             </div>
 
-            {/* Bio */}
             <div>
               <Label htmlFor="bio">About you</Label>
               <Textarea
@@ -185,7 +243,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               />
             </div>
 
-            {/* Visibility */}
             <Card className="p-4 bg-accent/50 border-accent">
               <div className="flex items-start gap-3">
                 <div className="w-6 h-6 rounded-full bg-success/10 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -200,11 +257,13 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </div>
             </Card>
 
-            {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button onClick={handleNext} size="lg" className="flex-1 rounded-xl">
-                Continue
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button onClick={handleProfileNext} size="lg" className="flex-1 rounded-xl" disabled={saving}>
+                {saving ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>
+                ) : (
+                  <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>
+                )}
               </Button>
             </div>
           </div>
@@ -217,13 +276,12 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
     return (
       <div className="min-h-screen bg-background px-6 py-12">
         <div className="max-w-2xl mx-auto">
-          {/* Progress */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground m-0">Step 2 of 3</p>
               <button
                 onClick={handleSkip}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer"
               >
                 Skip for now
               </button>
@@ -237,7 +295,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
           </p>
 
           <div className="space-y-6">
-            {/* Suggested skills */}
             <div>
               <Label>Suggested for you</Label>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -249,7 +306,7 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
                         setFormData({ ...formData, skills: [...formData.skills, skill] });
                       }
                     }}
-                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-brand/10 hover:text-accent-brand transition-colors text-sm"
+                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-brand/10 hover:text-accent-brand transition-colors text-sm border-0 cursor-pointer"
                   >
                     + {skill}
                   </button>
@@ -257,7 +314,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </div>
             </div>
 
-            {/* Selected skills */}
             {formData.skills.length > 0 && (
               <div>
                 <Label>Your skills ({formData.skills.length})</Label>
@@ -267,7 +323,7 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
                       {skill}
                       <button
                         onClick={() => setFormData({ ...formData, skills: formData.skills.filter(s => s !== skill) })}
-                        className="ml-2 hover:text-destructive"
+                        className="ml-2 hover:text-destructive bg-transparent border-0 cursor-pointer p-0"
                       >
                         ×
                       </button>
@@ -277,7 +333,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </div>
             )}
 
-            {/* Add custom skill */}
             <div>
               <Label htmlFor="customSkill">Add a skill</Label>
               <Input
@@ -286,6 +341,7 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
                 className="mt-2"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && e.currentTarget.value) {
+                    e.preventDefault();
                     const skill = e.currentTarget.value.trim();
                     if (skill && !formData.skills.includes(skill)) {
                       setFormData({ ...formData, skills: [...formData.skills, skill] });
@@ -296,11 +352,13 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               />
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button onClick={handleNext} size="lg" className="flex-1 rounded-xl">
-                Continue
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button onClick={handleSkillsNext} size="lg" className="flex-1 rounded-xl" disabled={saving}>
+                {saving ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>
+                ) : (
+                  <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>
+                )}
               </Button>
             </div>
           </div>
@@ -313,13 +371,12 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
     return (
       <div className="min-h-screen bg-background px-6 py-12">
         <div className="max-w-2xl mx-auto">
-          {/* Progress */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground m-0">Step 3 of 3</p>
               <button
                 onClick={handleSkip}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer"
               >
                 Skip for now
               </button>
@@ -333,7 +390,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
           </p>
 
           <div className="space-y-6">
-            {/* Hourly rate */}
             <div>
               <Label htmlFor="hourlyRate">Hourly rate (optional)</Label>
               <div className="relative mt-2">
@@ -352,7 +408,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </p>
             </div>
 
-            {/* Availability */}
             <div>
               <Label htmlFor="availability">Availability</Label>
               <select
@@ -369,7 +424,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </select>
             </div>
 
-            {/* Work type preferences */}
             <div>
               <Label>I'm interested in</Label>
               <div className="space-y-2 mt-2">
@@ -382,11 +436,13 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button onClick={handleNext} size="lg" className="flex-1 rounded-xl">
-                Complete profile
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button onClick={handlePreferencesComplete} size="lg" className="flex-1 rounded-xl" disabled={saving}>
+                {saving ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>
+                ) : (
+                  <>Complete profile <ArrowRight className="w-4 h-4 ml-2" /></>
+                )}
               </Button>
             </div>
           </div>
@@ -399,7 +455,6 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
       <div className="max-w-2xl w-full text-center">
-        {/* Success icon */}
         <div className="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-8">
           <Check className="w-10 h-10 text-success" />
         </div>
@@ -417,7 +472,7 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
             Go to feed
             <ArrowRight className="w-5 h-5 ml-2" />
           </Button>
-          <Button size="lg" variant="outline" onClick={handleComplete} className="text-lg h-14 px-8">
+          <Button size="lg" variant="outline" onClick={handleViewProfile} className="text-lg h-14 px-8">
             View my profile
           </Button>
         </div>

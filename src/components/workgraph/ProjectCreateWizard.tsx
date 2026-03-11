@@ -36,8 +36,8 @@ import {
 import { format } from 'date-fns';
 import { Project, ProjectMember, ProjectRole, WorkWeek } from '../../types/collaboration';
 import { CompanySearchDialog } from './CompanySearchDialog';
-import { dev as projectsAPI } from '../../utils/api/projects';
-import { toast } from 'sonner';
+import { createProject } from '../../utils/api/projects-supabase';
+import { toast } from 'sonner@2.0.3';
 
 export interface ProjectCreateWizardProps {
   open: boolean;
@@ -158,7 +158,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
         await onCreate(project, collaborators);
       } else {
         // Default: Create project via API
-        const result = await projectsAPI.createProject(project, collaborators);
+        const result = await createProject(project, collaborators);
         
         toast.success('Project created!', {
           description: `${result.project.name} is ready. Opening workspace...`,

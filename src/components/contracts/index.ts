@@ -9,7 +9,7 @@ export {
   DisclosureRequestDialog,
   DisclosureStatusBadge,
 } from './DisclosureRequestDialog';
-export { ContractsDemoPage } from './ContractsDemoPage';
+// ContractsDemoPage removed - not yet implemented
 
 // Re-export types for convenience
 export type {

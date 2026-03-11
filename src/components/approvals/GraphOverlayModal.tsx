@@ -20,13 +20,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 // import { WorkGraphBuilder } from '../workgraph/WorkGraphBuilder';
-import type { ApprovalQueueItem } from '../../utils/api/approvals-queue';
-import { approveItemMock, rejectItemMock } from '../../utils/api/approvals-queue';
+import type { UIApprovalItem } from './ApprovalsWorkbench';
+import { approveItem, rejectItem } from '../../utils/api/approvals-supabase';
 
 interface GraphOverlayModalProps {
   open: boolean;
   onClose: () => void;
-  item: ApprovalQueueItem | null;
+  item: UIApprovalItem | null;
   onApprovalComplete?: () => void;
 }
 
@@ -81,7 +81,7 @@ export function GraphOverlayModal({
     
     setIsApproving(true);
     try {
-      await approveItemMock(item.id, {
+      await approveItem(item.id, {
         approvedBy: 'current-user',
         notes: 'Approved from graph overlay',
       });
@@ -108,7 +108,7 @@ export function GraphOverlayModal({
     
     setIsRejecting(true);
     try {
-      await rejectItemMock(item.id, {
+      await rejectItem(item.id, {
         rejectedBy: 'current-user',
         reason,
       });

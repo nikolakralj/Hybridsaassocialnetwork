@@ -1,5 +1,5 @@
 // ============================================================================
-// NetworkFeed - Social feed component
+// NetworkFeed - Apple-minimalistic social feed
 // ============================================================================
 
 import React from 'react';
@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
-import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import type { FeedItem } from '../../types/dashboard';
 
@@ -25,11 +24,11 @@ interface NetworkFeedProps {
 }
 
 const FEED_TYPE_ICONS: Record<string, React.ReactNode> = {
-  job_posted: <Briefcase className="w-4 h-4" />,
-  contract_signed: <FileText className="w-4 h-4" />,
-  milestone_completed: <CheckCircle className="w-4 h-4" />,
-  endorsement_received: <Award className="w-4 h-4" />,
-  post: <Share2 className="w-4 h-4" />,
+  job_posted: <Briefcase className="w-3.5 h-3.5" />,
+  contract_signed: <FileText className="w-3.5 h-3.5" />,
+  milestone_completed: <CheckCircle className="w-3.5 h-3.5" />,
+  endorsement_received: <Award className="w-3.5 h-3.5" />,
+  post: <Share2 className="w-3.5 h-3.5" />,
 };
 
 const FEED_TYPE_LABELS: Record<string, string> = {
@@ -42,13 +41,13 @@ const FEED_TYPE_LABELS: Record<string, string> = {
 
 export function NetworkFeed({ items, onItemClick }: NetworkFeedProps) {
   return (
-    <Card>
-      <CardHeader className="border-b">
-        <h3 className="font-semibold">Network Activity</h3>
-        <p className="text-sm text-gray-500 mt-1">What's happening in your network</p>
+    <Card className="border-border/60">
+      <CardHeader className="border-b border-border/60">
+        <h3 className="text-sm font-semibold text-foreground">Network Activity</h3>
+        <p className="text-xs text-muted-foreground mt-1">What's happening in your network</p>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="divide-y max-h-[600px] overflow-y-auto">
+        <div className="divide-y divide-border/60 max-h-[600px] overflow-y-auto">
           {items.map((item) => (
             <FeedItemCard
               key={item.id}
@@ -69,55 +68,48 @@ function FeedItemCard({ item, onClick }: { item: FeedItem; onClick?: () => void 
 
   return (
     <div
-      className={`p-4 hover:bg-gray-50 transition-colors ${onClick ? 'cursor-pointer' : ''}`}
+      className={`p-4 hover:bg-muted/30 transition-colors ${onClick ? 'cursor-pointer' : ''}`}
       onClick={onClick}
     >
       <div className="flex gap-3">
-        {/* Avatar */}
-        <Avatar className="w-12 h-12 flex-shrink-0">
+        <Avatar className="w-10 h-10 flex-shrink-0">
           <AvatarImage src={item.actor_avatar} alt={item.actor_name} />
-          <AvatarFallback>{item.actor_name.charAt(0)}</AvatarFallback>
+          <AvatarFallback className="text-xs">{item.actor_name.charAt(0)}</AvatarFallback>
         </Avatar>
 
-        {/* Content */}
         <div className="flex-1 min-w-0">
-          {/* Header */}
           <div className="flex items-start justify-between gap-2 mb-1">
             <div>
-              <p className="font-semibold text-gray-900">{item.actor_name}</p>
+              <p className="font-medium text-sm text-foreground">{item.actor_name}</p>
               {item.actor_headline && (
-                <p className="text-sm text-gray-500">{item.actor_headline}</p>
+                <p className="text-xs text-muted-foreground">{item.actor_headline}</p>
               )}
             </div>
-            <span className="text-xs text-gray-400 whitespace-nowrap">{timeAgo}</span>
+            <span className="text-[11px] text-muted-foreground/70 whitespace-nowrap">{timeAgo}</span>
           </div>
 
-          {/* Type Badge */}
           <div className="flex items-center gap-2 mb-2">
-            <Badge variant="secondary" className="flex items-center gap-1">
+            <Badge variant="secondary" className="flex items-center gap-1 text-[11px] font-medium">
               {FEED_TYPE_ICONS[item.type]}
-              <span className="text-xs">{FEED_TYPE_LABELS[item.type] || item.type}</span>
+              <span>{FEED_TYPE_LABELS[item.type] || item.type}</span>
             </Badge>
           </div>
 
-          {/* Title */}
           {item.title && (
-            <p className="font-medium text-gray-900 mb-1">{item.title}</p>
+            <p className="font-medium text-sm text-foreground mb-1">{item.title}</p>
           )}
 
-          {/* Content */}
           {item.content && (
-            <p className="text-sm text-gray-700 mb-3 line-clamp-3">{item.content}</p>
+            <p className="text-sm text-muted-foreground mb-3 line-clamp-3">{item.content}</p>
           )}
 
-          {/* Engagement */}
           <div className="flex items-center gap-4">
-            <button className="flex items-center gap-1 text-sm text-gray-500 hover:text-red-500 transition-colors">
-              <Heart className={`w-4 h-4 ${item.is_liked ? 'fill-red-500 text-red-500' : ''}`} />
+            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-red-500 transition-colors">
+              <Heart className={`w-3.5 h-3.5 ${item.is_liked ? 'fill-red-500 text-red-500' : ''}`} />
               <span>{item.likes_count}</span>
             </button>
-            <button className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-500 transition-colors">
-              <MessageCircle className="w-4 h-4" />
+            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-accent-brand transition-colors">
+              <MessageCircle className="w-3.5 h-3.5" />
               <span>{item.comments_count}</span>
             </button>
           </div>

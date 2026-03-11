@@ -1,10 +1,11 @@
-import { useState, lazy, Suspense, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { 
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, 
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
 } from "lucide-react";
 import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
 import { ProjectApprovalsTab } from "./approvals/ProjectApprovalsTab";
+import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card } from "./ui/card";
@@ -17,13 +18,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./ui/dialog";
-import { toast } from "sonner";
-import { Skeleton } from "./ui/skeleton";
+import { toast } from "sonner@2.0.3";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { MonthProvider } from "../contexts/MonthContext";
-
-// Lazy load WorkGraphBuilder for performance
-const WorkGraphBuilder = lazy(() => import("./workgraph/WorkGraphBuilder").then(m => ({ default: m.WorkGraphBuilder })));
+import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 
 // Module definitions
 type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
@@ -219,6 +217,7 @@ export function ProjectWorkspace({
               </p>
             </div>
             <div className="flex gap-2">
+              <NotificationCenterBell />
               <Button variant="outline" size="sm" className="gap-2">
                 <Users className="w-4 h-4" />
                 Team (4)
@@ -334,15 +333,13 @@ export function ProjectWorkspace({
             </TabsContent>
 
             <TabsContent value="project-graph" className="space-y-6">
-              <Suspense fallback={<div className="h-[600px] flex items-center justify-center"><Skeleton className="h-full w-full" /></div>}>
-                <WorkGraphBuilder
-                  projectId={projectId}
-                  focusNodeId={focusNodeId}
-                  scope={scope}
-                  mode={mode}
-                  asOf={asOf}
-                />
-              </Suspense>
+              <WorkGraphBuilder
+                projectId={projectId}
+                focusNodeId={focusNodeId}
+                scope={scope}
+                mode={mode}
+                asOf={asOf}
+              />
             </TabsContent>
 
             <TabsContent value="timesheets" className="space-y-6">

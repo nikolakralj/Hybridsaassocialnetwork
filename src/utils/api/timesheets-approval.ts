@@ -328,14 +328,24 @@ export async function fetchEntriesByPeriod(
       .from('timesheet_entries')
       .select('*')
       .eq('period_id', periodId)
-      .order('date');
+      .order('entry_date');
     
     if (error) {
       console.error('Error fetching entries:', error);
       throw new Error(`Failed to fetch entries: ${error.message}`);
     }
     
-    return (data || []) as TimesheetEntry[];
+    return (data || []).map((entry: any) => ({
+      id: entry.id,
+      periodId: entry.period_id,
+      date: entry.entry_date,
+      hours: entry.hours,
+      notes: entry.description,
+      status: 'submitted',
+      billable: entry.billable,
+      userId: '',
+      companyId: '',
+    })) as TimesheetEntry[];
   } catch (err) {
     console.error('Unexpected error in fetchEntriesByPeriod:', err);
     throw err;
@@ -352,20 +362,32 @@ export async function fetchEntriesByUserAndDateRange(
   endDate: string    // YYYY-MM-DD
 ): Promise<TimesheetEntry[]> {
   try {
+    // We need to join through periods and contracts to filter by user_id
     const { data, error } = await supabase
       .from('timesheet_entries')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date');
+      .select('*, timesheet_periods!inner(project_contracts!inner(user_id))')
+      .eq('timesheet_periods.project_contracts.user_id', userId)
+      .gte('entry_date', startDate)
+      .lte('entry_date', endDate)
+      .order('entry_date');
     
     if (error) {
       console.error('Error fetching entries by date range:', error);
       throw new Error(`Failed to fetch entries: ${error.message}`);
     }
     
-    return (data || []) as TimesheetEntry[];
+    // Map to the expected TimesheetEntry interface
+    return (data || []).map((entry: any) => ({
+      id: entry.id,
+      periodId: entry.period_id,
+      date: entry.entry_date,
+      hours: entry.hours,
+      notes: entry.description,
+      status: 'submitted', // Or derive from period
+      billable: entry.billable,
+      userId: userId,
+      companyId: '', // Would need to fetch from contract if needed
+    })) as TimesheetEntry[];
   } catch (err) {
     console.error('Unexpected error in fetchEntriesByUserAndDateRange:', err);
     throw err;

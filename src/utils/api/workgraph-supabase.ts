@@ -1,13 +1,9 @@
 // Supabase-backed WorkGraph API
-// Handles visual graph structure, nodes, edges, and versioning
+// Handles visual graph nodes, edges, and versions
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '../supabase/client';
 
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient();
 
 // ============================================================================
 // TYPE DEFINITIONS

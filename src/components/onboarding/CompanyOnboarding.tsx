@@ -1,9 +1,5 @@
-import { useState } from "react";
-import { ArrowRight, ArrowLeft, Building2, Briefcase, Users, Search, Info } from "lucide-react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { toast } from "sonner@2.0.3";
+import { useAuth } from "../../contexts/AuthContext";
+import { projectId, publicAnonKey } from "../../utils/supabase/info";
 
 interface CompanyOnboardingProps {
   userEmail: string;
@@ -15,8 +11,17 @@ interface CompanyOnboardingProps {
 
 type Step = 1 | 2;
 
-export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole, onSkip }: CompanyOnboardingProps) {
+export function CompanyOnboarding({ 
+  userEmail = "demo@example.com", 
+  userName = "Demo User", 
+  onComplete, 
+  onPostRole, 
+  onSkip 
+}: Partial<CompanyOnboardingProps> = {}) {
+  const navigate = useNavigate();
+  const { user, updateProfile } = useAuth();
   const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
     website: "",
@@ -25,10 +30,44 @@ export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole,
     emailDomain: "",
   });
 
-  const handleCreateCompany = () => {
-    if (formData.companyName) {
+  const displayName = user?.name || userName;
+  const displayEmail = user?.email || userEmail;
+
+  const handleCreateCompany = async () => {
+    if (!formData.companyName) return;
+    setSaving(true);
+    try {
+      // Save persona type to user profile
+      await updateProfile({ persona_type: 'company' });
+
+      // Save company data to KV store
+      const companyId = `company-${user?.id || 'anon'}-${Date.now()}`;
+      const url = `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/kv`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({
+          key: `company:${companyId}`,
+          value: JSON.stringify({
+            id: companyId,
+            owner_id: user?.id,
+            name: formData.companyName,
+            website: formData.website,
+            country: formData.country,
+            timezone: formData.timezone,
+            email_domain: formData.emailDomain,
+            created_at: new Date().toISOString(),
+          }),
+        }),
+      });
+
       toast.success(`${formData.companyName} created!`);
       setCurrentStep(2);
+    } catch (err: any) {
+      console.error("Failed to create company:", err);
+      toast.error(err.message || "Failed to create company");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -39,10 +78,12 @@ export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole,
       onPostRole();
     } else if (objective === "invite-team") {
       toast.success("Team invite coming soon");
-      onComplete(formData.companyName);
+      onComplete?.(formData.companyName);
+      navigate('/app');
     } else {
       toast.info("Welcome! Explore your workspace");
-      onComplete(formData.companyName);
+      onComplete?.(formData.companyName);
+      navigate('/app');
     }
   };
 
@@ -94,9 +135,7 @@ export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole,
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-2xl">
-        {/* Step Content */}
         <div className="bg-card rounded-xl border border-border p-8">
-          {/* Step 1: Company Basics */}
           {currentStep === 1 && (
             <div className="space-y-6">
               <div>
@@ -109,7 +148,7 @@ export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole,
                 </p>
                 <div className="mt-4 bg-accent/30 border border-border rounded-xl p-3">
                   <p className="text-sm m-0">
-                    ✓ Personal profile created for {userName}
+                    ✓ Personal profile created for {displayName}
                   </p>
                 </div>
               </div>
@@ -212,17 +251,21 @@ export function CompanyOnboarding({ userEmail, userName, onComplete, onPostRole,
                     variant="ghost"
                     onClick={onSkip}
                     className="flex-1"
+                    disabled={saving}
                   >
                     I'll do this later
                   </Button>
                 )}
                 <Button
                   onClick={handleCreateCompany}
-                  disabled={!canCreateCompany}
+                  disabled={!canCreateCompany || saving}
                   className="flex-1"
                 >
-                  Create company
-                  <ArrowRight className="w-4 h-4 ml-2" />
+                  {saving ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</>
+                  ) : (
+                    <>Create company <ArrowRight className="w-4 h-4 ml-2" /></>
+                  )}
                 </Button>
               </div>
             </div>

@@ -41,17 +41,17 @@ export function ContractCard({
   const directionColor = isSelling ? 'text-green-600' : isBuying ? 'text-blue-600' : 'text-purple-600';
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
+    <Card className="hover:shadow-md transition-all duration-200 border-border/60 shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           {/* Left: Direction + Org */}
           <div className="flex items-start gap-3">
-            <div className={`p-2 rounded-lg bg-gray-50 ${directionColor}`}>
+            <div className={`p-2 rounded-lg bg-muted/50 ${directionColor}`}>
               {React.createElement(directionIcon, { className: "w-5 h-5" })}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 uppercase tracking-wide">
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">
                   {direction}
                 </span>
                 {isDisclosed && (
@@ -61,13 +61,13 @@ export function ContractCard({
                   </Badge>
                 )}
               </div>
-              <h3 className="text-lg font-semibold mt-1">
+              <h3 className="text-base font-semibold text-foreground mt-1">
                 {counterpartyOrg.logo && (
                   <span className="mr-2">{counterpartyOrg.logo}</span>
                 )}
                 {counterpartyOrg.name}
               </h3>
-              <p className="text-sm text-gray-500 capitalize">
+              <p className="text-sm text-muted-foreground capitalize">
                 {counterpartyOrg.type}
               </p>
             </div>
@@ -89,10 +89,10 @@ export function ContractCard({
           {/* Rate (if visible) */}
           {contract.rate && (
             <div className="flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-gray-400" />
+              <DollarSign className="w-4 h-4 text-muted-foreground" />
               <div>
-                <p className="text-xs text-gray-500">Rate</p>
-                <p className="font-semibold">
+                <p className="text-xs text-muted-foreground">Rate</p>
+                <p className="font-semibold text-foreground">
                   {contract.currency} ${contract.rate.toFixed(2)}/hr
                 </p>
               </div>
@@ -101,10 +101,10 @@ export function ContractCard({
 
           {/* Worker Count */}
           <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-gray-400" />
+            <Users className="w-4 h-4 text-muted-foreground" />
             <div>
-              <p className="text-xs text-gray-500">Workers</p>
-              <p className="font-semibold">
+              <p className="text-xs text-muted-foreground">Workers</p>
+              <p className="font-semibold text-foreground">
                 {contract.worker_count || 0} active
               </p>
             </div>
@@ -112,10 +112,10 @@ export function ContractCard({
 
           {/* Contract Type */}
           <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-gray-400" />
+            <Calendar className="w-4 h-4 text-muted-foreground" />
             <div>
-              <p className="text-xs text-gray-500">Type</p>
-              <p className="font-semibold capitalize">
+              <p className="text-xs text-muted-foreground">Type</p>
+              <p className="font-semibold text-foreground capitalize">
                 {contract.contract_type.replace('_', ' ')}
               </p>
             </div>
@@ -152,7 +152,7 @@ export function ContractCard({
         )}
 
         {/* Actions */}
-        <div className="flex gap-2 pt-2 border-t">
+        <div className="flex gap-2 pt-2 border-t border-border/60">
           <Button
             variant="outline"
             size="sm"
@@ -197,7 +197,7 @@ export function ContractSummary({ contract, onClick }: ContractSummaryProps) {
   return (
     <button
       onClick={onClick}
-      className="w-full p-3 border rounded-lg hover:bg-gray-50 transition-colors text-left"
+      className="w-full p-3 border border-border/60 rounded-lg hover:bg-muted/40 transition-colors text-left"
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -209,7 +209,7 @@ export function ContractSummary({ contract, onClick }: ContractSummaryProps) {
               )}
               {contract.counterparty_org.name}
             </p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               {contract.rate ? `$${contract.rate}/hr` : contract.contract_type}
             </p>
           </div>

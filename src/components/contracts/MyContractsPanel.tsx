@@ -65,19 +65,19 @@ export function MyContractsPanel({
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6 border border-red-200 rounded-lg bg-red-50">
+      <div className="p-6 border border-destructive/30 rounded-xl bg-destructive/5">
         <div className="flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+          <AlertCircle className="w-5 h-5 text-destructive mt-0.5" />
           <div>
-            <h3 className="font-semibold text-red-900">Error Loading Contracts</h3>
-            <p className="text-sm text-red-700 mt-1">{error.message}</p>
+            <h3 className="font-semibold text-foreground">Error Loading Contracts</h3>
+            <p className="text-sm text-muted-foreground mt-1">{error.message}</p>
           </div>
         </div>
       </div>
@@ -92,8 +92,8 @@ export function MyContractsPanel({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold">My Contracts</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-semibold text-foreground">My Contracts</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             {activeContracts} active contract{activeContracts !== 1 ? 's' : ''} • 
             {totalContracts} total
           </p>
@@ -196,7 +196,7 @@ export function MyContractsPanel({
               {/* Disclosed contracts (if any) */}
               {disclosed.length > 0 && (
                 <div className="mt-6">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
                     <Eye className="w-4 h-4" />
                     Disclosed Contracts ({disclosed.length})
                   </h3>
@@ -225,8 +225,8 @@ export function MyContractsPanel({
             />
           ) : (
             <div className="grid gap-4">
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 mb-2">
-                <p className="text-sm text-blue-800">
+              <div className="p-3 bg-accent-brand/5 rounded-lg border border-accent-brand/20 mb-2">
+                <p className="text-sm text-foreground">
                   <strong>Vendors:</strong> Companies you buy services from. You see their rates and workers.
                 </p>
               </div>
@@ -253,8 +253,8 @@ export function MyContractsPanel({
             />
           ) : (
             <div className="grid gap-4">
-              <div className="p-3 bg-green-50 rounded-lg border border-green-200 mb-2">
-                <p className="text-sm text-green-800">
+              <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200/60 mb-2">
+                <p className="text-sm text-foreground">
                   <strong>Customers:</strong> Companies you sell services to. They see your rates and deliverables.
                 </p>
               </div>
@@ -273,12 +273,12 @@ export function MyContractsPanel({
       </Tabs>
 
       {/* Local Scope Explanation */}
-      <Card className="bg-gray-50 border-gray-200">
+      <Card className="bg-muted/30 border-border/60">
         <CardContent className="p-4">
           <div className="flex items-start gap-3">
-            <Eye className="w-4 h-4 text-gray-500 mt-0.5" />
-            <div className="text-sm text-gray-600">
-              <p className="font-medium text-gray-700">Local Scope Visibility</p>
+            <Eye className="w-4 h-4 text-muted-foreground mt-0.5" />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Local Scope Visibility</p>
               <p className="mt-1">
                 You see only your direct contracts. Your vendors' sub-vendors are hidden unless explicitly disclosed.
                 This ensures privacy and clarity in multi-party projects.
@@ -304,14 +304,14 @@ interface EmptyStateProps {
 
 function EmptyState({ title, description, onAction, actionLabel }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg">
-      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
-        <Eye className="w-8 h-8 text-gray-400" />
+    <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-border/60 rounded-xl">
+      <div className="w-14 h-14 rounded-full bg-muted/50 flex items-center justify-center mb-4">
+        <Eye className="w-6 h-6 text-muted-foreground" />
       </div>
-      <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
-      <p className="text-sm text-gray-500 text-center max-w-sm mb-4">{description}</p>
+      <h3 className="font-medium text-foreground mb-1">{title}</h3>
+      <p className="text-sm text-muted-foreground text-center max-w-sm mb-4">{description}</p>
       {onAction && actionLabel && (
-        <Button onClick={onAction} variant="outline">
+        <Button onClick={onAction} variant="outline" size="sm">
           <Plus className="w-4 h-4 mr-2" />
           {actionLabel}
         </Button>
