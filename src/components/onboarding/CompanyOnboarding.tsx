@@ -1,3 +1,10 @@
+import { useState } from "react";
+import { useNavigate } from "react-router";
+import { ArrowRight, ArrowLeft, Building2, Briefcase, Users, Search, Info, Loader2 } from "lucide-react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { toast } from "sonner@2.0.3";
 import { useAuth } from "../../contexts/AuthContext";
 import { projectId, publicAnonKey } from "../../utils/supabase/info";
 
@@ -31,7 +38,6 @@ export function CompanyOnboarding({
   });
 
   const displayName = user?.name || userName;
-  const displayEmail = user?.email || userEmail;
 
   const handleCreateCompany = async () => {
     if (!formData.companyName) return;
@@ -72,7 +78,6 @@ export function CompanyOnboarding({
   };
 
   const handleObjectiveSelect = (objective: "post-role" | "invite-team" | "explore") => {
-    console.log("🎯 Objective selected:", objective, "Company:", formData.companyName);
     if (objective === "post-role" && onPostRole) {
       toast.success("Opening job creation...");
       onPostRole();
@@ -136,6 +141,7 @@ export function CompanyOnboarding({
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-2xl">
         <div className="bg-card rounded-xl border border-border p-8">
+          {/* Step 1: Company Basics */}
           {currentStep === 1 && (
             <div className="space-y-6">
               <div>
@@ -160,7 +166,7 @@ export function CompanyOnboarding({
                   <p className="text-sm m-0 mb-1 font-medium">Why we ask for both country and timezone</p>
                   <p className="text-xs text-muted-foreground m-0">
                     <strong className="text-foreground">Country</strong> determines tax rules and legal requirements. 
-                    <strong className="text-foreground ml-1">Timezone</strong> helps match you with contractors who work in compatible hours—especially important since many countries span multiple timezones (USA has 6, Russia has 11!).
+                    <strong className="text-foreground ml-1">Timezone</strong> helps match you with contractors who work in compatible hours.
                   </p>
                 </div>
               </div>
@@ -281,7 +287,6 @@ export function CompanyOnboarding({
                 </p>
               </div>
 
-              {/* Objective Cards - 3 equal cards */}
               <div className="space-y-3">
                 {objectives.map((objective) => {
                   const Icon = objective.icon;
@@ -299,20 +304,15 @@ export function CompanyOnboarding({
                       `}
                     >
                       <div className="flex items-start gap-4">
-                        {/* Icon */}
                         <div className="w-12 h-12 rounded-lg bg-white/80 flex items-center justify-center flex-shrink-0">
                           <Icon className={`w-6 h-6 ${objective.iconColor}`} />
                         </div>
-
-                        {/* Content */}
                         <div className="flex-1 min-w-0">
                           <h3 className="mb-1">{objective.title}</h3>
                           <p className="text-muted-foreground">
                             {objective.description}
                           </p>
                         </div>
-
-                        {/* Arrow */}
                         <ArrowRight className="w-5 h-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
                       </div>
                     </button>
@@ -320,7 +320,6 @@ export function CompanyOnboarding({
                 })}
               </div>
 
-              {/* Back button only */}
               <div className="flex items-center justify-between pt-6 border-t border-border">
                 <Button
                   variant="outline"

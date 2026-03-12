@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -63,7 +63,15 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
       resetForm();
       onOpenChange(false);
     } catch (err: any) {
-      setLocalError(err.message || 'Something went wrong');
+      const msg = err.message || 'Something went wrong';
+      // Translate raw API errors into user-friendly messages
+      if (msg.includes('Invalid login credentials')) {
+        setLocalError('Incorrect email or password. Please try again.');
+      } else if (msg.includes('Email not confirmed')) {
+        setLocalError('Please verify your email before signing in.');
+      } else {
+        setLocalError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -73,16 +81,16 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) resetForm(); onOpenChange(v); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" aria-describedby="auth-modal-description">
         <DialogHeader>
           <DialogTitle className="text-center text-xl">
             {mode === 'signin' ? 'Welcome back' : 'Create your account'}
           </DialogTitle>
-          <p className="text-center text-sm text-muted-foreground mt-1">
+          <DialogDescription id="auth-modal-description" className="text-center text-sm">
             {mode === 'signin'
               ? 'Sign in to access your workspace'
               : 'Get started with WorkGraph in seconds'}
-          </p>
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
