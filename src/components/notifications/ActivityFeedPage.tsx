@@ -93,10 +93,10 @@ export function ActivityFeedPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Activity Feed</h1>
-          <p className="text-muted-foreground text-sm mt-1">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground m-0">Activity Feed</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">
             Stay up to date with your notifications
           </p>
         </div>

@@ -3,20 +3,20 @@ import { X, Check, ArrowRight } from "lucide-react";
 export function ComparisonDiagram() {
   const oldWay = [
     "LinkedIn for networking",
-    "Upwork for finding jobs",
-    "Spreadsheet for time tracking",
+    "Upwork/Toptal for finding contracts",
+    "Spreadsheets for time tracking",
     "QuickBooks for invoicing",
-    "Email for contracts",
-    "Separate tools for each client"
+    "Email threads for approvals",
+    "Separate logins for each client",
   ];
 
   const warpWay = [
-    "One profile, public or private",
-    "Apply to jobs in your feed",
-    "Built-in time tracking",
-    "Auto-generate invoices",
-    "Contract management included",
-    "Everything in one workspace"
+    "Professional profile + social feed",
+    "Job listings in your network",
+    "Built-in weekly timesheets",
+    "Auto-invoicing from approved hours",
+    "Multi-party approval chains",
+    "One workspace, all relationships",
   ];
 
   return (

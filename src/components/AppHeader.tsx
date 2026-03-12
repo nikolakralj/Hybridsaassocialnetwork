@@ -1,4 +1,4 @@
-import { Search, Plus, Moon, Sun, Bell } from "lucide-react";
+import { Search, Plus, Bell, Clock, FileText, Briefcase, Users, Menu } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Avatar, AvatarFallback } from "./ui/avatar";
@@ -10,25 +10,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
-import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
+import { toast } from "sonner@2.0.3";
+import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { useState } from "react";
 
 export function AppHeader() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [isDark, setIsDark] = useState(false);
   const location = useLocation();
-
-  const toggleTheme = () => {
-    const next = !isDark;
-    setIsDark(next);
-    if (next) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -53,56 +45,132 @@ export function AppHeader() {
   ];
 
   return (
-    <header className="border-b border-border bg-card/80 backdrop-blur-xl sticky top-0 z-50">
-      <div className="flex items-center justify-between px-6 py-3">
-        <div className="flex items-center gap-8">
-          <Link to="/app" className="m-0 text-lg font-semibold tracking-tight text-foreground no-underline">
+    <header className="border-b border-border/60 bg-card sticky top-0 z-50">
+      <div className="flex items-center justify-between px-4 sm:px-6 h-14">
+        {/* Left: Logo + Nav */}
+        <div className="flex items-center gap-6">
+          <Link to="/app" className="text-base font-semibold tracking-tight text-foreground no-underline flex-shrink-0">
             WorkGraph
           </Link>
 
-          <div className="relative w-80 hidden md:block">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          {/* Desktop nav - inline with logo */}
+          <nav className="hidden md:flex items-center gap-0.5">
+            {navItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.label}
+                  to={item.path}
+                  className={`px-3 py-1.5 rounded-md text-sm transition-colors no-underline ${
+                    isActive
+                      ? "bg-accent text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Center: Search */}
+        <div className="hidden lg:block flex-1 max-w-md mx-6">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
               placeholder="Search projects, people, contracts..."
-              className="pl-10 bg-background/60 border-border/60 rounded-lg h-9 text-sm"
+              className="pl-9 bg-background border-border/60 rounded-lg h-8 text-sm"
             />
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleTheme}
-            className="h-9 w-9"
-          >
-            {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </Button>
+        {/* Right: Actions */}
+        <div className="flex items-center gap-1.5">
+          {/* Mobile nav trigger */}
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg md:hidden">
+                <Menu className="w-4 h-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-64 p-0">
+              <div className="pt-14 px-4">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 px-2">Navigation</p>
+                <nav className="space-y-0.5">
+                  {navItems.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <Link
+                        key={item.label}
+                        to={item.path}
+                        onClick={() => setMobileOpen(false)}
+                        className={`block px-3 py-2 rounded-md text-sm transition-colors no-underline ${
+                          isActive
+                            ? "bg-accent text-foreground font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           <Link to="/app/notifications">
-            <Button variant="ghost" size="icon" className="h-9 w-9">
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
               <Bell className="w-4 h-4" />
             </Button>
           </Link>
 
-          <Button className="bg-foreground text-background hover:bg-foreground/90 gap-2 rounded-full h-9 px-4 text-sm">
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">New</span>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                className="gap-1.5 rounded-lg h-8 px-3 text-xs font-medium"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">New</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => navigate('/app/projects')} className="cursor-pointer">
+                <Briefcase className="w-4 h-4 mr-2" />
+                New Project
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate('/app/approvals')} className="cursor-pointer">
+                <Clock className="w-4 h-4 mr-2" />
+                Submit Timesheet
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate('/app/contracts')} className="cursor-pointer">
+                <FileText className="w-4 h-4 mr-2" />
+                New Contract
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate('/app/feed')} className="cursor-pointer">
+                <Users className="w-4 h-4 mr-2" />
+                Write a Post
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="p-0 bg-transparent border-0 cursor-pointer">
-                <Avatar className="w-9 h-9">
-                  <AvatarFallback className="text-xs font-medium">{initials}</AvatarFallback>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full ml-1 p-0">
+                <Avatar className="w-8 h-8">
+                  <AvatarFallback className="text-[11px] font-medium bg-accent-brand/10 text-accent-brand">
+                    {initials}
+                  </AvatarFallback>
                 </Avatar>
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
                 <div>
-                  <p className="font-medium">{user?.name || "User"}</p>
-                  <p className="text-sm text-muted-foreground">{user?.email || ""}</p>
+                  <p className="font-medium text-sm">{user?.name || "User"}</p>
+                  <p className="text-xs text-muted-foreground">{user?.email || ""}</p>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -123,25 +191,6 @@ export function AppHeader() {
           </DropdownMenu>
         </div>
       </div>
-
-      <nav className="flex items-center gap-1 px-6 pb-3">
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          return (
-            <Link
-              key={item.label}
-              to={item.path}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors border-0 no-underline ${
-                isActive
-                  ? "bg-foreground/8 text-foreground font-medium"
-                  : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-              }`}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
     </header>
   );
 }

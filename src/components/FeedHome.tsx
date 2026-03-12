@@ -23,6 +23,8 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Progress } from "./ui/progress";
 import { toast } from "sonner@2.0.3";
+import { useAuth } from "../contexts/AuthContext";
+import { useNavigate } from "react-router";
 
 interface FeedHomeProps {
   isNewUser?: boolean;
@@ -30,8 +32,11 @@ interface FeedHomeProps {
   persona?: "freelancer" | "company" | "agency" | null;
 }
 
-export function FeedHome({ isNewUser = false, userName = "You", persona = null }: FeedHomeProps) {
+export function FeedHome({ isNewUser = false, userName, persona = null }: FeedHomeProps) {
   const [postContent, setPostContent] = useState("");
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const displayName = userName || user?.name || "You";
 
   const handlePost = () => {
     if (!postContent.trim()) {
@@ -64,7 +69,7 @@ export function FeedHome({ isNewUser = false, userName = "You", persona = null }
               <div className="flex gap-4">
                 <Avatar className="w-12 h-12 flex-shrink-0">
                   <AvatarFallback className="bg-accent-brand/10 text-accent-brand">
-                    {userName.charAt(0)}
+                    {displayName.charAt(0)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 space-y-4">
@@ -76,19 +81,19 @@ export function FeedHome({ isNewUser = false, userName = "You", persona = null }
                   />
                   <div className="flex items-center justify-between">
                     <div className="flex gap-2">
-                      <Button size="sm" variant="ghost">
+                      <Button size="sm" variant="ghost" onClick={() => toast.info('Image upload coming soon')}>
                         <Image className="w-4 h-4 mr-2" />
                         Image
                       </Button>
-                      <Button size="sm" variant="ghost">
+                      <Button size="sm" variant="ghost" onClick={() => toast.info('Job posting coming in Phase 6')}>
                         <Briefcase className="w-4 h-4 mr-2" />
                         Job
                       </Button>
-                      <Button size="sm" variant="ghost">
+                      <Button size="sm" variant="ghost" onClick={() => toast.info('Link attachment coming soon')}>
                         <Link2 className="w-4 h-4 mr-2" />
                         Link
                       </Button>
-                      <Button size="sm" variant="ghost">
+                      <Button size="sm" variant="ghost" onClick={() => toast.info('Polls coming soon')}>
                         <BarChart3 className="w-4 h-4 mr-2" />
                         Poll
                       </Button>
@@ -270,7 +275,7 @@ function JobsForYou() {
           </button>
         ))}
       </div>
-      <Button variant="outline" className="w-full mt-4" size="sm">
+      <Button variant="outline" className="w-full mt-4" size="sm" onClick={() => toast.info('Full job board coming soon')}>
         See all jobs
       </Button>
     </Card>
@@ -327,6 +332,10 @@ function FeedList() {
 }
 
 function FeedItem({ item }: { item: any }) {
+  const [liked, setLiked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(false);
+  const [likeCount, setLikeCount] = useState(item.likes);
+
   return (
     <Card className="p-6">
       <div className="flex items-start gap-4">
@@ -362,20 +371,32 @@ function FeedItem({ item }: { item: any }) {
           <p className="m-0 mb-4">{item.content}</p>
 
           <div className="flex items-center gap-6">
-            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors group">
-              <Heart className="w-4 h-4 group-hover:fill-accent-brand" />
-              <span>{item.likes}</span>
+            <button
+              className={`flex items-center gap-2 text-sm transition-colors group ${liked ? 'text-red-500' : 'text-muted-foreground hover:text-red-500'}`}
+              onClick={() => { setLiked(!liked); setLikeCount(liked ? likeCount - 1 : likeCount + 1); }}
+            >
+              <Heart className={`w-4 h-4 ${liked ? 'fill-red-500' : 'group-hover:fill-red-500/20'}`} />
+              <span>{likeCount}</span>
             </button>
-            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors">
+            <button
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors"
+              onClick={() => toast.info('Comments coming soon')}
+            >
               <MessageCircle className="w-4 h-4" />
               <span>{item.comments}</span>
             </button>
-            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors">
+            <button
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors"
+              onClick={() => toast.success('Post shared!')}
+            >
               <Repeat2 className="w-4 h-4" />
               <span>{item.shares}</span>
             </button>
-            <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-accent-brand transition-colors ml-auto">
-              <Bookmark className="w-4 h-4" />
+            <button
+              className={`flex items-center gap-2 text-sm transition-colors ml-auto ${bookmarked ? 'text-accent-brand' : 'text-muted-foreground hover:text-accent-brand'}`}
+              onClick={() => { setBookmarked(!bookmarked); toast.success(bookmarked ? 'Removed from saved' : 'Saved!'); }}
+            >
+              <Bookmark className={`w-4 h-4 ${bookmarked ? 'fill-accent-brand' : ''}`} />
             </button>
           </div>
         </div>

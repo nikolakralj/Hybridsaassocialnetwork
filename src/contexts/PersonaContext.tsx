@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 /**
  * 🧪 TEST MODE ONLY - Phase 5 Validation
@@ -215,16 +215,16 @@ export function PersonaProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentPersona]);
 
+  const contextValue = useMemo(() => ({
+    currentPersona,
+    setPersona,
+    setPersonaByNodeId,
+    isTestMode: true as const,
+    hasPermission,
+  }), [currentPersona, setPersona, setPersonaByNodeId, hasPermission]);
+
   return (
-    <PersonaContext.Provider
-      value={{
-        currentPersona,
-        setPersona,
-        setPersonaByNodeId,
-        isTestMode: true,
-        hasPermission,
-      }}
-    >
+    <PersonaContext.Provider value={contextValue}>
       {children}
     </PersonaContext.Provider>
   );

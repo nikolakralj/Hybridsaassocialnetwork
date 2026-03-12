@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from "react";
 import { Context, ContextType } from "../types";
 
 interface WorkGraphContextType {
@@ -35,17 +35,19 @@ export function WorkGraphProvider({ children }: { children: ReactNode }) {
   const [currentContext, setCurrentContext] = useState<Context>(mockContexts[0]);
   const [availableContexts] = useState<Context[]>(mockContexts);
 
-  const switchContext = (contextId: string) => {
+  const switchContext = useCallback((contextId: string) => {
     const newContext = availableContexts.find((c) => c.id === contextId);
     if (newContext) {
       setCurrentContext(newContext);
     }
-  };
+  }, [availableContexts]);
+
+  const contextValue = useMemo(() => ({
+    currentContext, availableContexts, switchContext
+  }), [currentContext, availableContexts, switchContext]);
 
   return (
-    <WorkGraphContext.Provider
-      value={{ currentContext, availableContexts, switchContext }}
-    >
+    <WorkGraphContext.Provider value={contextValue}>
       {children}
     </WorkGraphContext.Provider>
   );

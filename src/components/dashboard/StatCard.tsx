@@ -1,5 +1,5 @@
 // ============================================================================
-// StatCard - Apple-minimalistic stat display
+// StatCard - Clean stat display with colored icon backgrounds
 // ============================================================================
 
 import React from 'react';
@@ -13,6 +13,7 @@ interface StatCardProps {
   trend?: number;
   icon?: React.ReactNode;
   color?: string;
+  bgColor?: string;
   onClick?: () => void;
 }
 
@@ -23,38 +24,39 @@ export function StatCard({
   trend,
   icon,
   color = 'text-accent-brand',
+  bgColor = 'bg-muted/50',
   onClick,
 }: StatCardProps) {
   const hasPositiveTrend = trend !== undefined && trend > 0;
   const hasNegativeTrend = trend !== undefined && trend < 0;
 
   return (
-    <Card 
-      className={`border-border/60 ${onClick ? 'cursor-pointer hover:shadow-md transition-all duration-200' : ''}`}
+    <Card
+      className={`border-border/60 transition-all duration-150 ${onClick ? 'cursor-pointer hover:border-border hover:shadow-sm' : ''}`}
       onClick={onClick}
     >
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
-            <div className="flex items-baseline gap-2 mt-2">
-              <p className="text-2xl font-semibold text-foreground tracking-tight">{value}</p>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
+            <div className="flex items-baseline gap-2 mt-1.5">
+              <p className="text-xl font-semibold text-foreground tracking-tight m-0">{value}</p>
               {trend !== undefined && (
                 <div className={`flex items-center gap-0.5 ${hasPositiveTrend ? 'text-emerald-600' : hasNegativeTrend ? 'text-destructive' : 'text-muted-foreground'}`}>
-                  {hasPositiveTrend && <TrendingUp className="w-3.5 h-3.5" />}
-                  {hasNegativeTrend && <TrendingDown className="w-3.5 h-3.5" />}
-                  <span className="text-xs font-medium">
-                    {Math.abs(trend).toFixed(1)}%
+                  {hasPositiveTrend && <TrendingUp className="w-3 h-3" />}
+                  {hasNegativeTrend && <TrendingDown className="w-3 h-3" />}
+                  <span className="text-[11px] font-medium">
+                    {hasPositiveTrend ? '+' : ''}{Math.abs(trend).toFixed(1)}%
                   </span>
                 </div>
               )}
             </div>
             {subtitle && (
-              <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>
             )}
           </div>
           {icon && (
-            <div className={`p-2.5 rounded-xl bg-muted/50 ${color}`}>
+            <div className={`p-2 rounded-lg ${bgColor} ${color} flex-shrink-0`}>
               {icon}
             </div>
           )}

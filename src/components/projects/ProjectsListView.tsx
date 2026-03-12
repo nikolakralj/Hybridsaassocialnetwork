@@ -118,18 +118,19 @@ export function ProjectsListView() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Projects</h1>
-          <p className="text-muted-foreground text-sm mt-1">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground m-0">Projects</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">
             Manage your projects, approval chains, and contractor contracts
           </p>
         </div>
         <Button
           onClick={handleCreateProject}
-          className="bg-foreground text-background hover:bg-foreground/90 rounded-full h-9 px-4 text-sm gap-2"
+          size="sm"
+          className="h-9 px-4 text-sm gap-2"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
           New Project
         </Button>
       </div>
@@ -145,7 +146,7 @@ export function ProjectsListView() {
             className="pl-10 bg-background border-border/60 h-9 text-sm"
           />
         </div>
-        <Button variant="outline" size="sm" className="h-9 gap-2 text-sm">
+        <Button variant="outline" size="sm" className="h-9 gap-2 text-sm" onClick={() => toast.info('Filter options coming soon')}>
           <Filter className="h-4 w-4" />
           Filter
         </Button>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '../utils/supabase/client';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
@@ -39,6 +39,25 @@ export function useAuth() {
   return ctx;
 }
 
+// Singleton supabase client — created once outside component
+const supabase = createClient();
+
+function buildProfile(user: any): UserProfile {
+  return {
+    id: user.id,
+    email: user.email || '',
+    name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+    headline: user.user_metadata?.headline || '',
+    bio: user.user_metadata?.bio || '',
+    avatar_url: user.user_metadata?.avatar_url || '',
+    persona_type: user.user_metadata?.persona_type || 'freelancer',
+    location: user.user_metadata?.location || '',
+    website: user.user_metadata?.website || '',
+    skills: user.user_metadata?.skills || [],
+    created_at: user.created_at,
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -47,33 +66,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: null,
   });
 
-  const supabase = createClient();
-
-  // Check for existing session on mount
+  // Track if mounted to avoid state updates after unmount
+  const mountedRef = useRef(true);
   useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Check for existing session on mount — ONE TIME only
+  useEffect(() => {
+    let cancelled = false;
+
     const checkSession = async () => {
       try {
         const { data, error } = await supabase.auth.getSession();
+        if (cancelled) return;
         if (error) {
           console.log('Session check error (non-critical):', error.message);
           setState(s => ({ ...s, loading: false }));
           return;
         }
         if (data?.session) {
-          const user = data.session.user;
-          const profile: UserProfile = {
-            id: user.id,
-            email: user.email || '',
-            name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-            headline: user.user_metadata?.headline || '',
-            bio: user.user_metadata?.bio || '',
-            avatar_url: user.user_metadata?.avatar_url || '',
-            persona_type: user.user_metadata?.persona_type || 'freelancer',
-            location: user.user_metadata?.location || '',
-            website: user.user_metadata?.website || '',
-            skills: user.user_metadata?.skills || [],
-            created_at: user.created_at,
-          };
+          const profile = buildProfile(data.session.user);
           setState({
             user: profile,
             accessToken: data.session.access_token,
@@ -84,30 +97,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setState(s => ({ ...s, loading: false }));
         }
       } catch (err) {
+        if (cancelled) return;
         console.log('Session check failed:', err);
         setState(s => ({ ...s, loading: false }));
       }
     };
+
     checkSession();
 
-    // Listen for auth state changes
+    // Lightweight auth listener — only handle sign-in/sign-out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
+        if (cancelled) return;
         if (event === 'SIGNED_IN' && session) {
-          const user = session.user;
-          const profile: UserProfile = {
-            id: user.id,
-            email: user.email || '',
-            name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-            headline: user.user_metadata?.headline || '',
-            bio: user.user_metadata?.bio || '',
-            avatar_url: user.user_metadata?.avatar_url || '',
-            persona_type: user.user_metadata?.persona_type || 'freelancer',
-            location: user.user_metadata?.location || '',
-            website: user.user_metadata?.website || '',
-            skills: user.user_metadata?.skills || [],
-            created_at: user.created_at,
-          };
+          const profile = buildProfile(session.user);
           setState({
             user: profile,
             accessToken: session.access_token,
@@ -117,16 +120,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else if (event === 'SIGNED_OUT') {
           setState({ user: null, accessToken: null, loading: false, error: null });
         }
+        // Ignore TOKEN_REFRESHED and other events to avoid unnecessary re-renders
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, name: string) => {
     setState(s => ({ ...s, loading: true, error: null }));
     try {
-      // Use server-side signup to auto-confirm email
       const res = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/auth/signup`,
         {
@@ -142,13 +148,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!res.ok) {
         throw new Error(result.error || 'Sign up failed');
       }
-      // Now sign in
+      // Sign in after signup
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      // Auth state change listener will handle the rest
+      // Directly update state (don't rely solely on listener)
+      if (data?.session && mountedRef.current) {
+        const profile = buildProfile(data.session.user);
+        setState({
+          user: profile,
+          accessToken: data.session.access_token,
+          loading: false,
+          error: null,
+        });
+      }
     } catch (err: any) {
       console.error('Sign up error:', err);
-      setState(s => ({ ...s, loading: false, error: err.message || 'Sign up failed' }));
+      if (mountedRef.current) {
+        setState(s => ({ ...s, loading: false, error: err.message || 'Sign up failed' }));
+      }
       throw err;
     }
   }, []);
@@ -158,29 +175,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      // Auth state change listener handles state update
+      // Directly update state
+      if (data?.session && mountedRef.current) {
+        const profile = buildProfile(data.session.user);
+        setState({
+          user: profile,
+          accessToken: data.session.access_token,
+          loading: false,
+          error: null,
+        });
+      }
     } catch (err: any) {
       console.error('Sign in error:', err);
-      setState(s => ({ ...s, loading: false, error: err.message || 'Sign in failed' }));
+      if (mountedRef.current) {
+        setState(s => ({ ...s, loading: false, error: err.message || 'Sign in failed' }));
+      }
       throw err;
     }
   }, []);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
-    setState({ user: null, accessToken: null, loading: false, error: null });
+    if (mountedRef.current) {
+      setState({ user: null, accessToken: null, loading: false, error: null });
+    }
   }, []);
 
   const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: updates,
-      });
+      const { error } = await supabase.auth.updateUser({ data: updates });
       if (error) throw error;
-      setState(s => ({
-        ...s,
-        user: s.user ? { ...s.user, ...updates } : null,
-      }));
+      if (mountedRef.current) {
+        setState(s => ({
+          ...s,
+          user: s.user ? { ...s.user, ...updates } : null,
+        }));
+      }
     } catch (err: any) {
       console.error('Profile update error:', err);
       throw err;
@@ -191,8 +221,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, error: null }));
   }, []);
 
+  // CRITICAL: Memoize the context value to prevent re-renders of all consumers
+  const contextValue = useMemo<AuthContextValue>(() => ({
+    ...state,
+    signUp,
+    signIn,
+    signOut,
+    updateProfile,
+    clearError,
+  }), [state, signUp, signIn, signOut, updateProfile, clearError]);
+
   return (
-    <AuthContext.Provider value={{ ...state, signUp, signIn, signOut, updateProfile, clearError }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

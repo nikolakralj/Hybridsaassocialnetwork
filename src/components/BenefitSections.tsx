@@ -1,119 +1,119 @@
-import { Users, Briefcase, Clock, DollarSign, Shield, Zap } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { Users, Briefcase, Clock, Network, Shield, Eye } from "lucide-react";
 
 export function BenefitSections() {
   const benefits = [
     {
-      icon: Users,
-      title: "Network like LinkedIn, but for work",
-      description: "Follow people and companies, share updates, discover opportunities — all in your professional feed.",
+      icon: Network,
+      iconColor: "bg-blue-500/10 text-blue-600",
+      title: "A graph that models real work relationships",
+      description:
+        "WorkGraph uses a 3-tier graph data model (Company → Agency → Client) to map how organizations actually collaborate. Not flat contact lists — real organizational relationships with scoped permissions.",
       features: [
-        "Public or private profiles",
-        "Post updates and portfolio work",
-        "Job listings in your feed",
-        "Direct applications"
+        "Company, Agency, and Client node types",
+        "Relationship-Based Access Control (ReBAC)",
+        "Persona switching — see the platform from any perspective",
+        "SVG auto-layout visualization engine",
       ],
-      image: "https://images.unsplash.com/photo-1690264421892-46e3af5c3455?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0ZWFtJTIwY29sbGFib3JhdGlvbiUyMG9mZmljZXxlbnwxfHx8fDE3NjAxODg1MDh8MA&ixlib=rb-4.1.0&q=80&w=1080",
-      imageAlt: "Team collaboration in modern workspace"
+      imageUrl:
+        "https://images.unsplash.com/photo-1770159116807-9b2a7bb82294?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmcmVlbGFuY2VyJTIwbGFwdG9wJTIwY29kaW5nJTIwZGFyayUyMG1pbmltYWx8ZW58MXx8fHwxNzczMjgxOTAwfDA&ixlib=rb-4.1.0&q=80&w=1080",
+      imageAlt: "Developer working on code",
     },
     {
       icon: Briefcase,
-      title: "Manage contractors without the chaos",
-      description: "Companies get private Worker Records, approval workflows, and compliance tools built in.",
+      iconColor: "bg-amber-500/10 text-amber-600",
+      title: "Projects with built-in compliance",
+      description:
+        "Create projects with statements of work, approval chains, and region-aware settings. Every contractor interaction has a paper trail.",
       features: [
-        "Post unlimited contract roles",
-        "Approval chains for timesheets",
-        "Worker Records (always private)",
-        "EoR and vendor compatible"
+        "Project creation wizard with SOW builder",
+        "Multi-currency and region support",
+        "Work week configuration",
+        "Member management with role-based access",
       ],
-      image: "https://images.unsplash.com/photo-1532211779254-6ef4e2b8454c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxkZXZlbG9wZXIlMjB3b3Jrc3BhY2UlMjBtYWNib29rfGVufDF8fHx8MTc2MDE5NTQzN3ww&ixlib=rb-4.1.0&q=80&w=1080",
-      imageAlt: "Professional developer workspace with MacBook"
+      imageUrl:
+        "https://images.unsplash.com/photo-1695462131553-5f532df1768d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0ZWNobmljYWwlMjB0ZWFtJTIwcmVtb3RlJTIwd29yayUyMHZpZGVvJTIwY2FsbHxlbnwxfHx8fDE3NzMyODE5MDF8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      imageAlt: "Team collaboration",
     },
     {
       icon: Clock,
-      title: "Track time, approve work, done",
-      description: "Log hours against projects. Clients approve with one click. No spreadsheets, no email chains.",
+      iconColor: "bg-emerald-500/10 text-emerald-600",
+      title: "Hours-first timesheets that flow through the graph",
+      description:
+        "Our timesheet system is designed around hours, not tasks. Log time, submit for approval, and watch it cascade through your multi-party approval chain automatically.",
       features: [
-        "Built-in time tracking",
-        "One-click approvals",
-        "Audit trails included",
-        "Project-level breakdowns"
+        "Weekly timesheet grid with task tagging",
+        "Multi-party cascading approvals",
+        "SLA tracking for approval deadlines",
+        "Automatic invoice generation from approved hours",
       ],
-      image: "https://images.unsplash.com/photo-1658274474930-bb27a64022c2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb2RpbmclMjBsYXB0b3AlMjBzY3JlZW58ZW58MXx8fHwxNzYwMDcwNjI3fDA&ixlib=rb-4.1.0&q=80&w=1080",
-      imageAlt: "Developer coding on laptop screen"
+      imageUrl:
+        "https://images.unsplash.com/photo-1702479743967-3dcccd4a671d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBkYXNoYm9hcmQlMjBhbmFseXRpY3MlMjBzY3JlZW4lMjBkYXJrfGVufDF8fHx8MTc3MzIzMzkwMXww&ixlib=rb-4.1.0&q=80&w=1080",
+      imageAlt: "Analytics dashboard",
     },
-    {
-      icon: DollarSign,
-      title: "Get paid faster",
-      description: "Invoices auto-generate from approved timesheets. Send them with one click. Track payment status.",
-      features: [
-        "Auto-generated invoices",
-        "Professional PDF output",
-        "Payment tracking",
-        "Multi-party invoicing for agencies"
-      ],
-      image: "https://images.unsplash.com/photo-1674291707242-84b519075308?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmcmVlbGFuY2VyJTIwd29ya2luZyUyMHJlbW90ZXxlbnwxfHx8fDE3NjAxOTU0Mzl8MA&ixlib=rb-4.1.0&q=80&w=1080",
-      imageAlt: "Freelancer working remotely"
-    }
   ];
 
   return (
-    <section className="py-24 md:py-32 px-6">
-      <div className="max-w-6xl mx-auto space-y-24 md:space-y-32">
-        {benefits.map((benefit, idx) => {
-          const Icon = benefit.icon;
-          const isEven = idx % 2 === 0;
+    <section id="product" className="py-20 px-6">
+      <div className="max-w-5xl mx-auto">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-3">
+            Built different, on purpose
+          </h2>
+          <p className="text-muted-foreground text-lg max-w-xl mx-auto">
+            Most freelancer tools are glorified spreadsheets. WorkGraph is a
+            relationship-aware platform that understands organizational
+            complexity.
+          </p>
+        </div>
 
-          return (
+        <div className="space-y-24">
+          {benefits.map((benefit, index) => (
             <div
-              key={idx}
-              className={`grid md:grid-cols-2 gap-12 md:gap-16 items-center ${
-                isEven ? "" : "md:flex-row-reverse"
-              }`}
+              key={benefit.title}
+              className={`flex flex-col ${
+                index % 2 === 0 ? "lg:flex-row" : "lg:flex-row-reverse"
+              } gap-12 items-center`}
             >
-              {/* Icon + Content */}
-              <div className={isEven ? "md:order-1" : "md:order-2"}>
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-brand/15 to-accent-brand/5 flex items-center justify-center mb-6 apple-shadow-sm">
-                  <Icon className="w-8 h-8 text-accent-brand" strokeWidth={2} />
+              {/* Text side */}
+              <div className="flex-1 min-w-0">
+                <div
+                  className={`w-11 h-11 rounded-xl ${benefit.iconColor} flex items-center justify-center mb-4`}
+                >
+                  <benefit.icon className="w-5 h-5" />
                 </div>
-                <h3 className="text-2xl md:text-3xl font-semibold mb-4 tracking-tight">
+                <h3 className="text-2xl font-semibold tracking-tight mb-3 text-foreground">
                   {benefit.title}
                 </h3>
-                <p className="text-muted-foreground mb-8 leading-relaxed text-base">
+                <p className="text-muted-foreground leading-relaxed mb-6">
                   {benefit.description}
                 </p>
-                <div className="space-y-3">
-                  {benefit.features.map((feature, fidx) => (
-                    <div key={fidx} className="flex items-center gap-3 group">
-                      <div className="w-1.5 h-1.5 rounded-full bg-accent-brand flex-shrink-0 group-hover:scale-150 apple-transition" />
-                      <p className="text-sm text-muted-foreground m-0 group-hover:text-foreground apple-transition">{feature}</p>
-                    </div>
+                <ul className="space-y-2.5">
+                  {benefit.features.map((feature) => (
+                    <li
+                      key={feature}
+                      className="flex items-start gap-2.5 text-sm"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-accent-brand mt-1.5 shrink-0" />
+                      <span className="text-foreground/80">{feature}</span>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
 
-              {/* Visual mockup */}
-              <div className={isEven ? "md:order-2" : "md:order-1"}>
-                <div className="bg-card border border-border/50 rounded-3xl overflow-hidden apple-shadow-lg hover:apple-shadow-xl apple-transition group">
-                  {/* Real image with subtle overlay */}
-                  <div className="aspect-[4/3] relative overflow-hidden">
-                    <ImageWithFallback
-                      src={benefit.image}
-                      alt={benefit.imageAlt}
-                      className="w-full h-full object-cover group-hover:scale-105 apple-transition duration-700"
-                    />
-                    {/* Subtle gradient overlay for depth */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-card/40 via-transparent to-transparent pointer-events-none" />
-                    {/* Subtle icon badge in corner */}
-                    <div className="absolute bottom-4 right-4 w-12 h-12 rounded-xl bg-card/90 backdrop-blur-sm border border-border/50 flex items-center justify-center apple-shadow-md">
-                      <Icon className="w-6 h-6 text-accent-brand" strokeWidth={2} />
-                    </div>
-                  </div>
+              {/* Image side */}
+              <div className="flex-1 min-w-0 w-full">
+                <div className="rounded-xl overflow-hidden border border-border/50 shadow-lg">
+                  <ImageWithFallback
+                    src={benefit.imageUrl}
+                    alt={benefit.imageAlt}
+                    className="w-full h-auto block aspect-[16/10] object-cover"
+                  />
                 </div>
               </div>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </section>
   );

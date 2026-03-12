@@ -19,7 +19,7 @@ export function FinalCTABanner({ onGetStarted }: FinalCTABannerProps) {
           Run your freelance career at WorkGraph speed
         </h2>
         <p className="text-xl mb-12 opacity-85 max-w-2xl mx-auto leading-relaxed">
-          Join 7,200+ freelancers, companies, and agencies shipping work on WorkGraph.
+          We're building in public and shipping fast. Join the open beta and help shape the future of freelance work infrastructure.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
           <Button
@@ -33,9 +33,10 @@ export function FinalCTABanner({ onGetStarted }: FinalCTABannerProps) {
           <Button
             size="lg"
             variant="outline"
+            onClick={onGetStarted}
             className="h-14 px-10 text-base border-background/30 text-background hover:bg-background/10 hover:border-background/50 rounded-xl font-medium apple-transition backdrop-blur-sm"
           >
-            See a demo
+            Sign in
           </Button>
         </div>
         <p className="text-sm mt-8 opacity-60">

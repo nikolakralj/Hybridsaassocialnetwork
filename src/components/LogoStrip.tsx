@@ -1,26 +1,29 @@
+import { Clock, FileText, Network, Shield, Users, Zap } from "lucide-react";
+
 export function LogoStrip() {
-  const companies = [
-    "TechCorp",
-    "StartupX",
-    "DevShop",
-    "CloudCo",
-    "BuildLabs",
-    "ScaleVentures"
+  const capabilities = [
+    { icon: Network, label: "Work Graph" },
+    { icon: Clock, label: "Time Tracking" },
+    { icon: FileText, label: "Contracts & SOWs" },
+    { icon: Shield, label: "Multi-Party Approvals" },
+    { icon: Users, label: "Social Feed" },
+    { icon: Zap, label: "Auto Invoicing" },
   ];
 
   return (
-    <section className="py-10 px-6 border-b border-border/30">
-      <div className="max-w-6xl mx-auto">
-        <p className="text-center text-xs text-muted-foreground mb-6">
-          Used by high-growth startups
+    <section className="py-8 px-6 border-b border-border/30">
+      <div className="max-w-5xl mx-auto">
+        <p className="text-center text-xs text-muted-foreground mb-5 uppercase tracking-wider font-medium">
+          Built-in tools — no integrations needed
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-          {companies.map((company) => (
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+          {capabilities.map((cap) => (
             <div
-              key={company}
-              className="text-sm font-medium text-muted-foreground/50 hover:text-muted-foreground/80 transition-colors"
+              key={cap.label}
+              className="flex items-center gap-2 text-sm text-muted-foreground/70"
             >
-              {company}
+              <cap.icon className="w-3.5 h-3.5" />
+              <span className="font-medium">{cap.label}</span>
             </div>
           ))}
         </div>

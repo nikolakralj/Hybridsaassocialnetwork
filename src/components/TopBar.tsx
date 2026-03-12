@@ -129,12 +129,14 @@ export function TopBar({ mode = "guest", onSignIn, onGetStarted }: TopBarProps) 
 
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <SheetTrigger asChild>
-              <button
-                className="p-2 hover:bg-accent rounded-lg transition-colors"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-lg"
                 aria-label="Menu"
               >
                 {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </button>
+              </Button>
             </SheetTrigger>
             <SheetContent side="right" className="w-[280px] p-0">
               <nav className="flex flex-col pt-16">

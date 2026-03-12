@@ -1,21 +1,21 @@
 import React from 'react';
 import { RouterProvider } from 'react-router';
 import { router } from './routes';
-import { QueryProvider } from './components/QueryProvider';
 import { PersonaProvider } from './contexts/PersonaContext';
 import { WorkGraphProvider } from './contexts/WorkGraphContext';
 import { TimesheetStoreProvider } from './contexts/TimesheetDataContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { AuthProvider } from './contexts/AuthContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
-// Force light mode globally — runs before any React renders
+// Force light mode globally
 if (typeof document !== 'undefined') {
   document.documentElement.classList.remove('dark');
 }
 
 export default function App() {
   return (
-    <QueryProvider>
+    <ErrorBoundary>
       <AuthProvider>
         <PersonaProvider>
           <WorkGraphProvider>
@@ -27,6 +27,6 @@ export default function App() {
           </WorkGraphProvider>
         </PersonaProvider>
       </AuthProvider>
-    </QueryProvider>
+    </ErrorBoundary>
   );
 }

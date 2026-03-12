@@ -15,6 +15,7 @@ import { ActivityFeedPage } from "./components/notifications/ActivityFeedPage";
 import { DashboardPage } from "./components/dashboard/DashboardPage";
 import { ProfilePage } from "./components/ProfilePage";
 import { SettingsPage } from "./components/SettingsPage";
+import { PublicProfilePage } from "./components/PublicProfilePage";
 import { AppLayout } from "./components/AppLayout";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
       { path: "company-profile", Component: CompanyProfilePage },
       { path: "notifications", Component: ActivityFeedPage },
       { path: "profile", Component: ProfilePage },
+      { path: "profile/:userId", Component: PublicProfilePage },
       { path: "settings", Component: SettingsPage },
       { path: "approve", Component: DeepLinkHandler },
       { path: "reject", Component: DeepLinkHandler },

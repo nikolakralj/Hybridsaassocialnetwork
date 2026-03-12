@@ -1,5 +1,6 @@
 import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import * as kv from "./kv_store.tsx";
 
 const authRouter = new Hono();
 
@@ -43,6 +44,65 @@ authRouter.post("/make-server-f8b491be/auth/signup", async (c) => {
   } catch (err: any) {
     console.log(`Unexpected signup error: ${err.message}`);
     return c.json({ error: `Signup failed: ${err.message}` }, 500);
+  }
+});
+
+// GET /make-server-f8b491be/api/profile/:userId - Public profile endpoint
+authRouter.get("/make-server-f8b491be/api/profile/:userId", async (c) => {
+  try {
+    const userId = c.req.param("userId");
+    if (!userId) {
+      return c.json({ error: "User ID is required" }, 400);
+    }
+
+    // Try to fetch profile from KV store
+    const profileKey = `profile:${userId}`;
+    const profile = await kv.get(profileKey);
+
+    if (profile) {
+      // Return public-safe fields only (strip email for privacy)
+      const publicProfile = {
+        id: userId,
+        name: profile.name || "WorkGraph User",
+        headline: profile.headline || "",
+        bio: profile.bio || "",
+        location: profile.location || "",
+        website: profile.website || "",
+        persona_type: profile.persona_type || "freelancer",
+        skills: profile.skills || [],
+        created_at: profile.created_at || new Date().toISOString(),
+        // Intentionally omit email for privacy
+      };
+      return c.json(publicProfile);
+    }
+
+    // If no KV profile, try to get basic info from Supabase auth
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const { data, error } = await supabase.auth.admin.getUserById(userId);
+    if (error || !data?.user) {
+      return c.json({ error: "Profile not found" }, 404);
+    }
+
+    const publicProfile = {
+      id: userId,
+      name: data.user.user_metadata?.name || "WorkGraph User",
+      headline: "",
+      bio: "",
+      location: "",
+      website: "",
+      persona_type: data.user.user_metadata?.persona_type || "freelancer",
+      skills: [],
+      created_at: data.user.created_at,
+    };
+
+    return c.json(publicProfile);
+  } catch (err: any) {
+    console.log(`Error fetching public profile: ${err.message}`);
+    return c.json({ error: `Failed to load profile: ${err.message}` }, 500);
   }
 });
 

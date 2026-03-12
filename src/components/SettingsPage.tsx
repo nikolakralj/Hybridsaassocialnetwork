@@ -36,7 +36,10 @@ export function SettingsPage() {
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold">Settings</h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight m-0">Settings</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">Manage your account and preferences</p>
+        </div>
       </div>
 
       <div className="flex gap-6">

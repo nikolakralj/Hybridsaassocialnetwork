@@ -1,8 +1,8 @@
 // ============================================================================
-// useNotifications - Hook for managing notifications
+// useNotifications - Hook for managing notifications (performance-optimized)
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   Notification,
   NotificationStats,
@@ -60,31 +60,40 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [offset, setOffset] = useState(0);
+  
+  // Use refs for mutable values to avoid dependency cycles
+  const offsetRef = useRef(0);
+  const loadingRef = useRef(false);
+  const optionsRef = useRef({ userId, orgId, types, priority });
+  optionsRef.current = { userId, orgId, types, priority };
 
   const fetchNotifications = useCallback(async (reset = false) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    
     try {
       setLoading(true);
       setError(null);
 
+      const opts = optionsRef.current;
       const request: GetNotificationsRequest = {
-        user_id: userId,
-        org_id: orgId,
-        types,
-        priority,
+        user_id: opts.userId,
+        org_id: opts.orgId,
+        types: opts.types,
+        priority: opts.priority,
         archived: false,
         limit: 20,
-        offset: reset ? 0 : offset,
+        offset: reset ? 0 : offsetRef.current,
       };
 
       const response = await getNotifications(request);
 
       if (reset) {
         setNotifications(response.notifications);
-        setOffset(response.notifications.length);
+        offsetRef.current = response.notifications.length;
       } else {
         setNotifications(prev => [...prev, ...response.notifications]);
-        setOffset(prev => prev + response.notifications.length);
+        offsetRef.current += response.notifications.length;
       }
 
       setStats(response.stats);
@@ -94,24 +103,23 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
       setError(err instanceof Error ? err : new Error('Failed to fetch notifications'));
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
-  }, [userId, orgId, types, priority, offset]);
+  }, []); // Stable - no deps, uses refs
 
   const refresh = useCallback(async () => {
     await fetchNotifications(true);
   }, [fetchNotifications]);
 
   const loadMore = useCallback(async () => {
-    if (!loading && hasMore) {
+    if (!loadingRef.current && hasMore) {
       await fetchNotifications(false);
     }
-  }, [fetchNotifications, loading, hasMore]);
+  }, [fetchNotifications, hasMore]);
 
   const markAsRead = useCallback(async (notificationIds: string[]) => {
     try {
       await markNotificationsRead(notificationIds);
-      
-      // Optimistic update
       setNotifications(prev =>
         prev.map(n =>
           notificationIds.includes(n.id)
@@ -119,8 +127,6 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
             : n
         )
       );
-      
-      // Update stats
       setStats(prev => {
         if (!prev) return prev;
         return {
@@ -128,20 +134,15 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
           total_unread: Math.max(0, prev.total_unread - notificationIds.length),
         };
       });
-      
-      // Refresh to get accurate stats
-      await refresh();
     } catch (err) {
       console.error('Failed to mark notifications as read:', err);
       throw err;
     }
-  }, [refresh]);
+  }, []);
 
   const markAsUnread = useCallback(async (notificationIds: string[]) => {
     try {
       await markNotificationsUnread(notificationIds);
-      
-      // Optimistic update
       setNotifications(prev =>
         prev.map(n =>
           notificationIds.includes(n.id)
@@ -149,8 +150,6 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
             : n
         )
       );
-      
-      // Update stats
       setStats(prev => {
         if (!prev) return prev;
         return {
@@ -158,74 +157,59 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
           total_unread: prev.total_unread + notificationIds.length,
         };
       });
-      
-      await refresh();
     } catch (err) {
       console.error('Failed to mark notifications as unread:', err);
       throw err;
     }
-  }, [refresh]);
+  }, []);
 
   const archive = useCallback(async (notificationIds: string[]) => {
     try {
       await archiveNotifications(notificationIds);
-      
-      // Optimistic update - remove from list
       setNotifications(prev =>
         prev.filter(n => !notificationIds.includes(n.id))
       );
-      
-      await refresh();
     } catch (err) {
       console.error('Failed to archive notifications:', err);
       throw err;
     }
-  }, [refresh]);
+  }, []);
 
   const markAllRead = useCallback(async () => {
     try {
-      await markAllAsRead(userId);
-      
-      // Optimistic update
+      await markAllAsRead(optionsRef.current.userId);
       setNotifications(prev =>
         prev.map(n => ({ ...n, read: true, read_at: new Date().toISOString() }))
       );
-      
       setStats(prev => {
         if (!prev) return prev;
         return { ...prev, total_unread: 0 };
       });
-      
-      await refresh();
     } catch (err) {
       console.error('Failed to mark all as read:', err);
       throw err;
     }
-  }, [userId, refresh]);
+  }, []);
 
-  // Initial fetch
+  // Initial fetch — only re-runs when filter params actually change
   useEffect(() => {
     fetchNotifications(true);
-  }, [userId, orgId, types, priority]);
+  }, [userId, orgId, priority, fetchNotifications]);
+  // Note: `types` intentionally excluded as array ref changes each render
 
-  // Auto-refresh
+  // Auto-refresh (stable interval since fetchNotifications is stable)
   useEffect(() => {
     if (!autoRefresh) return;
-
     const interval = setInterval(() => {
       fetchNotifications(true);
     }, refreshInterval);
-
     return () => clearInterval(interval);
   }, [autoRefresh, refreshInterval, fetchNotifications]);
 
   // Real-time subscription
   useEffect(() => {
     const unsubscribe = subscribeToNotifications(userId, (notification) => {
-      // Add new notification to the top of the list
       setNotifications(prev => [notification, ...prev]);
-      
-      // Update stats
       setStats(prev => {
         if (!prev) return prev;
         return {
@@ -234,7 +218,6 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
         };
       });
     });
-
     return () => unsubscribe();
   }, [userId]);
 
@@ -251,34 +234,5 @@ export function useNotifications(options: UseNotificationsOptions): UseNotificat
     archive,
     markAllRead,
     loadMore,
-  };
-}
-
-// ============================================================================
-// Additional hooks for specific use cases
-// ============================================================================
-
-export function useUnreadCount(userId: string): number {
-  const { unreadCount } = useNotifications({
-    userId,
-    autoRefresh: true,
-    refreshInterval: 30000,
-  });
-
-  return unreadCount;
-}
-
-export function useRecentNotifications(userId: string, limit = 5) {
-  const { notifications, loading, error, refresh } = useNotifications({
-    userId,
-    autoRefresh: true,
-    refreshInterval: 30000,
-  });
-
-  return {
-    notifications: notifications.slice(0, limit),
-    loading,
-    error,
-    refresh,
   };
 }

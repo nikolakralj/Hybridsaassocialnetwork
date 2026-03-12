@@ -8,7 +8,23 @@ export function createClient() {
   if (!supabaseInstance) {
     supabaseInstance = createSupabaseClient(
       `https://${projectId}.supabase.co`,
-      publicAnonKey
+      publicAnonKey,
+      {
+        auth: {
+          autoRefreshToken: false,   // Prevent background token refresh timer
+          persistSession: true,
+          detectSessionInUrl: false, // Don't scan URL for auth tokens
+        },
+        realtime: {
+          params: {
+            eventsPerSecond: 1,
+          },
+        },
+        // Disable realtime completely — we don't use it
+        global: {
+          headers: {},
+        },
+      }
     );
   }
   return supabaseInstance;
