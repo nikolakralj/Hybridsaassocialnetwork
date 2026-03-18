@@ -234,6 +234,15 @@ function MyChainVisualization({
     return fullChain;
   }, [selectedId, nodes, edges]);
 
+  // Auto-scroll the selected node into view — must be before early return to maintain hook order
+  const selectedRef = useCallback((el: HTMLButtonElement | null) => {
+    if (el) {
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      });
+    }
+  }, []);
+
   if (chain.length <= 1) return null;
 
   const iconForNode = (n: VisibleNode) => {
@@ -252,16 +261,6 @@ function MyChainVisualization({
     if (n.data?.partyType === 'agency') return 'bg-violet-50 border-violet-200 text-violet-600';
     return 'bg-blue-50 border-blue-200 text-blue-600';
   };
-
-  // Auto-scroll the selected node into view
-  const selectedRef = useCallback((el: HTMLButtonElement | null) => {
-    if (el) {
-      // Use requestAnimationFrame to ensure DOM is settled
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      });
-    }
-  }, []);
 
   return (
     <div className="space-y-2">
@@ -934,12 +933,21 @@ function OrgPeopleList({
   onSelectNode: (id: string) => void;
 }) {
   const people = useMemo(() => {
+    // Find people via employs/assigns edges
     const employEdges = edges.filter(
       e => (e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') && e.source === orgId
     );
-    return employEdges
+    const peopleFromEdges = employEdges
       .map(e => nodes.find(n => n.id === e.target))
       .filter(Boolean) as VisibleNode[];
+
+    // Also find people via partyId in node data (auto-generated graphs)
+    const edgePeopleIds = new Set(peopleFromEdges.map(p => p.id));
+    const peopleFromData = nodes.filter(
+      n => n.type === 'person' && n.data?.partyId === orgId && !edgePeopleIds.has(n.id)
+    ) as VisibleNode[];
+
+    return [...peopleFromEdges, ...peopleFromData];
   }, [orgId, nodes, edges]);
 
   if (people.length === 0) return null;
@@ -969,8 +977,13 @@ function OrgPeopleList({
                 <div className="text-[12px] font-medium text-foreground truncate">
                   {person.visibility === 'masked' ? 'Hidden User' : person.data?.name}
                 </div>
-                <div className="text-[10px] text-muted-foreground truncate">
-                  {person.data?.role?.replace(/_/g, ' ') || 'Employee'}
+                <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
+                  <span>{person.data?.role?.replace(/_/g, ' ') || 'Employee'}</span>
+                  {person.data?.visibleToChain === false && (
+                    <span className="inline-flex items-center gap-0.5 px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-semibold">
+                      <EyeOff className="h-2 w-2" /> internal
+                    </span>
+                  )}
                 </div>
               </div>
               {activity && (

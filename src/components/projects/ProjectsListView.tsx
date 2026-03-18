@@ -13,8 +13,12 @@ import {
 } from '../ui/dropdown-menu';
 import { ProjectConfigurationDrawer } from './ProjectConfigurationDrawer';
 import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
-import { Project } from '../../types/collaboration';
-import { getUserProjects, getProjectMembers } from '../../utils/api/projects-supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  listProjects,
+  deleteProject as deleteProjectApi,
+  getProjectMembers,
+} from '../../utils/api/projects-api';
 import { toast } from 'sonner@2.0.3';
 
 interface ProjectConfiguration {
@@ -30,38 +34,46 @@ interface ProjectConfiguration {
 
 export function ProjectsListView() {
   const navigate = useNavigate();
+  const { accessToken } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadProjects() {
-      setIsLoading(true);
-      try {
-        const userProjects = await getUserProjects();
-        setProjects(userProjects);
-        
-        const memberCounts: Record<string, number> = {};
-        for (const project of userProjects) {
-          const members = await getProjectMembers(project.id);
-          memberCounts[project.id] = members.length;
-        }
-        setProjectMembers(memberCounts);
-      } catch (error) {
-        console.error('Error loading projects:', error);
-        toast.error('Failed to load projects');
-      } finally {
-        setIsLoading(false);
-      }
+  const loadProjects = async () => {
+    setIsLoading(true);
+    try {
+      const userProjects = await listProjects(accessToken);
+      setProjects(userProjects);
+      
+      // Load member counts in parallel
+      const memberCounts: Record<string, number> = {};
+      await Promise.all(
+        userProjects.map(async (project: any) => {
+          try {
+            const members = await getProjectMembers(project.id, accessToken);
+            memberCounts[project.id] = members.length;
+          } catch {
+            memberCounts[project.id] = 0;
+          }
+        })
+      );
+      setProjectMembers(memberCounts);
+    } catch (error) {
+      console.error('Error loading projects:', error);
+      // Don't toast on initial load if there's just no data
+    } finally {
+      setIsLoading(false);
     }
-    
+  };
+
+  useEffect(() => {
     loadProjects();
-  }, []);
+  }, [accessToken]);
 
   const handleCreateProject = () => {
     setIsWizardOpen(true);
@@ -69,12 +81,16 @@ export function ProjectsListView() {
   
   const handleProjectCreated = (projectId: string) => {
     sessionStorage.setItem('currentProjectId', projectId);
+    // Store project name too (will be fetched from API in workspace)
     navigate('/app/project-workspace');
-    getUserProjects().then(setProjects);
+    loadProjects(); // Refresh list
   };
   
   const handleOpenProject = (projectId: string) => {
     sessionStorage.setItem('currentProjectId', projectId);
+    // Store name for workspace header
+    const proj = projects.find(p => p.id === projectId);
+    if (proj?.name) sessionStorage.setItem('currentProjectName', proj.name);
     navigate('/app/project-workspace');
   };
 
@@ -91,14 +107,20 @@ export function ProjectsListView() {
     }
   };
 
-  const handleDeleteProject = (projectId: string) => {
-    if (confirm('Are you sure you want to delete this project?')) {
+  const handleDeleteProject = async (projectId: string) => {
+    if (!confirm('Are you sure you want to delete this project?')) return;
+    try {
+      await deleteProjectApi(projectId, accessToken);
       setProjects(projects.filter(p => p.id !== projectId));
+      toast.success('Project deleted');
+    } catch (error: any) {
+      console.error('Delete project error:', error);
+      toast.error(error.message || 'Failed to delete project');
     }
   };
 
   const filteredProjects = projects.filter(project =>
-    project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     project.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -217,7 +239,7 @@ export function ProjectsListView() {
 
               {/* Status & Region */}
               <div className="mb-4 flex items-center gap-1.5 flex-wrap">
-                {getStatusBadge('active')}
+                {getStatusBadge(project.status)}
                 <Badge variant="secondary" className="text-[11px]">
                   {project.region}
                 </Badge>
@@ -234,7 +256,7 @@ export function ProjectsListView() {
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Calendar className="h-3.5 w-3.5" />
-                  <span>Started {new Date(project.startDate).toLocaleDateString()}</span>
+                  <span>Started {new Date(project.startDate || project.createdAt).toLocaleDateString()}</span>
                 </div>
                 {project.endDate && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">

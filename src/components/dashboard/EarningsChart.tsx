@@ -29,7 +29,7 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
     ...point,
     displayDate: format(new Date(point.date), 'MMM d'),
     displayAmount: `$${point.amount.toLocaleString()}`,
-    _key: `${point.date}-${index}`,
+    _uniqueKey: `${point.date}-${index}`,
   }));
 
   return (
@@ -64,12 +64,16 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
               vertical={false}
             />
             <XAxis
-              dataKey="displayDate"
+              dataKey="_uniqueKey"
               stroke="var(--muted-foreground)"
               fontSize={11}
               tickLine={false}
               axisLine={false}
               dy={8}
+              tickFormatter={(value: string) => {
+                const dateStr = value.split('-').slice(0, 3).join('-');
+                try { return format(new Date(dateStr), 'MMM d'); } catch { return value; }
+              }}
             />
             <YAxis
               stroke="var(--muted-foreground)"
@@ -88,7 +92,10 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
                 boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
               }}
               formatter={(value: number) => [`$${value.toLocaleString()}`, 'Earned']}
-              labelFormatter={(label) => label}
+              labelFormatter={(label: string) => {
+                const dateStr = label.split('-').slice(0, 3).join('-');
+                try { return format(new Date(dateStr), 'MMM d, yyyy'); } catch { return label; }
+              }}
             />
             <Area
               type="monotone"

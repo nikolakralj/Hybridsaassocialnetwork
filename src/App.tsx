@@ -13,6 +13,8 @@ if (typeof document !== 'undefined') {
   document.documentElement.classList.remove('dark');
 }
 
+// Phase 1: Real data APIs wired up for Projects, Contracts, Timesheets
+// Fix: Removed duplicate barrel exports from types/index.ts to resolve module compilation
 export default function App() {
   return (
     <ErrorBoundary>

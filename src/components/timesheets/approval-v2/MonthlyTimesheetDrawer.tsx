@@ -26,7 +26,7 @@ import type {
   ProjectContract,
   TimesheetPeriod,
   TimesheetEntry,
-} from '../../../types';
+} from '../../../types/timesheets';
 
 import { formatContractRate, getStatusColor } from '../../../utils/api/timesheets-approval';
 

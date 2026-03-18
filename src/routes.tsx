@@ -19,6 +19,7 @@ import { PublicProfilePage } from "./components/PublicProfilePage";
 import { AppLayout } from "./components/AppLayout";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 
+// WorkGraph Routes - Phase 1 with real data APIs
 export const router = createBrowserRouter([
   {
     path: "/",

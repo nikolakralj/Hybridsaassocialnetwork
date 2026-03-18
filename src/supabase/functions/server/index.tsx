@@ -12,8 +12,11 @@ import migrateContractsRouter from "./migrate-contracts.ts"; // ✅ LOCAL SCOPE:
 import runMigrationRouter from "./run-migration.ts"; // ✅ LOCAL SCOPE: Direct SQL migration
 import { authRouter } from "./auth.tsx"; // ✅ Phase 0.5: Auth routes
 import { kvApiRouter } from "./kv-api.tsx"; // ✅ Phase 0.5: Generic KV API
+import { projectsRouter } from "./projects-api.tsx"; // ✅ Phase 1: Projects CRUD
+import { contractsRouter } from "./contracts-api.tsx"; // ✅ Phase 1: Contracts CRUD
+import { timesheetsRouter } from "./timesheets-api.tsx"; // ✅ Phase 1: Timesheets CRUD
 
-// Force rebuild - 2025-01-23-v11 (Add direct SQL migration endpoint)
+// Force rebuild - 2026-03-12-v1 (Phase 1: Projects, Contracts, Timesheets APIs)
 
 // Initialize Hono app
 const app = new Hono();
@@ -31,6 +34,9 @@ app.use('*', logger(console.log));
 // Register all routes
 app.route('/', authRouter); // ✅ Phase 0.5: Auth
 app.route('/', kvApiRouter); // ✅ Phase 0.5: KV API
+app.route('/', projectsRouter); // ✅ Phase 1: Projects
+app.route('/', contractsRouter); // ✅ Phase 1: Contracts
+app.route('/', timesheetsRouter); // ✅ Phase 1: Timesheets
 registerEmailRoutes(app); // ✅ Phase 5 Day 8: Email sending
 registerApprovalKVRoutes(app); // ✅ Phase 5 Days 9-10: KV-based approval
 app.route('/make-server-f8b491be/timesheet-approvals', timesheetApprovalsRouter); // ✅ Phase 5B: Graph approvals

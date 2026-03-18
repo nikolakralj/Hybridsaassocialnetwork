@@ -14,7 +14,7 @@ import type {
   TimesheetPeriod,
   TimesheetEntry,
   MonthlyTimesheetView,
-} from '../../types';
+} from '../../types/timesheets';
 import { useMemo } from 'react';
 
 // ✅ TEST MODE: Import persona context

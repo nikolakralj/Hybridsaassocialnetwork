@@ -55,6 +55,8 @@ import type {
   CompiledProjectConfig,
 } from '../../types/workgraph';
 import { usePersona } from '../../contexts/PersonaContext';
+import { getProject } from '../../utils/api/projects-api';
+import { useAuth } from '../../contexts/AuthContext';
 
 // ============================================================================
 // Layout Engine - Hierarchical Sugiyama-style
@@ -100,7 +102,14 @@ const PADDING = 80;
 function assignLayer(node: BaseNode): number {
   if (node.type === 'person') return 0;
   if (node.type === 'party') {
+    // Use chainPosition from auto-generated graph if available
+    if (typeof node.data?.chainPosition === 'number') {
+      // Shift by 1 so person nodes stay at layer 0
+      return node.data.chainPosition + 1;
+    }
+    // Legacy fallback: infer from partyType
     if (node.data?.partyType === 'client') return 3;
+    if (node.data?.partyType === 'agency') return 2;
     return 1;
   }
   if (node.type === 'contract' || node.type === 'sow') return 2;
@@ -142,9 +151,14 @@ function computeLayout(
   nodes
     .filter((n) => n.type === 'person' && !personToOrg.has(n.id))
     .forEach((n) => {
-      const company = n.data?.company;
-      if (company && orgNameToId.has(company)) {
-        personToOrg.set(n.id, orgNameToId.get(company)!);
+      // Try partyId first (auto-generated graphs), then company name lookup
+      if (n.data?.partyId) {
+        personToOrg.set(n.id, n.data.partyId);
+      } else {
+        const company = n.data?.company;
+        if (company && orgNameToId.has(company)) {
+          personToOrg.set(n.id, orgNameToId.get(company)!);
+        }
       }
     });
 
@@ -171,11 +185,17 @@ function computeLayout(
     return (typeOrder[a.data?.partyType] ?? 9) - (typeOrder[b.data?.partyType] ?? 9);
   });
 
-  const layer2 = layerGroups.get(2) || [];
-  layer2.sort((a, b) => (a.data?.name || '').localeCompare(b.data?.name || ''));
+  // Sort all non-person, non-company layers by name
+  const allLayerIndices = [...layerGroups.keys()].sort((a, b) => a - b);
+  allLayerIndices.forEach((idx) => {
+    if (idx > 1) {
+      const layerNodes = layerGroups.get(idx) || [];
+      layerNodes.sort((a, b) => (a.data?.name || '').localeCompare(b.data?.name || ''));
+    }
+  });
 
-  const layer3 = layerGroups.get(3) || [];
-  const allLayers = [layer0, layer1, layer2, layer3];
+  // Build allLayers dynamically to support N-tier chains
+  const allLayers = allLayerIndices.map((idx) => layerGroups.get(idx) || []);
 
   // Position nodes
   const layoutNodes: LayoutNode[] = [];
@@ -265,7 +285,7 @@ function computeLayout(
     })
     .filter(Boolean) as LayoutEdge[];
 
-  const totalWidth = PADDING * 2 + 3 * LAYER_GAP + NODE_WIDTH;
+  const totalWidth = PADDING * 2 + Math.max(allLayers.length - 1, 1) * LAYER_GAP + NODE_WIDTH;
   return { layoutNodes, layoutEdges, width: totalWidth, height: maxHeight + PADDING * 2 };
 }
 
@@ -531,7 +551,8 @@ function OrgNodeCard({
           </div>
         </div>
         {peopleCount > 0 && (
-          <span className="text-[11px] text-muted-foreground font-medium bg-white/60 rounded-full px-1.5 py-0.5">
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium bg-white/60 border border-border/40 rounded-full px-1.5 py-0.5 shrink-0">
+            <Users className="h-2.5 w-2.5" />
             {peopleCount}
           </span>
         )}
@@ -1261,14 +1282,43 @@ export function WorkGraphBuilder({
   initialConfig,
 }: WorkGraphBuilderProps) {
   const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
+  const { accessToken } = useAuth();
 
   const defaultTemplate = TEMPLATES[0];
-  const [allNodes] = useState<BaseNode[]>(
+  const [allNodes, setAllNodes] = useState<BaseNode[]>(
     (initialConfig?.graph.nodes || defaultTemplate.nodes || []) as BaseNode[]
   );
-  const [allEdges] = useState<BaseEdge[]>(
+  const [allEdges, setAllEdges] = useState<BaseEdge[]>(
     (initialConfig?.graph.edges || defaultTemplate.edges || []) as BaseEdge[]
   );
+  const [graphLoaded, setGraphLoaded] = useState(!!initialConfig);
+
+  // Try to load project graph from KV on mount
+  useEffect(() => {
+    if (graphLoaded || initialConfig) return;
+    let cancelled = false;
+
+    async function loadProjectGraph() {
+      try {
+        const data = await getProject(projectId, accessToken);
+        if (cancelled) return;
+        if (data?.project?.graph?.nodes?.length > 0) {
+          setAllNodes(data.project.graph.nodes);
+          setAllEdges(data.project.graph.edges || []);
+          setGraphLoaded(true);
+          console.log(`[WorkGraph] Loaded ${data.project.graph.nodes.length} nodes from project ${projectId}`);
+        } else {
+          setGraphLoaded(true); // Fall through to template
+        }
+      } catch (err) {
+        console.log(`[WorkGraph] No saved graph for ${projectId}, using template`);
+        if (!cancelled) setGraphLoaded(true);
+      }
+    }
+
+    loadProjectGraph();
+    return () => { cancelled = true; };
+  }, [projectId, accessToken, graphLoaded, initialConfig]);
 
   // Viewer options
   const viewerOptions = useMemo(() => buildViewerOptions(allNodes, allEdges), [allNodes, allEdges]);

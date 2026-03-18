@@ -48,6 +48,20 @@ export interface ScopedGraphView {
 }
 
 // ============================================================================
+// Helper functions
+// ============================================================================
+
+// Helper: check if an edge represents a billing/business relationship
+function isBillingEdge(edgeType: string | undefined): boolean {
+  return edgeType === 'bills_to' || edgeType === 'billsTo' || edgeType === 'subcontracts' || edgeType === 'funds';
+}
+
+// Helper: check if an edge represents a structural relationship (billing or approval)
+function isStructuralEdge(edgeType: string | undefined): boolean {
+  return edgeType === 'approves' || isBillingEdge(edgeType);
+}
+
+// ============================================================================
 // Hop distance calculator (BFS from viewer node)
 // ============================================================================
 
@@ -221,6 +235,12 @@ export function computeScopedView(
       nodeToOrg.set(e.target, e.source);
     }
   });
+  // Also pick up partyId from person node data (auto-generated graphs)
+  allNodes.forEach(n => {
+    if (n.type === 'person' && n.data?.partyId && !nodeToOrg.has(n.id)) {
+      nodeToOrg.set(n.id, n.data.partyId);
+    }
+  });
 
   // Helper: check if a person node is directly connected to a given org
   const personConnectsToOrg = (personId: string, orgId: string) => {
@@ -250,13 +270,11 @@ export function computeScopedView(
     }
 
     // ── Employee scoping: org/party nodes ──
-    // An employee only sees their own org and the client(s) their org contracts with.
-    // They should NOT see peer orgs (like BrightWorks when viewing as Acme employee).
     if (viewer.orgId && node.type === 'party' && node.id !== viewer.orgId) {
       const isDirectClient = allEdges.some(e =>
         ((e.source === viewer.orgId && e.target === node.id) ||
          (e.target === viewer.orgId && e.source === node.id)) &&
-        (e.data?.edgeType === 'approves' || e.data?.edgeType === 'bills_to')
+        isStructuralEdge(e.data?.edgeType)
       );
       const sharesContract = allNodes.some(n =>
         n.type === 'contract' &&
@@ -286,13 +304,19 @@ export function computeScopedView(
     // It does NOT see other orgs' employees or unrelated freelancers.
     if (!viewer.orgId && (viewer.type === 'company' || viewer.type === 'agency') && node.type === 'person') {
       const personOrg = nodeToOrg.get(node.id);
-      // Person belongs to another org → hide
-      if (personOrg && personOrg !== viewer.nodeId) {
-        hiddenNodeCount++;
-        return;
-      }
-      // Freelancer (no org) — only show if directly connected to viewer's org
-      if (!personOrg) {
+
+      // If the person belongs to the viewer's org, always show them
+      if (personOrg === viewer.nodeId) {
+        // own employee — visible
+      } else if (personOrg && personOrg !== viewer.nodeId) {
+        // Person belongs to another org — only show if visibleToChain is true
+        if (node.data?.visibleToChain === false) {
+          hiddenNodeCount++;
+          return;
+        }
+        // visibleToChain is true (or undefined, defaults to true) — allow through
+      } else if (!personOrg) {
+        // Freelancer (no org) — only show if directly connected to viewer's org
         if (!personConnectsToOrg(node.id, viewer.nodeId)) {
           hiddenNodeCount++;
           return;
@@ -308,7 +332,7 @@ export function computeScopedView(
         const isDirectlyConnected = allEdges.some(e =>
           ((e.source === viewer.nodeId && e.target === node.id) ||
            (e.target === viewer.nodeId && e.source === node.id)) &&
-          (e.data?.edgeType === 'approves' || e.data?.edgeType === 'bills_to')
+          isStructuralEdge(e.data?.edgeType)
         );
         // Also allow if connected via a shared contract
         const sharesContract = allNodes.some(n =>
@@ -429,13 +453,19 @@ export function buildViewerOptions(
       personToOrg.set(e.target, e.source);
     }
   });
+  // Also use partyId from person node data (auto-generated graphs)
+  nodes.forEach(n => {
+    if (n.type === 'person' && n.data?.partyId && !personToOrg.has(n.id)) {
+      personToOrg.set(n.id, n.data.partyId);
+    }
+  });
 
   // All people — employees, freelancers, contractors
   nodes
     .filter(n => n.type === 'person')
     .forEach(n => {
       const role = n.data?.role || '';
-      const isFreelancer = role === 'individual_contributor';
+      const isFreelancer = role === 'individual_contributor' || role === 'freelancer';
       const orgId = personToOrg.get(n.id);
 
       viewers.push({

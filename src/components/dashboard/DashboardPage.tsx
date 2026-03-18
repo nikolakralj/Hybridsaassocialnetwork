@@ -36,7 +36,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
   const userId = user?.id || "user-123";
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,7 +49,7 @@ export function DashboardPage() {
   const loadDashboard = async () => {
     try {
       setLoading(true);
-      const dashboardData = await getDashboardData(userId);
+      const dashboardData = await getDashboardData(userId, accessToken);
       setData(dashboardData);
     } catch (err) {
       console.error('Failed to load dashboard:', err);
@@ -142,7 +142,9 @@ export function DashboardPage() {
         <StatCard
           title="Hours Logged"
           value={work_stats.hours.total}
-          subtitle={`${((work_stats.hours.billable / work_stats.hours.total) * 100).toFixed(0)}% billable`}
+          subtitle={work_stats.hours.total > 0
+            ? `${((work_stats.hours.billable / work_stats.hours.total) * 100).toFixed(0)}% billable`
+            : 'No hours logged yet'}
           icon={<Clock className="w-4 h-4" />}
           color="text-blue-600"
           bgColor="bg-blue-50"
@@ -476,6 +478,7 @@ function getIconComponent(iconName: string, colorClass: string = '') {
     Eye: <Eye className={`w-4 h-4 ${colorClass}`} />,
     AlertCircle: <AlertCircle className={`w-4 h-4 ${colorClass}`} />,
     MessageSquare: <MessageSquare className={`w-4 h-4 ${colorClass}`} />,
+    Sparkles: <Sparkles className={`w-4 h-4 ${colorClass}`} />,
   };
   return icons[iconName] || <TrendingUp className={`w-4 h-4 ${colorClass}`} />;
 }

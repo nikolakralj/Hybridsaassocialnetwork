@@ -1,11 +1,13 @@
 // Core identity and context types for WorkGraph
 
-// Re-export specialized types
-export * from './approvals';
-export * from './contracts';
-export * from './people';
-export * from './permissions';
-export * from './timesheets';
+// NOTE: Specialized types should be imported directly from their files:
+//   import type { ... } from './types/timesheets'
+//   import type { ... } from './types/contracts'
+//   import type { ... } from './types/approvals'
+//   import type { ... } from './types/people'
+//   import type { ... } from './types/permissions'
+// Barrel re-exports were removed to fix duplicate export conflicts
+// (e.g., Contract, Organization, TimesheetEntry, ContractType)
 
 export type ContextType = "personal" | "company" | "agency";
 

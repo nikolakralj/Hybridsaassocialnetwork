@@ -1,6 +1,6 @@
 # WorkGraph - Master Reference
 
-**Last Updated:** 2026-03-11
+**Last Updated:** 2026-03-12
 **Single source of truth. All other doc files have been consolidated here.**
 
 ---
@@ -223,6 +223,18 @@ In-app notification center, approval chain tracker, notification context store, 
 - [x] **User State Wiring** - Header shows real user name/initials, dropdown links to profile/settings, real sign-out
 - [x] **Onboarding saves to DB** - All 4 onboarding flows persist data via Supabase Auth metadata + KV store
 - [ ] **Public profile view** - /app/profile/:userId for viewing other users' profiles
+
+### Phase 1: Data Persistence (KV-Backed APIs)
+
+**Why:** All core pages (Projects, Contracts, Timesheets) were using mock data or trying to query non-existent Supabase tables. Need real persistence through the KV store.
+
+- [x] **Projects API** — Server-side CRUD (projects-api.tsx) + frontend client (projects-api.ts)
+- [x] **Contracts API** — Server-side CRUD (contracts-api.tsx) + frontend client (contracts-api.ts)
+- [x] **Timesheets API** — Server-side CRUD (timesheets-api.tsx) + frontend client (timesheets-api.ts)
+- [x] **Projects page wired** — ProjectsListView + ProjectCreateWizard use real auth + KV persistence
+- [x] **Contracts page wired** — ContractsPage rebuilt with real CRUD (create, edit, delete contracts)
+- [x] **Timesheets page wired** — TimesheetDataContext syncs to KV-backed API (load on auth, debounced persist, status updates)
+- [x] **Dashboard live stats** — Dashboard fetches real project/contract/timesheet counts from KV APIs (social stats remain mock until Phase 16)
 
 ### Phase 5 Remaining: Email & Digest
 

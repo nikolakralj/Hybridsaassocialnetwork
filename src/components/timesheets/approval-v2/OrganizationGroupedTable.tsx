@@ -13,10 +13,11 @@ import {
 
 // Import types from centralized location
 import type {
+  OrganizationType,
   ProjectContract,
   TimesheetPeriod,
   ApprovalStatus,
-} from '../../../types';
+} from '../../../types/timesheets';
 
 // Import the nested data structure type
 import type { OrganizationWithData } from '../../../utils/api/timesheets-approval-hooks';

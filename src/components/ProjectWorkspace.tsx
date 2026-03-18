@@ -42,9 +42,21 @@ interface ProjectWorkspaceProps {
 }
 
 export function ProjectWorkspace({ 
-  projectId = "proj-alpha",  // ✅ Updated to match seed data in COMPLETE_SETUP_WITH_GRAPH.sql
-  projectName = "Mobile App Redesign" 
+  projectId: propProjectId,
+  projectName: propProjectName,
 }: ProjectWorkspaceProps) {
+  // Read from sessionStorage if not passed as prop (set by ProjectsListView on navigate)
+  const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
+  const [projectName, setProjectName] = useState(propProjectName || sessionStorage.getItem('currentProjectName') || 'Project');
+  
+  // Load project name from API if not provided
+  useEffect(() => {
+    if (propProjectName) return;
+    const stored = sessionStorage.getItem('currentProjectName');
+    if (stored) { setProjectName(stored); return; }
+    setProjectName(projectId === 'proj-alpha' ? 'Mobile App Redesign' : `Project ${projectId.slice(0, 8)}`);
+  }, [projectId, propProjectName]);
+
   // Get hash params for deep linking (works in Figma Make iframe)
   const getHashParams = () => {
     if (typeof window === 'undefined') return new URLSearchParams();

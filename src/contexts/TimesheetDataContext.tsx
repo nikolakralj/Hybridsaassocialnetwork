@@ -1,14 +1,22 @@
 /**
  * TimesheetStore - Single source of truth for ALL timesheet data
  *
- * Replaces: inline PERSON_TIMESHEETS in NodeDetailDrawer, broken DB calls in ProjectTimesheetsView
+ * Phase 1: Now wired to KV-backed Timesheets API for persistence.
+ * - On mount, loads the authenticated user's timesheets from the API
+ * - Writes are persisted to the API with debouncing
+ * - Seed data is used for demo/non-authenticated users and as initial fallback
  *
  * Data model: weekly periods with Mon-Fri daily breakdowns.
  * Weekly status drives the workflow (draft -> submitted -> approved | rejected).
- * Both the graph drawer and the Timesheets tab read/write the same state.
  */
 
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useAuth } from './AuthContext';
+import {
+  listTimesheets,
+  saveTimesheetWeek,
+  updateTimesheetStatus,
+} from '../utils/api/timesheets-api';
 
 // ============================================================================
 // Types
@@ -72,6 +80,9 @@ export interface TimesheetStoreAPI {
 
   /** Monotonically increasing version — subscribe to re-render on changes */
   version: number;
+
+  /** Whether data is being loaded from the API */
+  isLoading: boolean;
 }
 
 // ============================================================================
@@ -93,8 +104,21 @@ function monthOf(weekStart: string): string {
   return weekStart.slice(0, 7);
 }
 
+/** Generate a weekLabel from a weekStart date like '2025-11-03' -> 'Nov 3-7' */
+function generateWeekLabel(weekStart: string): string {
+  try {
+    const start = new Date(weekStart + 'T00:00:00');
+    const end = new Date(start);
+    end.setDate(end.getDate() + 4); // Friday
+    const monthName = start.toLocaleDateString('en-US', { month: 'short' });
+    return `${monthName} ${start.getDate()}-${end.getDate()}`;
+  } catch {
+    return weekStart;
+  }
+}
+
 // ============================================================================
-// Seed Data
+// Seed Data (used for demo/non-authenticated users)
 // ============================================================================
 
 function createSeedData(): StoredWeek[] {
@@ -163,16 +187,139 @@ function createSeedData(): StoredWeek[] {
 }
 
 // ============================================================================
+// API Sync Helpers
+// ============================================================================
+
+/** Convert API week data to StoredWeek format */
+function apiWeekToStored(apiWeek: any): StoredWeek {
+  return {
+    personId: apiWeek.personId || '',
+    weekLabel: apiWeek.weekLabel || generateWeekLabel(apiWeek.weekStart),
+    weekStart: apiWeek.weekStart,
+    days: (apiWeek.days || []).map((d: any) => ({
+      day: d.day || '',
+      hours: d.hours || 0,
+      startTime: d.startTime,
+      endTime: d.endTime,
+      breakMinutes: d.breakMinutes,
+      notes: d.notes,
+      tasks: d.tasks,
+    })),
+    tasks: apiWeek.tasks || [],
+    status: apiWeek.status || 'draft',
+    submittedAt: apiWeek.submittedAt,
+    approvedBy: apiWeek.approvedBy,
+    rejectedBy: apiWeek.rejectedBy,
+    rejectionNote: apiWeek.rejectionNote,
+  };
+}
+
+// ============================================================================
 // Context
 // ============================================================================
 
 const TimesheetStoreContext = createContext<TimesheetStoreAPI | null>(null);
 
 export function TimesheetStoreProvider({ children }: { children: React.ReactNode }) {
+  const { user, accessToken } = useAuth();
   const [weeks, setWeeks] = useState<StoredWeek[]>(createSeedData);
   const [version, setVersion] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const hasLoadedRef = useRef(false);
+  const pendingSyncs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const bump = useCallback(() => setVersion(v => v + 1), []);
+
+  // --- Load from API on auth ---
+  useEffect(() => {
+    if (!user?.id || !accessToken || hasLoadedRef.current) return;
+
+    let cancelled = false;
+    const loadFromApi = async () => {
+      try {
+        setIsLoading(true);
+        console.log('[TimesheetStore] Loading timesheets from API for user:', user.id);
+        const apiWeeks = await listTimesheets(undefined, accessToken);
+
+        if (cancelled) return;
+
+        if (apiWeeks && apiWeeks.length > 0) {
+          const converted = apiWeeks.map(apiWeekToStored);
+          // Merge: API data for the authenticated user + seed data for demo users
+          setWeeks(prev => {
+            // Keep seed data for non-authenticated demo personIds
+            const demoWeeks = prev.filter(w => !w.personId.match(/^[0-9a-f-]{36}$/));
+            // Deduplicate: if API returned data for the same personId+weekStart, use API version
+            const apiKeys = new Set(converted.map(w => `${w.personId}:${w.weekStart}`));
+            const filteredDemo = demoWeeks.filter(w => !apiKeys.has(`${w.personId}:${w.weekStart}`));
+            return [...converted, ...filteredDemo];
+          });
+          console.log(`[TimesheetStore] Loaded ${converted.length} weeks from API`);
+        } else {
+          console.log('[TimesheetStore] No API timesheets found, using seed data');
+        }
+
+        hasLoadedRef.current = true;
+      } catch (err) {
+        console.error('[TimesheetStore] Failed to load from API:', err);
+        // Keep seed data as fallback
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    loadFromApi();
+    return () => { cancelled = true; };
+  }, [user?.id, accessToken]);
+
+  // --- Debounced API persist ---
+  const persistWeek = useCallback((personId: string, weekStart: string, weekData: StoredWeek) => {
+    // Only persist if this is the authenticated user's data (UUID format)
+    if (!accessToken || !personId.match(/^[0-9a-f-]{36}$/)) return;
+
+    const key = `${personId}:${weekStart}`;
+    // Cancel any pending sync for this week
+    const existing = pendingSyncs.current.get(key);
+    if (existing) clearTimeout(existing);
+
+    // Debounce: persist after 500ms of inactivity
+    const timeout = setTimeout(async () => {
+      try {
+        await saveTimesheetWeek(weekStart, {
+          days: weekData.days,
+          tasks: weekData.tasks,
+          status: weekData.status,
+          notes: undefined,
+        }, accessToken);
+        console.log(`[TimesheetStore] Persisted week ${weekStart} to API`);
+      } catch (err) {
+        console.error(`[TimesheetStore] Failed to persist week ${weekStart}:`, err);
+      }
+      pendingSyncs.current.delete(key);
+    }, 500);
+
+    pendingSyncs.current.set(key, timeout);
+  }, [accessToken]);
+
+  const persistStatus = useCallback(async (
+    personId: string,
+    weekStart: string,
+    status: WeekStatus,
+    meta?: { note?: string; by?: string }
+  ) => {
+    if (!accessToken || !personId.match(/^[0-9a-f-]{36}$/)) return;
+
+    try {
+      await updateTimesheetStatus(weekStart, status, {
+        personId,
+        approverName: meta?.by,
+        note: meta?.note,
+      }, accessToken);
+      console.log(`[TimesheetStore] Status updated: ${weekStart} -> ${status}`);
+    } catch (err) {
+      console.error(`[TimesheetStore] Failed to update status for ${weekStart}:`, err);
+    }
+  }, [accessToken]);
 
   // --- Read ---
 
@@ -188,34 +335,50 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     return [...new Set(weeks.map(w => w.personId))];
   }, [weeks]);
 
-  // --- Write ---
+  // --- Write (local state + API persist) ---
 
   const updateWeekDays = useCallback((personId: string, weekStart: string, days: StoredDay[]) => {
-    setWeeks(prev => prev.map(w =>
-      w.personId === personId && w.weekStart === weekStart
-        ? { ...w, days: days.map(d => ({ ...d })) }
-        : w
-    ));
+    setWeeks(prev => {
+      const updated = prev.map(w =>
+        w.personId === personId && w.weekStart === weekStart
+          ? { ...w, days: days.map(d => ({ ...d })) }
+          : w
+      );
+      // Find the updated week and persist
+      const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
+      if (updatedWeek) persistWeek(personId, weekStart, updatedWeek);
+      return updated;
+    });
     bump();
-  }, [bump]);
+  }, [bump, persistWeek]);
 
   const updateSingleDay = useCallback((personId: string, weekStart: string, dayIndex: number, day: StoredDay) => {
-    setWeeks(prev => prev.map(w =>
-      w.personId === personId && w.weekStart === weekStart
-        ? { ...w, days: w.days.map((d, i) => i === dayIndex ? { ...day } : d) }
-        : w
-    ));
+    setWeeks(prev => {
+      const updated = prev.map(w =>
+        w.personId === personId && w.weekStart === weekStart
+          ? { ...w, days: w.days.map((d, i) => i === dayIndex ? { ...day } : d) }
+          : w
+      );
+      const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
+      if (updatedWeek) persistWeek(personId, weekStart, updatedWeek);
+      return updated;
+    });
     bump();
-  }, [bump]);
+  }, [bump, persistWeek]);
 
   const updateWeekTasks = useCallback((personId: string, weekStart: string, tasks: string[]) => {
-    setWeeks(prev => prev.map(w =>
-      w.personId === personId && w.weekStart === weekStart
-        ? { ...w, tasks: [...tasks] }
-        : w
-    ));
+    setWeeks(prev => {
+      const updated = prev.map(w =>
+        w.personId === personId && w.weekStart === weekStart
+          ? { ...w, tasks: [...tasks] }
+          : w
+      );
+      const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
+      if (updatedWeek) persistWeek(personId, weekStart, updatedWeek);
+      return updated;
+    });
     bump();
-  }, [bump]);
+  }, [bump, persistWeek]);
 
   const setWeekStatus = useCallback((
     personId: string,
@@ -241,21 +404,32 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       }
       return updated;
     }));
+    // Persist status change to API
+    persistStatus(personId, weekStart, status, meta);
     bump();
-  }, [bump]);
+  }, [bump, persistStatus]);
 
   const batchApproveMonth = useCallback((personId: string, month: string, approverName: string): number => {
     let count = 0;
+    const weekStartsToApprove: string[] = [];
+
     setWeeks(prev => prev.map(w => {
       if (w.personId === personId && monthOf(w.weekStart) === month && w.status === 'submitted') {
         count++;
+        weekStartsToApprove.push(w.weekStart);
         return { ...w, status: 'approved' as const, approvedBy: approverName };
       }
       return w;
     }));
+
+    // Persist each approval to API
+    weekStartsToApprove.forEach(ws => {
+      persistStatus(personId, ws, 'approved', { by: approverName });
+    });
+
     bump();
     return count;
-  }, [bump]);
+  }, [bump, persistStatus]);
 
   const api = useMemo<TimesheetStoreAPI>(() => ({
     getWeeksForPerson,
@@ -267,7 +441,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     setWeekStatus,
     batchApproveMonth,
     version,
-  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, version]);
+    isLoading,
+  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, version, isLoading]);
 
   return (
     <TimesheetStoreContext.Provider value={api}>

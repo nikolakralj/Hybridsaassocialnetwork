@@ -40,7 +40,7 @@ import type {
   TimesheetPeriod,
   ApprovalStatus,
   ContractorRole,
-} from '../../../types';
+} from '../../../types/timesheets';
 
 // 🔥 CACHE BUSTER: Force rebuild at 2025-01-23T19:42:00Z 🔥
 const COMPONENT_VERSION = '2.0.1-FIXED';

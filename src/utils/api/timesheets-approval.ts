@@ -17,7 +17,7 @@ import type {
   ReviewFlag,
   AllocatedTask,
   ApprovalStatus,
-} from '../../types';
+} from '../../types/timesheets';
 import { startOfWeek, endOfWeek, format, parseISO } from 'date-fns';
 
 // ============================================================================
