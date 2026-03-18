@@ -19,6 +19,7 @@ import {
   FileText,
   Receipt,
   ShieldCheck,
+  Shield,
   FileCheck,
   CheckCircle2,
   AlertCircle,
@@ -979,6 +980,11 @@ function OrgPeopleList({
                 </div>
                 <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
                   <span>{person.data?.role?.replace(/_/g, ' ') || 'Employee'}</span>
+                  {person.data?.canApprove && (
+                    <span className="inline-flex items-center gap-0.5 px-1 rounded bg-blue-50 text-blue-600 text-[8px] font-semibold">
+                      <Shield className="h-2 w-2" /> approver
+                    </span>
+                  )}
                   {person.data?.visibleToChain === false && (
                     <span className="inline-flex items-center gap-0.5 px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-semibold">
                       <EyeOff className="h-2 w-2" /> internal

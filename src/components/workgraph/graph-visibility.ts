@@ -81,6 +81,18 @@ function computeHopDistances(
     adjacency.get(e.target)?.add(e.source);
   });
 
+  // Add virtual adjacency for person→org based on partyId (auto-generated graphs
+  // don't always create explicit employs/assigns edges)
+  nodes.forEach(n => {
+    if (n.type === 'person' && n.data?.partyId) {
+      const orgId = n.data.partyId;
+      if (adjacency.has(orgId)) {
+        adjacency.get(n.id)?.add(orgId);
+        adjacency.get(orgId)?.add(n.id);
+      }
+    }
+  });
+
   // BFS from viewer
   const startNodes = [viewerNodeId];
   // If viewer is a person in an org, also start from the org
@@ -261,12 +273,34 @@ export function computeScopedView(
       return;
     }
 
-    // ── Employee scoping ──
-    // An employee sees: themselves, their org, the chain upward (contract, client).
-    // They do NOT see coworkers or any other person nodes.
+    // ── Employee scoping for person nodes ──
+    // An employee sees:
+    //   - Themselves (always)
+    //   - Colleagues in their own org
+    //   - If approver: people from directly connected parties (if visibleToChain)
+    // They do NOT see people from unrelated orgs.
     if (viewer.orgId && node.type === 'person' && node.id !== viewer.nodeId) {
-      hiddenNodeCount++;
-      return;
+      const personOrg = nodeToOrg.get(node.id);
+      const isSameOrg = personOrg === viewer.orgId;
+      if (isSameOrg) {
+        // Colleague in same org — always visible
+      } else {
+        // Person from another org — only visible if:
+        // 1. Viewer is an approver
+        // 2. The other org is directly connected to viewer's org
+        // 3. The person is visibleToChain
+        const viewerNode = allNodes.find(n => n.id === viewer.nodeId);
+        const isApprover = viewerNode?.data?.canApprove === true;
+        const isConnectedOrg = personOrg && allEdges.some(e =>
+          ((e.source === viewer.orgId && e.target === personOrg) ||
+           (e.target === viewer.orgId && e.source === personOrg)) &&
+          isStructuralEdge(e.data?.edgeType)
+        );
+        if (!isApprover || !isConnectedOrg || node.data?.visibleToChain === false) {
+          hiddenNodeCount++;
+          return;
+        }
+      }
     }
 
     // ── Employee scoping: org/party nodes ──
