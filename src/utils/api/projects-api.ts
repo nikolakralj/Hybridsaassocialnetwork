@@ -4,12 +4,168 @@
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
+const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
 
 function getHeaders(accessToken?: string | null): HeadersInit {
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${accessToken || publicAnonKey}`,
   };
+}
+
+type LocalProjectMember = {
+  id: string;
+  projectId: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  role: string;
+  invitedBy: string;
+  invitedAt: string;
+  acceptedAt?: string | null;
+};
+
+type LocalProjectRecord = {
+  project: Record<string, any>;
+  members: LocalProjectMember[];
+};
+
+function generateId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function canUseLocalFallback(status?: number, accessToken?: string | null): boolean {
+  if (!accessToken) return true;
+  return status === 401 || status === 403;
+}
+
+function readLocalProjects(): LocalProjectRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_PROJECTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalProjects(records: LocalProjectRecord[]) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(records));
+}
+
+function localListProjects() {
+  return readLocalProjects()
+    .map((record) => record.project)
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+}
+
+function localGetProject(projectId: string) {
+  const record = readLocalProjects().find((r) => r.project?.id === projectId);
+  if (!record) throw new Error('Project not found');
+  return { project: record.project, members: record.members || [] };
+}
+
+function localCreateProject(project: {
+  name: string;
+  description?: string;
+  region?: string;
+  currency?: string;
+  startDate?: string;
+  endDate?: string;
+  workWeek?: Record<string, boolean>;
+  status?: 'active' | 'draft';
+  supplyChainStatus?: 'complete' | 'incomplete';
+  ownerName?: string;
+  ownerEmail?: string;
+  members?: Array<{ userName?: string; userEmail?: string; role?: string }>;
+}) {
+  const now = new Date().toISOString();
+  const projectId = generateId('proj_local');
+  const ownerId = 'local-user';
+
+  const createdProject = {
+    id: projectId,
+    name: project.name || 'Untitled Project',
+    description: project.description || '',
+    region: project.region || 'US',
+    currency: project.currency || 'USD',
+    startDate: project.startDate || now,
+    endDate: project.endDate || null,
+    workWeek: project.workWeek || {
+      monday: true,
+      tuesday: true,
+      wednesday: true,
+      thursday: true,
+      friday: true,
+      saturday: false,
+      sunday: false,
+    },
+    status: project.status === 'draft' ? 'draft' : 'active',
+    supplyChainStatus: project.supplyChainStatus === 'incomplete' ? 'incomplete' : 'complete',
+    ownerId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const members: LocalProjectMember[] = [
+    {
+      id: generateId('mem_local'),
+      projectId,
+      userId: ownerId,
+      userName: project.ownerName || 'Local Owner',
+      userEmail: project.ownerEmail || 'local@example.com',
+      role: 'Owner',
+      invitedBy: ownerId,
+      invitedAt: now,
+      acceptedAt: now,
+    },
+    ...((project.members || []).map((m) => ({
+      id: generateId('mem_local'),
+      projectId,
+      userId: generateId('user_local'),
+      userName: m.userName || m.userEmail || 'Member',
+      userEmail: m.userEmail || '',
+      role: m.role || 'Viewer',
+      invitedBy: ownerId,
+      invitedAt: now,
+      acceptedAt: null,
+    }))),
+  ];
+
+  const records = readLocalProjects();
+  records.push({ project: createdProject, members });
+  writeLocalProjects(records);
+  return { project: createdProject, members };
+}
+
+function localUpdateProject(projectId: string, updates: Record<string, any>) {
+  const records = readLocalProjects();
+  const idx = records.findIndex((r) => r.project?.id === projectId);
+  if (idx < 0) throw new Error('Project not found');
+  const existing = records[idx];
+  const updatedProject = {
+    ...existing.project,
+    ...updates,
+    id: projectId,
+    updatedAt: new Date().toISOString(),
+  };
+  records[idx] = { ...existing, project: updatedProject };
+  writeLocalProjects(records);
+  return updatedProject;
+}
+
+function localDeleteProject(projectId: string) {
+  const records = readLocalProjects().filter((r) => r.project?.id !== projectId);
+  writeLocalProjects(records);
+}
+
+function localGetProjectMembers(projectId: string) {
+  const record = readLocalProjects().find((r) => r.project?.id === projectId);
+  if (!record) throw new Error('Project not found');
+  return record.members || [];
 }
 
 // Re-export types for convenience
@@ -36,24 +192,46 @@ export interface StoredProjectInvitation {
 // ---------- Projects ----------
 
 export async function listProjects(accessToken?: string | null) {
-  const res = await fetch(`${BASE}/projects`, {
-    headers: getHeaders(accessToken),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    console.error('listProjects error:', data);
-    throw new Error(data.error || 'Failed to list projects');
+  try {
+    const res = await fetch(`${BASE}/projects`, {
+      headers: getHeaders(accessToken),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        return localListProjects();
+      }
+      console.error('listProjects error:', data);
+      throw new Error(data.error || 'Failed to list projects');
+    }
+    return data.projects || [];
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      return localListProjects();
+    }
+    throw error;
   }
-  return data.projects || [];
 }
 
 export async function getProject(projectId: string, accessToken?: string | null) {
-  const res = await fetch(`${BASE}/projects/${projectId}`, {
-    headers: getHeaders(accessToken),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to get project');
-  return data;
+  try {
+    const res = await fetch(`${BASE}/projects/${projectId}`, {
+      headers: getHeaders(accessToken),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        return localGetProject(projectId);
+      }
+      throw new Error(data.error || 'Failed to get project');
+    }
+    return data;
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      return localGetProject(projectId);
+    }
+    throw error;
+  }
 }
 
 export async function createProject(
@@ -73,14 +251,26 @@ export async function createProject(
   },
   accessToken?: string | null
 ) {
-  const res = await fetch(`${BASE}/projects`, {
-    method: 'POST',
-    headers: getHeaders(accessToken),
-    body: JSON.stringify(project),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to create project');
-  return data;
+  try {
+    const res = await fetch(`${BASE}/projects`, {
+      method: 'POST',
+      headers: getHeaders(accessToken),
+      body: JSON.stringify(project),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        return localCreateProject(project);
+      }
+      throw new Error(data.error || 'Failed to create project');
+    }
+    return data;
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      return localCreateProject(project);
+    }
+    throw error;
+  }
 }
 
 export async function updateProject(
@@ -88,35 +278,73 @@ export async function updateProject(
   updates: Record<string, any>,
   accessToken?: string | null
 ) {
-  const res = await fetch(`${BASE}/projects/${projectId}`, {
-    method: 'PUT',
-    headers: getHeaders(accessToken),
-    body: JSON.stringify(updates),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to update project');
-  return data.project;
+  try {
+    const res = await fetch(`${BASE}/projects/${projectId}`, {
+      method: 'PUT',
+      headers: getHeaders(accessToken),
+      body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        return localUpdateProject(projectId, updates);
+      }
+      throw new Error(data.error || 'Failed to update project');
+    }
+    return data.project;
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      return localUpdateProject(projectId, updates);
+    }
+    throw error;
+  }
 }
 
 export async function deleteProject(projectId: string, accessToken?: string | null) {
-  const res = await fetch(`${BASE}/projects/${projectId}`, {
-    method: 'DELETE',
-    headers: getHeaders(accessToken),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to delete project');
-  return true;
+  try {
+    const res = await fetch(`${BASE}/projects/${projectId}`, {
+      method: 'DELETE',
+      headers: getHeaders(accessToken),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        localDeleteProject(projectId);
+        return true;
+      }
+      throw new Error(data.error || 'Failed to delete project');
+    }
+    return true;
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      localDeleteProject(projectId);
+      return true;
+    }
+    throw error;
+  }
 }
 
 // ---------- Members ----------
 
 export async function getProjectMembers(projectId: string, accessToken?: string | null) {
-  const res = await fetch(`${BASE}/projects/${projectId}/members`, {
-    headers: getHeaders(accessToken),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to get members');
-  return data.members || [];
+  try {
+    const res = await fetch(`${BASE}/projects/${projectId}/members`, {
+      headers: getHeaders(accessToken),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (canUseLocalFallback(res.status, accessToken)) {
+        return localGetProjectMembers(projectId);
+      }
+      throw new Error(data.error || 'Failed to get members');
+    }
+    return data.members || [];
+  } catch (error) {
+    if (canUseLocalFallback(undefined, accessToken)) {
+      return localGetProjectMembers(projectId);
+    }
+    throw error;
+  }
 }
 
 export async function addProjectMember(
