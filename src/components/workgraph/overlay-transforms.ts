@@ -3,9 +3,12 @@
  * Applies visual transformations to nodes and edges based on active overlay mode
  */
 
-import type { Node, Edge } from 'reactflow@11.10.0';
 import type { OverlayMode } from './OverlayController';
 import type { BaseNode, BaseEdge, EdgeType } from '../../types/workgraph';
+
+// Local type aliases (we use our own SVG layout engine, not reactflow)
+type Node = any;
+type Edge = any;
 
 export interface NodeTransform {
   opacity?: number;

@@ -1,5 +1,7 @@
 import React, { memo } from 'react';
-import { Handle, Position } from 'reactflow@11.10.0';
+// Legacy node component (not used by active SVG engine). Stub reactflow deps.
+const Handle = ({ type, position, className }: any) => <div className={className} />;
+const Position = { Top: 'top', Bottom: 'bottom', Left: 'left', Right: 'right' } as const;
 import { User } from 'lucide-react';
 
 export const PersonNode = memo(({ data }: any) => {

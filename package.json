@@ -50,7 +50,6 @@
     "react-hook-form": "^7.55.0",
     "react-resizable-panels": "^2.1.7",
     "react-router": "*",
-    "reactflow": "^11.10.0",
     "recharts": "^2.15.2",
     "resend": "*",
     "sonner": "^2.0.3",

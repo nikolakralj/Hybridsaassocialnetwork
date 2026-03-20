@@ -1,6 +1,6 @@
 # WorkGraph: Complete Architecture & Codebase Documentation
 
-**For new engineers joining the project. Last updated: March 19, 2026.**
+**For new engineers joining the project. Last updated: March 20, 2026.**
 
 ---
 
@@ -99,9 +99,11 @@ permission model**. Your position in the supply chain determines what you see an
    custom Postgres tables. This is a constraint of the Figma Make environment where DDL
    statements cannot be executed. The KV schema uses prefixed keys for different entity types.
 
-2. **Pure SVG rendering**: The graph canvas uses a custom SVG-based layout engine instead
-   of React Flow or similar libraries. This gives full control over rendering and avoids
-   library-specific abstractions.
+2. **Pure SVG rendering (reactflow fully removed)**: The graph canvas uses a custom
+   SVG-based layout engine instead of React Flow or similar libraries. This gives full
+   control over rendering and avoids library-specific abstractions. See
+   [Section 13.7: Rendering Engine History & reactflow Removal](#137-rendering-engine-history--reactflow-removal)
+   for the full migration story.
 
 3. **Connection-based DAG**: Supply chains are modeled as DAGs where each party explicitly
    declares `billsTo: string[]` — who they bill/report to. This supports any topology
@@ -125,6 +127,7 @@ permission model**. Your position in the supply chain determines what you see an
 | Sonner | 2.0.3 | Toast notifications |
 | date-fns | Latest | Date formatting |
 | Motion | Latest | Animations (import from 'motion/react') |
+| ~~reactflow~~ | ~~11.10.0~~ | **REMOVED** — was never used at runtime; legacy imports caused module resolution failures. All 6 files migrated to local stubs. See Section 13.7. |
 
 ### Backend
 | Technology | Version | Purpose |
@@ -156,10 +159,13 @@ permission model**. Your position in the supply chain determines what you see an
 │   │   ├── graph-data-flows.ts    # Monthly snapshot data
 │   │   ├── NodeDetailDrawer.tsx   # Side drawer for node inspection
 │   │   ├── ProjectCreateWizard.tsx # 4-step project creation wizard
-│   │   ├── nodes/                 # Custom node renderers (PartyNode, PersonNode, etc.)
+│   │   ├── nodes/                 # LEGACY node renderers (PartyNode, PersonNode, ContractNode)
+│   │   │                         # NOT used by active SVG engine — WorkGraphBuilder renders
+│   │   │                         # its own OrgNodeCard, PersonNodeCard, ContractNodeCard inline.
+│   │   │                         # reactflow imports replaced with local stubs (March 2026).
 │   │   ├── templates.ts          # Default graph templates
-│   │   ├── overlay-transforms.ts # Visual overlay engine
-│   │   ├── CustomEdge.tsx        # Edge rendering component
+│   │   ├── overlay-transforms.ts # Visual overlay engine (reactflow types replaced with local aliases)
+│   │   ├── CustomEdge.tsx        # LEGACY edge component (reactflow getBezierPath replaced with local impl)
 │   │   ├── CompanySearchDialog.tsx # Company search modal
 │   │   ├── CompileModal.tsx      # Policy compilation modal
 │   │   ├── PolicySimulator.tsx   # What-if policy simulator
@@ -1209,6 +1215,100 @@ background: radial-gradient(circle at 1px 1px, var(--border) 0.5px, transparent 
 background-size: ${24 * zoom}px ${24 * zoom}px;
 ```
 
+### 13.7 Rendering Engine History & reactflow Removal
+
+#### Background: Two Rendering Systems
+
+WorkGraph originally prototyped its graph canvas using **reactflow v11.10.0**, a popular
+React library for node-based UIs. This is why files exist in `/components/workgraph/nodes/`
+(`PartyNode.tsx`, `PersonNode.tsx`, `ContractNode.tsx`) and `CustomEdge.tsx` — these were
+reactflow custom node/edge components using reactflow's `Handle`, `Position`, `EdgeProps`,
+and `getBezierPath` APIs.
+
+During Phase 2, the rendering was **completely rewritten** as a pure SVG + HTML layout engine
+inside `WorkGraphBuilder.tsx`. This custom engine provides:
+
+- **Full layout control**: Sugiyama-style hierarchical positioning (Section 13.2-13.4)
+- **Inline node cards**: `OrgNodeCard`, `PersonNodeCard`, `ContractNodeCard` rendered as
+  absolutely-positioned HTML `<div>` elements over an SVG canvas
+- **Custom edge rendering**: SVG cubic bezier paths with arrowhead markers, hover glow effects,
+  and flow badges — all rendered directly in the SVG layer
+- **Pan/zoom**: Native mouse event handling (no library overhead)
+
+However, **the old reactflow imports were never cleaned up** from 6 files. The reactflow
+library was not used at runtime, but the `import` statements still existed, causing the
+module bundler to attempt loading `reactflow@11.10.0`.
+
+#### The Module Resolution Failure (March 20, 2026)
+
+The Figma Make deployment environment uses dynamic module imports via HTTPS. The reactflow
+package resolution failed with:
+
+```
+TypeError: Failed to fetch dynamically imported module:
+https://app-*.makeproxy-c.figma.site/@react-refresh
+```
+
+This was a **cascading failure**: reactflow's internal dependency on `@react-refresh` could
+not be resolved in the Figma Make CDN environment. Since the imports existed in 6 files
+that were transitively loaded by the active application (e.g., `useGraphPersistence.ts` is
+imported by `WorkGraphBuilder.tsx`), the entire app failed to load.
+
+#### The Fix: Complete reactflow Removal
+
+All 6 files with `import ... from 'reactflow@11.10.0'` were migrated to use local
+type aliases or inline stubs. No runtime behavior changed because reactflow was never
+called at runtime.
+
+**Files affected and what was done:**
+
+| File | What was imported | Replacement |
+|------|------------------|-------------|
+| `/components/hooks/useGraphPersistence.ts` | `Node`, `Edge` types | `type Node = any; type Edge = any;` — these types were only used for generic graph serialization (saving/loading JSON to KV). The actual shapes are `BaseNode`/`BaseEdge` from `/types/workgraph.ts`. |
+| `/components/workgraph/overlay-transforms.ts` | `Node`, `Edge` types | Same `any` aliases. The overlay engine operates on generic node/edge objects with `.data`, `.style`, `.type` properties — no reactflow-specific APIs are called. |
+| `/components/workgraph/nodes/PartyNode.tsx` | `Handle`, `Position` | `Handle` stubbed as a no-op `<div>`. `Position` stubbed as a const object `{ Top, Bottom, Left, Right }`. **This component is not rendered by the active engine** — `WorkGraphBuilder.tsx` renders `OrgNodeCard` instead. |
+| `/components/workgraph/nodes/PersonNode.tsx` | `Handle`, `Position` | Same stubs as PartyNode. **Not rendered by active engine** — `PersonNodeCard` is used instead. |
+| `/components/workgraph/nodes/ContractNode.tsx` | `Handle`, `Position` | Same stubs. **Not rendered** — `ContractNodeCard` is used instead. |
+| `/components/workgraph/CustomEdge.tsx` | `EdgeProps`, `getBezierPath` | `EdgeProps` aliased to `any`. `getBezierPath` replaced with a local cubic bezier implementation: `M sx sy C mx sy, mx ty, tx ty`. **Not rendered** — `WorkGraphBuilder` renders SVG `<path>` elements directly. |
+
+#### Active vs Legacy Rendering Components
+
+| Concern | Active (used now) | Legacy (stubs, not rendered) |
+|---------|-------------------|------------------------------|
+| Org/party nodes | `OrgNodeCard` in WorkGraphBuilder.tsx (inline) | `PartyNode.tsx` in nodes/ |
+| Person nodes | `PersonNodeCard` in WorkGraphBuilder.tsx (inline) | `PersonNode.tsx` in nodes/ |
+| Contract nodes | `ContractNodeCard` in WorkGraphBuilder.tsx (inline) | `ContractNode.tsx` in nodes/ |
+| Edges | SVG `<path>` elements in `GraphCanvas` (inline) | `CustomEdge.tsx` |
+| Layout | `computeLayout()` in WorkGraphBuilder.tsx | N/A (reactflow had its own) |
+| Pan/zoom | Mouse events in `GraphCanvas` component | N/A (reactflow had its own) |
+| Graph persistence | `useGraphPersistence.ts` (uses generic `any` types for serialization) | Was using reactflow `Node`/`Edge` types |
+| Overlay transforms | `overlay-transforms.ts` (uses generic `any` types) | Was using reactflow `Node`/`Edge` types |
+
+#### Why the Legacy Files Still Exist
+
+The legacy node/edge components in `nodes/` and `CustomEdge.tsx` are kept for reference
+because they contain useful logic (edge type styling, badge rendering, permission display)
+that may be backported into the active inline components. They are importable without
+errors now (stubs prevent any reactflow resolution), but **nothing in the active render
+tree imports or renders them**.
+
+The `overlay-transforms.ts` and `useGraphPersistence.ts` files ARE actively used — they
+just never needed reactflow's specific type constraints. The `any` aliases are functionally
+correct because:
+- `useGraphPersistence` serializes/deserializes graph data as opaque JSON to/from the KV store
+- `overlay-transforms` reads `.data`, `.style`, `.type` properties that exist on our
+  `BaseNode`/`BaseEdge` types regardless of whether they extend reactflow's types
+
+#### Future Cleanup
+
+To fully retire the legacy files:
+1. Extract any remaining useful styling/logic from `nodes/*.tsx` and `CustomEdge.tsx`
+   into the active `WorkGraphBuilder.tsx` inline components
+2. Delete `nodes/PartyNode.tsx`, `nodes/PersonNode.tsx`, `nodes/ContractNode.tsx`, `CustomEdge.tsx`
+3. Replace `any` aliases in `useGraphPersistence.ts` with `BaseNode`/`BaseEdge` from
+   `/types/workgraph.ts`
+4. Replace `any` aliases in `overlay-transforms.ts` with `BaseNode`/`BaseEdge`
+
 ---
 
 ## 14. NODE DETAIL DRAWER
@@ -1740,8 +1840,11 @@ Uses Tailwind CSS v4 with CSS custom properties:
 
 3. The template system (`templates.ts`) duplicates data that should come from the API.
 
-4. React Flow imports in some files (`useGraphPersistence.ts`, `overlay-transforms.ts`)
-   even though we no longer use React Flow for the canvas.
+4. ~~React Flow imports in some files (`useGraphPersistence.ts`, `overlay-transforms.ts`)
+   even though we no longer use React Flow for the canvas.~~
+   **RESOLVED (March 20, 2026)**: All 6 reactflow imports replaced with local stubs/aliases.
+   See Section 13.7 for full details. Remaining cleanup: replace `any` aliases with
+   `BaseNode`/`BaseEdge` types, and delete unused legacy node/edge files.
 
 5. Multiple approval view implementations (v1 and v2) that should be consolidated.
 
@@ -1850,7 +1953,11 @@ Uses Tailwind CSS v4 with CSS custom properties:
 | NodeDetailDrawer.tsx | ~1400 | Node inspection drawer |
 | ProjectCreateWizard.tsx | ~1200 | 4-step project creation |
 | templates.ts | ~400 | Default graph templates |
-| overlay-transforms.ts | ~200 | Visual overlay engine |
+| overlay-transforms.ts | ~200 | Visual overlay engine (reactflow types removed) |
+| nodes/PartyNode.tsx | ~120 | LEGACY: Not rendered. reactflow stubs. |
+| nodes/PersonNode.tsx | ~37 | LEGACY: Not rendered. reactflow stubs. |
+| nodes/ContractNode.tsx | ~52 | LEGACY: Not rendered. reactflow stubs. |
+| CustomEdge.tsx | ~140 | LEGACY: Not rendered. reactflow stubs. |
 | CompanySearchDialog.tsx | ~150 | Company search modal |
 | CompileModal.tsx | ~200 | Policy compilation |
 | PolicySimulator.tsx | ~300 | What-if simulator |
@@ -1926,6 +2033,16 @@ Edit `/components/workgraph/ProjectCreateWizard.tsx`:
 2. Check browser console for error responses
 3. Verify `Authorization` header has valid token
 4. Check KV key format matches between read and write
+
+### Module Resolution / Build Failures
+1. If you see `Failed to fetch dynamically imported module` errors, check for **unused
+   library imports**. The Figma Make environment resolves all imports via HTTPS CDN —
+   even unused imports trigger network fetches that can fail.
+2. Search codebase: `grep -r "from '.*@" --include="*.ts" --include="*.tsx"` to find
+   all versioned package imports. Verify each is actually needed at runtime.
+3. The reactflow removal (Section 13.7) is the canonical example of this failure mode.
+4. Common fix: replace library type imports with `type Foo = any` if only used for
+   type annotations, not runtime behavior.
 
 ### Layout Issues
 1. Check `assignLayer()` - is the node in the right layer?

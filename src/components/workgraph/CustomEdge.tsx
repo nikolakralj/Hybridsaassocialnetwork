@@ -1,5 +1,12 @@
 import React from 'react';
-import { EdgeProps, getBezierPath } from 'reactflow@11.10.0';
+// Legacy edge component (not used by active SVG engine). Stub reactflow deps.
+type EdgeProps = any;
+function getBezierPath(params: any): [string, number, number] {
+  const { sourceX, sourceY, targetX, targetY } = params;
+  const mx = (sourceX + targetX) / 2;
+  const my = (sourceY + targetY) / 2;
+  return [`M ${sourceX} ${sourceY} C ${mx} ${sourceY}, ${mx} ${targetY}, ${targetX} ${targetY}`, mx, my];
+}
 import { Badge } from '../ui/badge';
 
 export function CustomEdge({
