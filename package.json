@@ -66,6 +66,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "edge:serve": "npx supabase functions serve --workdir . --env-file .env --no-verify-jwt",
+    "edge:deploy": "npx supabase functions deploy server --workdir .",
+    "edge:list": "npx supabase functions list --workdir ."
   }
 }

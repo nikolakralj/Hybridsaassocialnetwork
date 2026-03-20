@@ -15,5 +15,15 @@ This repo contains the WorkGraph frontend and Supabase Edge Function backend.
 2. Copy the env template to `.env` and set values if needed.
 3. Start frontend dev server:
    - `npm run dev`
+4. Serve Edge Functions locally (optional, in a second terminal):
+   - `npm run edge:serve`
+
+## Edge Function commands
+
+- `npm run edge:serve`: serve local functions from `supabase/functions/*`
+- `npm run edge:list`: list functions in your linked Supabase project
+- `npm run edge:deploy`: deploy the `server` function
+- Use a specific project ref when deploying:
+  - `npm run edge:deploy -- --project-ref <your-project-ref>`
 
 The frontend reads `VITE_SUPABASE_PROJECT_ID` and `VITE_SUPABASE_ANON_KEY` from env, with fallback defaults in `src/utils/supabase/info.tsx`.
