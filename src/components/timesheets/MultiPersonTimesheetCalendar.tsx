@@ -4,7 +4,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import { useMultiDaySelection } from "./hooks/useMultiDaySelection";
 import { MultiPersonCalendarCell, type DayData, type PersonEntry } from "./drag-drop/MultiPersonCalendarCell";
 import { MultiPersonDayModal, type PersonEntry as ModalPersonEntry } from "./modal/MultiPersonDayModal";

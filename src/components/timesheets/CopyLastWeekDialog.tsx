@@ -11,7 +11,7 @@ import {
 } from "../ui/dialog";
 import { Checkbox } from "../ui/checkbox";
 import { Badge } from "../ui/badge";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface CopyLastWeekDialogProps {
   open: boolean;

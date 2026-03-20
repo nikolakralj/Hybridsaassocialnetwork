@@ -1,4 +1,4 @@
-import type { Hono } from "npm:hono@4";
+import type { Hono } from "npm:hono";
 import * as kv from "./kv_store.tsx";
 import { sendEmail } from "./email.tsx";
 import { createClient } from "jsr:@supabase/supabase-js@2";

@@ -12,7 +12,7 @@ import { Badge } from "../../ui/badge";
 import { ScrollArea } from "../../ui/scroll-area";
 import { cn } from "../../ui/utils";
 import { MultiTaskEditor } from "../forms/MultiTaskEditor";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import type { TimesheetEntry, EntryDetail } from "../../../types";
 
 interface SinglePersonDayModalProps {

@@ -1,5 +1,5 @@
 // Phase 5 Days 9-10: Approval Execution & Email Triggers
-import type { Hono } from "npm:hono@4";
+import type { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendEmail } from "./email.tsx";
 

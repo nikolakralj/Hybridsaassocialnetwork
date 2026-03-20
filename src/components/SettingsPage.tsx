@@ -12,7 +12,7 @@ import {
   Bell, User, Shield, Palette, LogOut,
   Loader2, Check, Eye, EyeOff,
 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 type SettingsTab = 'account' | 'notifications' | 'privacy' | 'appearance';
 

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { CheckCircle, XCircle, Filter, Loader2, Database, RotateCcw } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { migrateTimesheetEntries } from '../../../utils/api/migrate-timesheets';
 import { resetTimesheetToDraft } from '../../../utils/api/reset-timesheet';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';

@@ -28,7 +28,7 @@ import {
   deleteContract,
   updateContract,
 } from '../../utils/api/contracts-api';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 interface ContractFormData {
   providerName: string;

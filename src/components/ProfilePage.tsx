@@ -12,7 +12,7 @@ import {
   User, MapPin, Globe, Briefcase, Pencil, Check, X,
   Mail, Calendar, Loader2, Plus,
 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
 export function ProfilePage() {

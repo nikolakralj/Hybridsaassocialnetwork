@@ -12,7 +12,7 @@ import { SinglePersonDayModal } from "./SinglePersonDayModal";
 import { ApplyToOthersDialog } from "../ApplyToOthersDialog";
 import { MultiTaskEditor } from "../forms/MultiTaskEditor";
 import { cn } from "../../ui/utils";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 import type { Person } from "../../../types/people";
 import type { TimesheetEntry } from "../../../utils/api/timesheets";
 

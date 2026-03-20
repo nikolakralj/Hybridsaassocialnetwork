@@ -35,7 +35,7 @@ import type { PartyType } from '../../types/workgraph';
 import { CompanySearchDialog } from './CompanySearchDialog';
 import { createProject, updateProject } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import {
   generateGraphFromWizard, validatePartyChain, computeDepths,
   type PartyEntry, type PersonEntry,

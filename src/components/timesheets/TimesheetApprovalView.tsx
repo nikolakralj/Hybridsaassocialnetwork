@@ -24,7 +24,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../ui/collapsible";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface PendingTimesheet {
   id: string;

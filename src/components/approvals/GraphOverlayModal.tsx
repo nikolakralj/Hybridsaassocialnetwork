@@ -18,7 +18,7 @@ import {
   Eye,
   Maximize2,
 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 // import { WorkGraphBuilder } from '../workgraph/WorkGraphBuilder';
 import type { UIApprovalItem } from './ApprovalsWorkbench';
 import { approveItem, rejectItem } from '../../utils/api/approvals-supabase';

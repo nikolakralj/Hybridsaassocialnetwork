@@ -9,7 +9,7 @@ import { Badge } from "../ui/badge";
 import { Avatar } from "../ui/avatar";
 import { Input } from "../ui/input";
 import { TeamTimesheetCreator } from "./TeamTimesheetCreator";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface PersonChip {
   id: string;

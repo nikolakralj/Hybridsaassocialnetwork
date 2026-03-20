@@ -8,7 +8,7 @@ import type { TimesheetEntry, EntryDetail } from "../../../types";
 import type { Person } from "../../../types/people";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface ContractorData {
   id: string;

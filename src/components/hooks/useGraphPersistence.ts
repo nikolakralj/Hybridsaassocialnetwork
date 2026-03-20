@@ -16,7 +16,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 // Use generic types instead of reactflow (we use our own SVG layout engine)
 type Node = any;
 type Edge = any;
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 
 const SUPABASE_URL = `https://${projectId}.supabase.co`;

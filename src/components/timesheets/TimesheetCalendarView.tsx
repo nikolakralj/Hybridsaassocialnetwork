@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Copy, Plus, List, 
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, isSameDay, isSaturday, isSunday, isWithinInterval, addMonths, subMonths } from 'date-fns';
 import { TimesheetEntryDialog } from './TimesheetEntryDialog';
 import { ApplyToOthersDialog } from './ApplyToOthersDialog';

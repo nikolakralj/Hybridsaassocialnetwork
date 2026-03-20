@@ -27,7 +27,7 @@ import {
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { useTimesheetStore, sumWeekHours } from '../../contexts/TimesheetDataContext';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask } from '../../contexts/TimesheetDataContext';
 import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';

@@ -1,5 +1,5 @@
 // Phase 5 Day 8: Real Email Sending with Resend API
-import type { Hono } from "npm:hono@4";
+import type { Hono } from "npm:hono";
 import * as kv from "./kv_store.tsx"; // ✅ Store tokens in KV
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");

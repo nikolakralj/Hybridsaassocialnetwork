@@ -13,9 +13,11 @@ import {
 } from '../ui/dropdown-menu';
 import { ProjectConfigurationDrawer } from './ProjectConfigurationDrawer';
 import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
+import { ProjectInviteMemberDialog } from './ProjectInviteMemberDialog';
 import { ProjectInvitationsPanel } from './ProjectInvitationsPanel';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  addProjectMember,
   acceptProjectInvitation,
   declineProjectInvitation,
   listProjectInvitations,
@@ -24,7 +26,8 @@ import {
   getProjectMembers,
   type StoredProjectInvitation,
 } from '../../utils/api/projects-api';
-import { toast } from 'sonner@2.0.3';
+import type { ProjectRole } from '../../types/collaboration';
+import { toast } from 'sonner';
 
 interface ProjectConfiguration {
   id: string;
@@ -44,6 +47,7 @@ export function ProjectsListView() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
+  const [inviteProject, setInviteProject] = useState<any | null>(null);
   
   const [projects, setProjects] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<StoredProjectInvitation[]>([]);
@@ -152,6 +156,15 @@ export function ProjectsListView() {
     } catch (error: any) {
       toast.error(error.message || 'Failed to decline invitation');
     }
+  };
+
+  const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
+    if (!inviteProject?.id) return;
+    await addProjectMember(inviteProject.id, payload, accessToken);
+    toast.success('Invitation sent', {
+      description: `${payload.userEmail} has been invited to ${inviteProject.name}.`,
+    });
+    await loadProjects();
   };
 
   const filteredProjects = projects.filter(project =>
@@ -268,6 +281,15 @@ export function ProjectsListView() {
                       <Eye className="mr-2 h-4 w-4" />
                       Open in Builder
                     </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInviteProject(project);
+                      }}
+                    >
+                      <Users className="mr-2 h-4 w-4" />
+                      Invite Member
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }}
@@ -355,6 +377,15 @@ export function ProjectsListView() {
         open={isWizardOpen}
         onClose={() => setIsWizardOpen(false)}
         onSuccess={handleProjectCreated}
+      />
+
+      <ProjectInviteMemberDialog
+        open={!!inviteProject}
+        projectName={inviteProject?.name}
+        onOpenChange={(open) => {
+          if (!open) setInviteProject(null);
+        }}
+        onInvite={handleInviteMember}
       />
     </div>
   );

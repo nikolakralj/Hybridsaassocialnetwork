@@ -29,7 +29,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Separator } from '../ui/separator';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { TEMPLATES } from './templates';
 import { useGraphPersistence } from '../hooks/useGraphPersistence';
 import {

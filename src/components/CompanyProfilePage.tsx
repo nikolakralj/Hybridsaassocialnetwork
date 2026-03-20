@@ -3,7 +3,7 @@ import { CompanyPrivateWorkspace } from './CompanyPrivateWorkspace';
 import { CompanyPublicProfile } from './CompanyPublicProfile';
 import { Button } from './ui/button';
 import { Eye, Lock } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 export function CompanyProfilePage() {
   const [view, setView] = useState<"private" | "public">("private");
