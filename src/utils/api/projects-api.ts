@@ -13,7 +13,25 @@ function getHeaders(accessToken?: string | null): HeadersInit {
 }
 
 // Re-export types for convenience
-export type { Project, ProjectMember, ProjectRole } from '../../types/collaboration';
+export type { Project, ProjectInvitation, ProjectMember, ProjectRole } from '../../types/collaboration';
+
+export interface StoredProjectInvitation {
+  id: string;
+  projectId: string;
+  projectName?: string;
+  email: string;
+  role: string;
+  scope?: string;
+  invitedBy: string;
+  invitedByName?: string;
+  invitedAt: string;
+  expiresAt?: string;
+  acceptedAt?: string;
+  token?: string;
+  status: 'pending' | 'accepted' | 'declined';
+  declinedAt?: string;
+  acceptedByUserId?: string;
+}
 
 // ---------- Projects ----------
 
@@ -47,6 +65,8 @@ export async function createProject(
     startDate?: string;
     endDate?: string;
     workWeek?: Record<string, boolean>;
+    status?: 'active' | 'draft';
+    supplyChainStatus?: 'complete' | 'incomplete';
     ownerName?: string;
     ownerEmail?: string;
     members?: Array<{ userName?: string; userEmail?: string; role?: string }>;
@@ -126,4 +146,41 @@ export async function removeProjectMember(
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to remove member');
   return true;
+}
+
+// ---------- Invitations ----------
+
+export async function listProjectInvitations(accessToken?: string | null): Promise<StoredProjectInvitation[]> {
+  const res = await fetch(`${BASE}/invitations`, {
+    headers: getHeaders(accessToken),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load invitations');
+  return data.invitations || [];
+}
+
+export async function acceptProjectInvitation(
+  invitationId: string,
+  accessToken?: string | null
+) {
+  const res = await fetch(`${BASE}/invitations/${invitationId}/accept`, {
+    method: 'POST',
+    headers: getHeaders(accessToken),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to accept invitation');
+  return data;
+}
+
+export async function declineProjectInvitation(
+  invitationId: string,
+  accessToken?: string | null
+) {
+  const res = await fetch(`${BASE}/invitations/${invitationId}/decline`, {
+    method: 'POST',
+    headers: getHeaders(accessToken),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to decline invitation');
+  return data;
 }

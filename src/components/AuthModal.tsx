@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
@@ -21,6 +21,12 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setMode(defaultMode);
+    }
+  }, [defaultMode, open]);
 
   const resetForm = () => {
     setEmail('');

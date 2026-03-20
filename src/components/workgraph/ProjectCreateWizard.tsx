@@ -156,6 +156,10 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
 
   const generatedGraph = useMemo(() => generateGraphFromWizard(parties, name), [parties, name]);
   const validationErrors = useMemo(() => validatePartyChain(parties), [parties]);
+  const isDraftProject = useMemo(
+    () => parties.length < 2 || !parties.some((party) => party.billsTo.length > 0),
+    [parties]
+  );
 
   // ---- Create ----
   async function handleCreate() {
@@ -170,12 +174,23 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
       );
 
       if (onCreate) {
-        await onCreate({ name, region, currency, startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek }, allMembers);
+        await onCreate({
+          name,
+          region,
+          currency,
+          startDate: startDate?.toISOString(),
+          endDate: endDate?.toISOString(),
+          workWeek,
+          status: isDraftProject ? 'draft' : 'active',
+          supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
+        }, allMembers);
       } else {
         const result = await createProject({
           name, description: '', region, currency,
           startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
           ownerName: user?.name || 'Project Owner', ownerEmail: user?.email || '',
+          status: isDraftProject ? 'draft' : 'active',
+          supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
           members: allMembers.map(m => ({ userName: m.userName, userEmail: m.userEmail, role: m.role })),
         }, accessToken);
 
@@ -191,7 +206,11 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
         } catch (e) { console.error('Failed to save graph:', e); }
 
         sessionStorage.setItem('currentProjectName', name);
-        toast.success('Project created!', { description: `${graph.nodes.length} graph nodes generated.` });
+        toast.success(isDraftProject ? 'Draft project created!' : 'Project created!', {
+          description: isDraftProject
+            ? 'You can add more parties and connect the chain later from the workspace.'
+            : `${graph.nodes.length} graph nodes generated.`,
+        });
         if (onSuccess) onSuccess(result.project.id);
       }
 
@@ -207,8 +226,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
 
   const canProceed: Record<Step, boolean> = {
     'basic': !!name && !!startDate,
-    'supply-chain': parties.length >= 2 && parties.every(p => p.name.trim() !== '') &&
-      parties.some(p => p.billsTo.length > 0),
+    'supply-chain': parties.length >= 1 && parties.every(p => p.name.trim() !== ''),
     'people': true,
     'review': true,
   };
@@ -267,7 +285,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
                 <ReviewStep name={name} region={region} currency={currency}
                   startDate={startDate} endDate={endDate} workWeek={workWeek}
                   parties={parties} generatedGraph={generatedGraph}
-                  validationErrors={validationErrors} />
+                  validationErrors={validationErrors} isDraftProject={isDraftProject} />
               )}
             </div>
 
@@ -293,7 +311,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
                 {loading ? (
                   <><div className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full mr-2" />Creating...</>
                 ) : (
-                  <><Sparkles className="w-4 h-4 mr-2" />Create Project &amp; Generate Graph</>
+                  <><Sparkles className="w-4 h-4 mr-2" />{isDraftProject ? 'Create Draft Project' : 'Create Project &amp; Generate Graph'}</>
                 )}
               </Button>
             )}
@@ -823,11 +841,12 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
 // ============================================================================
 
 function ReviewStep({ name, region, currency, startDate, endDate, workWeek,
-  parties, generatedGraph, validationErrors }: {
+  parties, generatedGraph, validationErrors, isDraftProject }: {
   name: string; region: string; currency: string;
   startDate?: Date; endDate?: Date; workWeek: WorkWeek;
   parties: PartyEntry[]; generatedGraph: { nodes: any[]; edges: any[] };
   validationErrors: string[];
+  isDraftProject: boolean;
 }) {
   const totalPeople = parties.reduce((s, p) => s + p.people.length, 0);
   const approverCount = parties.reduce((s, p) => s + p.people.filter(pe => pe.canApprove).length, 0);
@@ -849,6 +868,17 @@ function ReviewStep({ name, region, currency, startDate, endDate, workWeek,
         </div>
       )}
 
+      {isDraftProject && (
+        <div className="p-2.5 bg-sky-50 dark:bg-sky-950/30 rounded-lg border border-sky-200 dark:border-sky-800">
+          <div className="flex gap-2 items-start">
+            <Info className="w-3.5 h-3.5 text-sky-600 mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-sky-700 dark:text-sky-300">
+              This project will be created as a draft so you can invite people and finish the supply chain later.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Summary grid */}
       <div className="grid grid-cols-2 gap-3">
         <div className="p-3 bg-muted/30 rounded-lg space-y-1.5">
@@ -865,6 +895,7 @@ function ReviewStep({ name, region, currency, startDate, endDate, workWeek,
           <Row label="Connections" value={String(connectionCount)} />
           <Row label="People" value={String(totalPeople)} />
           <Row label="Approvers" value={String(approverCount)} />
+          <Row label="Status" value={isDraftProject ? 'Draft' : 'Active'} />
         </div>
       </div>
 

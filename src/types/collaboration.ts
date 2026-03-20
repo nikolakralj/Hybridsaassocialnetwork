@@ -7,12 +7,15 @@
 export interface Project {
   id: string;
   name: string;
+  description?: string;
   region: 'US' | 'EU' | 'UK';
   currency: 'USD' | 'EUR' | 'GBP';
   startDate: string;
   endDate?: string;
   workWeek: WorkWeek;
   ownerId: string;
+  status?: 'active' | 'archived' | 'draft';
+  supplyChainStatus?: 'complete' | 'incomplete';
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +46,7 @@ export interface ProjectMember {
   invitedBy: string;
   invitedAt: string;
   acceptedAt?: string;
+  invitationId?: string;
 }
 
 /**
@@ -195,6 +199,9 @@ export interface ProjectInvitation {
   expiresAt?: string;
   acceptedAt?: string;
   token?: string; // For email link
+  status?: 'pending' | 'accepted' | 'declined';
+  declinedAt?: string;
+  acceptedByUserId?: string;
 }
 
 /**

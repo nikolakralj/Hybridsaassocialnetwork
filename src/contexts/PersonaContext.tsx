@@ -1,13 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-
-/**
- * 🧪 TEST MODE ONLY - Phase 5 Validation
- * 
- * This is a TEMPORARY testing harness to validate the approval flow.
- * Will be REPLACED with real Supabase Auth in Phase 9.
- * 
- * Now wired to the WorkGraph viewer selector for unified perspective switching.
- */
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useAuth, type UserProfile } from './AuthContext';
 
 export type PersonaRole = 'contractor' | 'manager' | 'client' | 'admin';
 
@@ -18,15 +10,11 @@ export interface TestPersona {
   role: PersonaRole;
   companyId?: string;
   contractorId?: string;
-  /** Graph viewer type (maps to ViewerIdentity.type) */
   graphViewerType?: string;
-  /** Org node ID in the graph (for employees) */
   graphOrgId?: string;
 }
 
-// Test personas for validation — now includes all graph nodes
 export const TEST_PERSONAS: TestPersona[] = [
-  // Admin (god mode)
   {
     id: '__admin__',
     email: 'admin@workgraph.dev',
@@ -34,7 +22,6 @@ export const TEST_PERSONAS: TestPersona[] = [
     role: 'admin',
     graphViewerType: 'admin',
   },
-  // Acme Dev Studio employees
   {
     id: 'user-sarah',
     email: 'sarah@acmedev.com',
@@ -80,7 +67,6 @@ export const TEST_PERSONAS: TestPersona[] = [
     graphViewerType: 'company',
     graphOrgId: 'org-acme',
   },
-  // BrightWorks Design employees
   {
     id: 'user-sophia',
     email: 'sophia@brightworks.com',
@@ -108,7 +94,6 @@ export const TEST_PERSONAS: TestPersona[] = [
     graphViewerType: 'agency',
     graphOrgId: 'org-brightworks',
   },
-  // Freelancers
   {
     id: 'user-alex',
     email: 'alex@contractor.com',
@@ -125,7 +110,6 @@ export const TEST_PERSONAS: TestPersona[] = [
     contractorId: 'contractor-002',
     graphViewerType: 'freelancer',
   },
-  // Organizations (as viewers)
   {
     id: 'org-acme',
     email: 'admin@acmedev.com',
@@ -155,7 +139,6 @@ export const TEST_PERSONAS: TestPersona[] = [
 interface PersonaContextType {
   currentPersona: TestPersona | null;
   setPersona: (persona: TestPersona) => void;
-  /** Switch persona by graph node ID (called from WorkGraph viewer selector) */
   setPersonaByNodeId: (nodeId: string) => void;
   isTestMode: boolean;
   hasPermission: (permission: string, resourceId?: string) => boolean;
@@ -163,53 +146,101 @@ interface PersonaContextType {
 
 const PersonaContext = createContext<PersonaContextType | undefined>(undefined);
 
+function mapPersonaTypeToRole(personaType?: UserProfile['persona_type']): PersonaRole {
+  switch (personaType) {
+    case 'company':
+    case 'agency':
+      return 'manager';
+    default:
+      return 'contractor';
+  }
+}
+
+function mapPersonaTypeToViewerType(personaType?: UserProfile['persona_type']) {
+  switch (personaType) {
+    case 'company':
+      return 'company';
+    case 'agency':
+      return 'agency';
+    default:
+      return 'freelancer';
+  }
+}
+
+function buildAuthPersona(user: UserProfile): TestPersona {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: mapPersonaTypeToRole(user.persona_type),
+    graphViewerType: mapPersonaTypeToViewerType(user.persona_type),
+  };
+}
+
 export function PersonaProvider({ children }: { children: React.ReactNode }) {
-  const [currentPersona, setCurrentPersona] = useState<TestPersona | null>(() => {
-    const stored = localStorage.getItem('test-persona');
-    if (stored) {
-      try {
-        const persona = JSON.parse(stored);
-        return TEST_PERSONAS.find(p => p.id === persona.id) || TEST_PERSONAS[0];
-      } catch {
-        return TEST_PERSONAS[0];
-      }
+  const { user } = useAuth();
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      localStorage.removeItem('test-persona');
+      return;
     }
-    return TEST_PERSONAS[0]; // Default to Admin
-  });
+
+    const stored = localStorage.getItem('test-persona');
+    if (!stored) return;
+
+    try {
+      const persona = JSON.parse(stored);
+      const match = TEST_PERSONAS.find((candidate) => candidate.id === persona.id);
+      if (match) {
+        setSelectedPersonaId(match.id);
+      }
+    } catch {
+      localStorage.removeItem('test-persona');
+    }
+  }, [user]);
+
+  const authPersona = useMemo(() => {
+    if (!user) return null;
+    return buildAuthPersona(user);
+  }, [user]);
+
+  const selectedPersona = useMemo(() => {
+    if (!selectedPersonaId) return null;
+    return TEST_PERSONAS.find((persona) => persona.id === selectedPersonaId) || null;
+  }, [selectedPersonaId]);
+
+  const currentPersona = selectedPersona || authPersona || TEST_PERSONAS[0];
 
   const setPersona = useCallback((persona: TestPersona) => {
-    setCurrentPersona(persona);
-    localStorage.setItem('test-persona', JSON.stringify(persona));
-    console.log('🧪 [TEST MODE] Switched to persona:', persona.name, persona.role);
-  }, []);
+    setSelectedPersonaId(persona.id);
+    if (!user) {
+      localStorage.setItem('test-persona', JSON.stringify(persona));
+      return;
+    }
+  }, [user]);
 
   const setPersonaByNodeId = useCallback((nodeId: string) => {
-    const match = TEST_PERSONAS.find(p => p.id === nodeId);
+    const match = TEST_PERSONAS.find((persona) => persona.id === nodeId);
     if (match) {
       setPersona(match);
-    } else {
-      console.warn('🧪 [TEST MODE] No persona found for nodeId:', nodeId);
     }
   }, [setPersona]);
 
-  // Simple permission check based on role
-  const hasPermission = useCallback((permission: string, resourceId?: string): boolean => {
+  const hasPermission = useCallback((permission: string): boolean => {
     if (!currentPersona) return false;
     if (currentPersona.role === 'admin') return true;
 
     switch (permission) {
       case 'create-timesheet':
         return currentPersona.role === 'contractor';
-      
       case 'approve-timesheet':
         return currentPersona.role === 'manager' || currentPersona.role === 'client';
-      
       case 'view-all-projects':
         return currentPersona.role === 'manager' || currentPersona.role === 'client';
-      
       case 'create-project':
         return currentPersona.role === 'manager';
-      
       default:
         return false;
     }
@@ -219,9 +250,9 @@ export function PersonaProvider({ children }: { children: React.ReactNode }) {
     currentPersona,
     setPersona,
     setPersonaByNodeId,
-    isTestMode: true as const,
+    isTestMode: !user || !!selectedPersona,
     hasPermission,
-  }), [currentPersona, setPersona, setPersonaByNodeId, hasPermission]);
+  }), [currentPersona, setPersona, setPersonaByNodeId, selectedPersona, user, hasPermission]);
 
   return (
     <PersonaContext.Provider value={contextValue}>
@@ -230,8 +261,6 @@ export function PersonaProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Safe fallback for when usePersona is called outside PersonaProvider
-// (e.g., Figma component preview renders components in isolation)
 const FALLBACK_CONTEXT: PersonaContextType = {
   currentPersona: TEST_PERSONAS[0],
   setPersona: () => {},
@@ -243,7 +272,6 @@ const FALLBACK_CONTEXT: PersonaContextType = {
 export function usePersona() {
   const context = useContext(PersonaContext);
   if (context === undefined) {
-    console.warn('usePersona called outside PersonaProvider — using fallback');
     return FALLBACK_CONTEXT;
   }
   return context;

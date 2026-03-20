@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { AnnouncementBar, TopBar } from "./TopBar";
 import { HeroWarp } from "./HeroWarp";
 import { LogoStrip } from "./LogoStrip";
@@ -17,25 +17,47 @@ import { AuthModal } from "./AuthModal";
 
 export function Landing() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
+  const requestedMode = searchParams.get("auth");
+  const nextPath = searchParams.get("next") || "/app";
 
   // If already authenticated, redirect to app
   useEffect(() => {
     if (user) {
-      navigate("/app");
+      navigate(nextPath);
     }
-  }, [user, navigate]);
+  }, [user, navigate, nextPath]);
+
+  useEffect(() => {
+    if (requestedMode === "signin" || requestedMode === "signup") {
+      setAuthMode(requestedMode);
+      setAuthOpen(true);
+    }
+  }, [requestedMode]);
+
+  const updateAuthQuery = (mode?: "signin" | "signup") => {
+    const params = new URLSearchParams(searchParams);
+    if (mode) {
+      params.set("auth", mode);
+    } else {
+      params.delete("auth");
+    }
+    setSearchParams(params, { replace: true });
+  };
 
   const handleGetStarted = () => {
     setAuthMode("signup");
     setAuthOpen(true);
+    updateAuthQuery("signup");
   };
 
   const handleSignIn = () => {
     setAuthMode("signin");
     setAuthOpen(true);
+    updateAuthQuery("signin");
   };
 
   return (
@@ -78,7 +100,12 @@ export function Landing() {
 
       <AuthModal
         open={authOpen}
-        onOpenChange={setAuthOpen}
+        onOpenChange={(open) => {
+          setAuthOpen(open);
+          if (!open) {
+            updateAuthQuery();
+          }
+        }}
         defaultMode={authMode}
       />
     </div>

@@ -300,7 +300,9 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
     return errors;
   }
   if (parties.length < 2) {
-    errors.push('At least two parties are needed to form a supply chain');
+    errors.push('This project will start as a draft until you add another party');
+  } else if (!parties.some((party) => party.billsTo.length > 0)) {
+    errors.push('No billing relationship has been defined yet, so this project will remain a draft');
   }
 
   // Check for parties with no connections
@@ -308,7 +310,7 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
     const hasOutgoing = p.billsTo.length > 0;
     const hasIncoming = parties.some(other => other.billsTo.includes(p.id));
     if (!hasOutgoing && !hasIncoming && parties.length > 1) {
-      errors.push(`"${p.name || p.partyType}" is not connected to any other party`);
+      errors.push(`"${p.name || p.partyType}" is not connected yet`);
     }
   });
 

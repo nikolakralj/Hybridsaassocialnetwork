@@ -13,11 +13,16 @@ import {
 } from '../ui/dropdown-menu';
 import { ProjectConfigurationDrawer } from './ProjectConfigurationDrawer';
 import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
+import { ProjectInvitationsPanel } from './ProjectInvitationsPanel';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  acceptProjectInvitation,
+  declineProjectInvitation,
+  listProjectInvitations,
   listProjects,
   deleteProject as deleteProjectApi,
   getProjectMembers,
+  type StoredProjectInvitation,
 } from '../../utils/api/projects-api';
 import { toast } from 'sonner@2.0.3';
 
@@ -41,14 +46,20 @@ export function ProjectsListView() {
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   
   const [projects, setProjects] = useState<any[]>([]);
+  const [invitations, setInvitations] = useState<StoredProjectInvitation[]>([]);
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
 
   const loadProjects = async () => {
     setIsLoading(true);
     try {
-      const userProjects = await listProjects(accessToken);
+      const [userProjects, pendingInvitations] = await Promise.all([
+        listProjects(accessToken),
+        listProjectInvitations(accessToken).catch(() => []),
+      ]);
+
       setProjects(userProjects);
+      setInvitations(pendingInvitations);
       
       // Load member counts in parallel
       const memberCounts: Record<string, number> = {};
@@ -119,6 +130,30 @@ export function ProjectsListView() {
     }
   };
 
+  const handleAcceptInvitation = async (invitationId: string) => {
+    try {
+      const result = await acceptProjectInvitation(invitationId, accessToken);
+      toast.success('Invitation accepted', {
+        description: result.project?.name
+          ? `${result.project.name} is now in your projects list.`
+          : 'The project has been added to your workspace.',
+      });
+      await loadProjects();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to accept invitation');
+    }
+  };
+
+  const handleDeclineInvitation = async (invitationId: string) => {
+    try {
+      await declineProjectInvitation(invitationId, accessToken);
+      toast.success('Invitation declined');
+      await loadProjects();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to decline invitation');
+    }
+  };
+
   const filteredProjects = projects.filter(project =>
     project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     project.description?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -158,6 +193,14 @@ export function ProjectsListView() {
       </div>
 
       {/* Search and Filters */}
+      {invitations.length > 0 && (
+        <ProjectInvitationsPanel
+          invitations={invitations}
+          onAccept={handleAcceptInvitation}
+          onDecline={handleDeclineInvitation}
+        />
+      )}
+
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
