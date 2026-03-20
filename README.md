@@ -1,11 +1,19 @@
+# Hybrid SaaS Social Network
 
-  # Hybrid SaaS Social Network
+This repo contains the WorkGraph frontend and Supabase Edge Function backend.
 
-  This is a code bundle for Hybrid SaaS Social Network. The original project is available at https://www.figma.com/design/OWlIxcQRvwzJtCW8s6SlNX/Hybrid-SaaS-Social-Network.
+## Workspace layout
 
-  ## Running the code
+- `src/`: React + Vite frontend code
+- `supabase/functions/server/`: Deno Edge Function handlers (backend boundary)
+- `supabase/migrations/`: SQL migration scripts
 
-  Run `npm i` to install the dependencies.
+## Local setup
 
-  Run `npm run dev` to start the development server.
-  
+1. Install dependencies:
+   - `npm install`
+2. Copy the env template to `.env` and set values if needed.
+3. Start frontend dev server:
+   - `npm run dev`
+
+The frontend reads `VITE_SUPABASE_PROJECT_ID` and `VITE_SUPABASE_ANON_KEY` from env, with fallback defaults in `src/utils/supabase/info.tsx`.

@@ -575,7 +575,7 @@ If this roadmap conflicts with current architecture details:
 - `/src/components/workgraph/WorkGraphBuilder.tsx`
 - `/src/components/AppLayout.tsx`
 - `/src/routes.tsx`
-- new invite and org membership APIs under `/src/supabase/functions/server/`
+- new invite and org membership APIs under `/supabase/functions/server/`
 
 ### Phase 4
 
