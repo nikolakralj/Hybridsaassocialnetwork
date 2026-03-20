@@ -1852,73 +1852,32 @@ Uses Tailwind CSS v4 with CSS custom properties:
 
 ## 28. FUTURE ROADMAP
 
-### Phase 3: Live Collaboration
-- [ ] Real-time graph editing with Supabase Realtime
-- [ ] Presence indicators (who's looking at the graph)
-- [ ] Comment threads on nodes
-- [ ] Change proposals (suggest edits, require approval)
+The canonical forward-looking plan now lives in [`/src/docs/ROADMAP.md`](./ROADMAP.md).
 
-### Phase 4: Policy Compilation & Enforcement
-- [ ] Compile graph into executable ApprovalPolicy objects
-- [ ] Runtime policy enforcement on timesheet submissions
-- [ ] Auto-routing of approvals based on compiled policies
-- [ ] Policy versioning with effective dates
+This architecture document is the source of truth for:
+- the current implementation
+- key technical decisions
+- code layout and data flow
+- current technical debt
 
-### Phase 5: Invoice & Billing Engine
-- [ ] Invoice generation from approved timesheets
-- [ ] Multi-currency support
-- [ ] Tax calculation
-- [ ] Invoice approval workflow
-- [ ] Payment tracking
+`ROADMAP.md` is the source of truth for:
+- customer sequencing
+- phase priorities
+- what should be built next
+- what is intentionally deferred
 
-### Phase 6: Document Management
-- [ ] NDA/MSA/SOW template library
-- [ ] E-signature integration
-- [ ] Document versioning
-- [ ] Compliance tracking dashboard
+### Current Canonical Sequence
 
-### Phase 7: Analytics & Reporting
-- [ ] Utilization dashboards
-- [ ] Burn-down charts
-- [ ] Budget vs. actual analysis
-- [ ] Custom report builder
-- [ ] Export to PDF/Excel
-
-### Phase 8: Social Network Features
-- [ ] Real social feed with posts
-- [ ] Skill-based matching
-- [ ] Reputation system
-- [ ] Referral tracking
-- [ ] Company directory with search
-
-### Phase 9: Production Auth
-- [ ] Replace PersonaContext with real auth-based permissions
-- [ ] OAuth providers (Google, GitHub)
-- [ ] Organization invitations
-- [ ] Role-based access within organizations
-- [ ] Session management
-
-### Phase 10: Advanced Graph Features
-- [ ] Drag-and-drop node positioning
-- [ ] Edge editing (click to add/remove)
-- [ ] Undo/redo for graph edits
-- [ ] Graph diffing (compare two versions)
-- [ ] Graph templates marketplace
-- [ ] AI-suggested supply chain structures
-
-### Phase 11: Mobile & API
-- [ ] Responsive graph viewer (mobile-friendly)
-- [ ] Mobile timesheet entry
-- [ ] Push notifications
-- [ ] Public API for integrations
-- [ ] Webhook system
-
-### Phase 12: Enterprise Features
-- [ ] SSO (SAML, OIDC)
-- [ ] Audit logs (detailed)
-- [ ] Data residency controls
-- [ ] SOC 2 compliance
-- [ ] White-labeling
+1. Production auth, invites, and incremental supply-chain onboarding
+2. Invoice generation from approved timesheets
+3. CSV import and PDF export
+4. Multi-project unified dashboard
+5. Supply Chain Assistant (AI Agent 1)
+6. Stripe and money movement
+7. Public profiles and Matchmaker (AI Agent 2)
+8. Analytics and reporting
+9. Collaboration, mobile, and public API
+10. Enterprise features
 
 ---
 
