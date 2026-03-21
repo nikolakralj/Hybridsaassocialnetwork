@@ -51,6 +51,60 @@ export interface ScopedGraphView {
 // Helper functions
 // ============================================================================
 
+function normalizeName(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * Build a resilient person -> org lookup.
+ *
+ * We prefer explicit membership edges, then person node references,
+ * then a company-name match to party names for legacy graphs.
+ */
+function buildPersonToOrgMap(nodes: BaseNode[], edges: BaseEdge[]): Map<string, string> {
+  const personToOrg = new Map<string, string>();
+  const partyIds = new Set(nodes.filter((n) => n.type === 'party').map((n) => n.id));
+  const partyNameToId = new Map<string, string>();
+
+  nodes.forEach((n) => {
+    if (n.type !== 'party') return;
+    const normalized = normalizeName(n.data?.name);
+    if (normalized && !partyNameToId.has(normalized)) {
+      partyNameToId.set(normalized, n.id);
+    }
+  });
+
+  edges.forEach((e) => {
+    if ((e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') && partyIds.has(e.source)) {
+      personToOrg.set(e.target, e.source);
+    }
+  });
+
+  nodes.forEach((n) => {
+    if (n.type !== 'person' || personToOrg.has(n.id)) return;
+    const candidateId =
+      n.data?.partyId ||
+      n.data?.orgId ||
+      n.data?.organizationId ||
+      n.data?.organization_id ||
+      n.data?.companyId;
+
+    if (typeof candidateId === 'string' && partyIds.has(candidateId)) {
+      personToOrg.set(n.id, candidateId);
+    }
+  });
+
+  nodes.forEach((n) => {
+    if (n.type !== 'person' || personToOrg.has(n.id)) return;
+    const companyName = normalizeName(n.data?.company || n.data?.orgName || n.data?.organizationName);
+    if (!companyName) return;
+    const partyId = partyNameToId.get(companyName);
+    if (partyId) personToOrg.set(n.id, partyId);
+  });
+
+  return personToOrg;
+}
+
 // Helper: check if an edge represents a billing/business relationship
 function isBillingEdge(edgeType: string | undefined): boolean {
   return edgeType === 'bills_to' || edgeType === 'billsTo' || edgeType === 'subcontracts' || edgeType === 'funds';
@@ -69,7 +123,8 @@ function computeHopDistances(
   viewerNodeId: string,
   viewerOrgId: string | undefined,
   nodes: BaseNode[],
-  edges: BaseEdge[]
+  edges: BaseEdge[],
+  personToOrg: Map<string, string>
 ): Map<string, number> {
   const distances = new Map<string, number>();
   const adjacency = new Map<string, Set<string>>();
@@ -81,15 +136,11 @@ function computeHopDistances(
     adjacency.get(e.target)?.add(e.source);
   });
 
-  // Add virtual adjacency for person→org based on partyId (auto-generated graphs
-  // don't always create explicit employs/assigns edges)
-  nodes.forEach(n => {
-    if (n.type === 'person' && n.data?.partyId) {
-      const orgId = n.data.partyId;
-      if (adjacency.has(orgId)) {
-        adjacency.get(n.id)?.add(orgId);
-        adjacency.get(orgId)?.add(n.id);
-      }
+  // Add virtual adjacency for person->org membership (supports legacy graphs too).
+  personToOrg.forEach((orgId, personId) => {
+    if (adjacency.has(personId) && adjacency.has(orgId)) {
+      adjacency.get(personId)?.add(orgId);
+      adjacency.get(orgId)?.add(personId);
     }
   });
 
@@ -127,7 +178,8 @@ function getMaskedFields(
   viewer: ViewerIdentity,
   targetNode: BaseNode,
   hopDistance: number,
-  edges: BaseEdge[]
+  edges: BaseEdge[],
+  nodes: BaseNode[]
 ): string[] {
   const masked: string[] = [];
 
@@ -152,7 +204,7 @@ function getMaskedFields(
   // Agency can't see company's internal employee details
   if (viewer.type === 'agency') {
     if (targetNode.type === 'person') {
-      const personOrg = getPersonOrg(targetNode, edges);
+      const personOrg = getPersonOrg(targetNode, edges, nodes);
       if (personOrg && personOrg !== viewer.nodeId && personOrg !== viewer.orgId) {
         masked.push('canViewRates', 'canEditTimesheets', 'role');
       }
@@ -196,11 +248,9 @@ function getMaskedFields(
   return masked;
 }
 
-function getPersonOrg(person: BaseNode, edges: BaseEdge[]): string | null {
-  const employEdge = edges.find(
-    e => (e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') && e.target === person.id
-  );
-  return employEdge?.source || null;
+function getPersonOrg(person: BaseNode, edges: BaseEdge[], nodes: BaseNode[]): string | null {
+  const personToOrg = buildPersonToOrgMap(nodes, edges);
+  return personToOrg.get(person.id) || null;
 }
 
 // ============================================================================
@@ -238,24 +288,12 @@ export function computeScopedView(
   // NOT coworkers or other org's people.
   const effectiveMaxHops = viewer.orgId ? 2 : maxHops;
 
-  const distances = computeHopDistances(viewer.nodeId, viewer.orgId, allNodes, allEdges);
-
-  // Build org membership lookup for scoping
-  const nodeToOrg = new Map<string, string>();
-  allEdges.forEach(e => {
-    if (e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') {
-      nodeToOrg.set(e.target, e.source);
-    }
-  });
-  // Also pick up partyId from person node data (auto-generated graphs)
-  allNodes.forEach(n => {
-    if (n.type === 'person' && n.data?.partyId && !nodeToOrg.has(n.id)) {
-      nodeToOrg.set(n.id, n.data.partyId);
-    }
-  });
+  const nodeToOrg = buildPersonToOrgMap(allNodes, allEdges);
+  const distances = computeHopDistances(viewer.nodeId, viewer.orgId, allNodes, allEdges, nodeToOrg);
 
   // Helper: check if a person node is directly connected to a given org
   const personConnectsToOrg = (personId: string, orgId: string) => {
+    if (nodeToOrg.get(personId) === orgId) return true;
     return allEdges.some(e =>
       (e.source === personId && e.target === orgId) ||
       (e.target === personId && e.source === orgId)
@@ -392,7 +430,7 @@ export function computeScopedView(
       }
     }
 
-    const maskedFields = getMaskedFields(viewer, node, dist, allEdges);
+    const maskedFields = getMaskedFields(viewer, node, dist, allEdges, allNodes);
     const visibility: 'full' | 'partial' | 'masked' =
       dist === 0 ? 'full' :
       dist === 1 ? (maskedFields.length > 0 ? 'partial' : 'full') :
@@ -480,19 +518,8 @@ export function buildViewerOptions(
       });
     });
 
-  // Build org lookup from edges (employs/assigns → person belongs to org)
-  const personToOrg = new Map<string, string>();
-  edges.forEach(e => {
-    if (e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') {
-      personToOrg.set(e.target, e.source);
-    }
-  });
-  // Also use partyId from person node data (auto-generated graphs)
-  nodes.forEach(n => {
-    if (n.type === 'person' && n.data?.partyId && !personToOrg.has(n.id)) {
-      personToOrg.set(n.id, n.data.partyId);
-    }
-  });
+  // Build org lookup with legacy fallbacks (partyId/company name/etc.)
+  const personToOrg = buildPersonToOrgMap(nodes, edges);
 
   // All people — employees, freelancers, contractors
   nodes
