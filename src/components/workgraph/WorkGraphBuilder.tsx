@@ -1372,15 +1372,19 @@ export function WorkGraphBuilder({
   // Filter inactive people for selected month
   const monthFilteredNodes = useMemo(() => {
     const activePeople = getActivePeopleIds(selectedMonth);
-    // Only filter people nodes, keep everything else
+    if (activePeople.size === 0) return scopedView.nodes;
+
+    const scopedPeople = scopedView.nodes.filter(n => n.type === 'person');
+    // If this graph uses non-demo person IDs, do not hide everyone.
+    const hasSnapshotCoverageForGraph = scopedPeople.some(p => activePeople.has(p.id));
+    if (!hasSnapshotCoverageForGraph) return scopedView.nodes;
+
+    // Only filter people nodes, keep everything else.
     return scopedView.nodes.filter(n => {
       if (n.type !== 'person') return true;
-      // In admin mode or if no snapshot, show all
-      if (currentViewer.type === 'admin' && activePeople.size === 0) return true;
-      if (activePeople.size === 0) return true;
       return activePeople.has(n.id);
     });
-  }, [scopedView.nodes, selectedMonth, currentViewer]);
+  }, [scopedView.nodes, selectedMonth]);
 
   // Filter edges for visible nodes
   const monthFilteredEdges = useMemo(() => {
@@ -1520,8 +1524,8 @@ export function WorkGraphBuilder({
             <DrawerErrorBoundary onClose={() => setSelectedId(null)}>
               <NodeDetailDrawer
                 selectedId={selectedId}
-                nodes={filteredNodes}
-                edges={filteredEdges}
+                nodes={scopedView.nodes}
+                edges={scopedView.edges}
                 viewer={currentViewer}
                 selectedMonth={selectedMonth}
                 onClose={() => setSelectedId(null)}
