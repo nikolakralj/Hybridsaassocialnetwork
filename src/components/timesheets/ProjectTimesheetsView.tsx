@@ -190,6 +190,17 @@ export function ProjectTimesheetsView(_props: ProjectTimesheetsViewProps) {
     toast.success('Opening Project Graph');
   };
 
+  const canSeedMonth = Boolean(viewerId && !isMultiPersonViewer);
+  const handleSeedMonth = useCallback(() => {
+    if (!viewerId) return;
+    const created = store.seedMonthForPerson(viewerId, monthKey);
+    if (created > 0) {
+      toast.success(`Created ${created} draft week${created === 1 ? '' : 's'} for ${monthLabel}`);
+      return;
+    }
+    toast.info(`Draft weeks already exist for ${monthLabel}`);
+  }, [viewerId, store, monthKey, monthLabel]);
+
   const viewingAs = isAdmin ? 'All people (Admin)'
     : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
     : viewerId?.startsWith('client-') ? 'All people (Client)'
@@ -306,6 +317,15 @@ export function ProjectTimesheetsView(_props: ProjectTimesheetsViewProps) {
         <div className="text-center py-12 text-muted-foreground border rounded-xl">
           <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-40" />
           <p className="font-medium">No timesheet data for {monthLabel}</p>
+          {canSeedMonth && (
+            <>
+              <p className="text-xs mt-2 mb-3">Create draft weeks first, then click day cells to add hours.</p>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleSeedMonth}>
+                <Plus className="h-3.5 w-3.5" />
+                Create Draft Weeks
+              </Button>
+            </>
+          )}
         </div>
       )}
 

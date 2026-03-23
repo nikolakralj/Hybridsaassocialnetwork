@@ -77,6 +77,8 @@ export interface TimesheetStoreAPI {
   }) => void;
   /** Batch approve all submitted weeks for a person in a month */
   batchApproveMonth: (personId: string, month: string, approverName: string) => number;
+  /** Ensure a person has draft week rows for all Mondays in the given month (YYYY-MM) */
+  seedMonthForPerson: (personId: string, month: string) => number;
 
   /** Monotonically increasing version — subscribe to re-render on changes */
   version: number;
@@ -115,6 +117,32 @@ function generateWeekLabel(weekStart: string): string {
   } catch {
     return weekStart;
   }
+}
+
+function formatISODateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/** Return Monday dates that fall inside a month key (YYYY-MM). */
+function getMondaysForMonth(monthKey: string): string[] {
+  const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
+  if (!yearRaw || !monthRaw || monthRaw < 1 || monthRaw > 12) return [];
+
+  const monthIndex = monthRaw - 1;
+  const date = new Date(yearRaw, monthIndex, 1);
+  const mondays: string[] = [];
+
+  while (date.getMonth() === monthIndex) {
+    if (date.getDay() === 1) {
+      mondays.push(formatISODateLocal(date));
+    }
+    date.setDate(date.getDate() + 1);
+  }
+
+  return mondays;
 }
 
 // ============================================================================
@@ -431,6 +459,36 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     return count;
   }, [bump, persistStatus]);
 
+  const seedMonthForPerson = useCallback((personId: string, month: string): number => {
+    const mondays = getMondaysForMonth(month);
+    if (mondays.length === 0) return 0;
+
+    const existingKeys = new Set(
+      weeks
+        .filter(w => w.personId === personId)
+        .map(w => `${w.personId}:${w.weekStart}`)
+    );
+
+    const created = mondays
+      .filter(weekStart => !existingKeys.has(`${personId}:${weekStart}`))
+      .map<StoredWeek>(weekStart => ({
+        personId,
+        weekLabel: generateWeekLabel(weekStart),
+        weekStart,
+        days: mkDays([0, 0, 0, 0, 0]),
+        tasks: [],
+        status: 'draft',
+      }));
+
+    if (created.length === 0) return 0;
+
+    setWeeks(prev => [...prev, ...created].sort((a, b) => a.weekStart.localeCompare(b.weekStart)));
+    created.forEach(week => persistWeek(personId, week.weekStart, week));
+    bump();
+
+    return created.length;
+  }, [bump, persistWeek, weeks]);
+
   const api = useMemo<TimesheetStoreAPI>(() => ({
     getWeeksForPerson,
     getAllWeeksForMonth,
@@ -440,9 +498,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     updateWeekTasks,
     setWeekStatus,
     batchApproveMonth,
+    seedMonthForPerson,
     version,
     isLoading,
-  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, version, isLoading]);
+  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, seedMonthForPerson, version, isLoading]);
 
   return (
     <TimesheetStoreContext.Provider value={api}>
