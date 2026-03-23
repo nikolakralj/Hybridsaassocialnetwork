@@ -1325,6 +1325,8 @@ export function WorkGraphBuilder({
   const viewerOptions = useMemo(() => buildViewerOptions(allNodes, allEdges), [allNodes, allEdges]);
   const [currentViewer, setCurrentViewer] = useState<ViewerIdentity>(viewerOptions[0]); // Admin by default
   const viewerStorageKey = `workgraph-viewer:${projectId}`;
+  const restoredViewerKeyRef = useRef<string | null>(null);
+  const skipNextViewerPersistRef = useRef(false);
 
   // ── Sync with PersonaContext ──
   const { setPersonaByNodeId, currentPersona } = usePersona();
@@ -1346,20 +1348,29 @@ export function WorkGraphBuilder({
     setCurrentViewer(personaMatch || viewerOptions[0]);
   }, [viewerOptions, currentViewer.nodeId, currentPersona?.id]);
 
-  // Restore previously selected viewer for this project.
+  // Restore previously selected viewer once per project key.
   useEffect(() => {
     if (viewerOptions.length === 0) return;
+    if (restoredViewerKeyRef.current === viewerStorageKey) return;
+    restoredViewerKeyRef.current = viewerStorageKey;
+
     const savedViewerId = sessionStorage.getItem(viewerStorageKey);
     if (!savedViewerId) return;
     const savedViewer = viewerOptions.find(v => v.nodeId === savedViewerId);
     if (savedViewer && savedViewer.nodeId !== currentViewer.nodeId) {
+      skipNextViewerPersistRef.current = true;
       setCurrentViewer(savedViewer);
+      setPersonaByNodeId(savedViewer.nodeId);
     }
-  }, [viewerOptions, viewerStorageKey, currentViewer.nodeId]);
+  }, [viewerOptions, viewerStorageKey, currentViewer.nodeId, setPersonaByNodeId]);
 
   // Persist selected viewer per project.
   useEffect(() => {
     if (!currentViewer?.nodeId) return;
+    if (skipNextViewerPersistRef.current) {
+      skipNextViewerPersistRef.current = false;
+      return;
+    }
     sessionStorage.setItem(viewerStorageKey, currentViewer.nodeId);
   }, [currentViewer?.nodeId, viewerStorageKey]);
 
