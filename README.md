@@ -27,3 +27,8 @@ This repo contains the WorkGraph frontend and Supabase Edge Function backend.
   - `npm run edge:deploy -- --project-ref <your-project-ref>`
 
 The frontend reads `VITE_SUPABASE_PROJECT_ID` and `VITE_SUPABASE_ANON_KEY` from env, with fallback defaults in `src/utils/supabase/info.tsx`.
+
+### Data mode
+
+- Default: DB-first project APIs (Supabase Edge Function + KV store)
+- Optional dev fallback (browser localStorage): set `VITE_ENABLE_LOCAL_FALLBACK=true` in `.env`

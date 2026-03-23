@@ -55,8 +55,9 @@ import type {
   CompiledProjectConfig,
 } from '../../types/workgraph';
 import { usePersona } from '../../contexts/PersonaContext';
-import { getProject } from '../../utils/api/projects-api';
+import { getProject, updateProject } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
+import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
 
 // ============================================================================
 // Layout Engine - Hierarchical Sugiyama-style
@@ -1323,6 +1324,7 @@ export function WorkGraphBuilder({
   // Viewer options
   const viewerOptions = useMemo(() => buildViewerOptions(allNodes, allEdges), [allNodes, allEdges]);
   const [currentViewer, setCurrentViewer] = useState<ViewerIdentity>(viewerOptions[0]); // Admin by default
+  const viewerStorageKey = `workgraph-viewer:${projectId}`;
 
   // ── Sync with PersonaContext ──
   const { setPersonaByNodeId, currentPersona } = usePersona();
@@ -1333,17 +1335,33 @@ export function WorkGraphBuilder({
     setPersonaByNodeId(viewer.nodeId);
   }, [setPersonaByNodeId]);
 
-  // On mount: if PersonaContext already has a persona, sync the graph viewer to match
+  // Keep selected viewer valid after graph/viewer changes.
   useEffect(() => {
-    if (currentPersona?.id) {
-      const matchingViewer = viewerOptions.find(v => v.nodeId === currentPersona.id);
-      if (matchingViewer && matchingViewer.nodeId !== currentViewer.nodeId) {
-        setCurrentViewer(matchingViewer);
-      }
+    if (viewerOptions.length === 0) return;
+    const exists = viewerOptions.some(v => v.nodeId === currentViewer.nodeId);
+    if (exists) return;
+    const personaMatch = currentPersona?.id
+      ? viewerOptions.find(v => v.nodeId === currentPersona.id)
+      : undefined;
+    setCurrentViewer(personaMatch || viewerOptions[0]);
+  }, [viewerOptions, currentViewer.nodeId, currentPersona?.id]);
+
+  // Restore previously selected viewer for this project.
+  useEffect(() => {
+    if (viewerOptions.length === 0) return;
+    const savedViewerId = sessionStorage.getItem(viewerStorageKey);
+    if (!savedViewerId) return;
+    const savedViewer = viewerOptions.find(v => v.nodeId === savedViewerId);
+    if (savedViewer && savedViewer.nodeId !== currentViewer.nodeId) {
+      setCurrentViewer(savedViewer);
     }
-  // Only run on mount and when viewerOptions change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewerOptions]);
+  }, [viewerOptions, viewerStorageKey, currentViewer.nodeId]);
+
+  // Persist selected viewer per project.
+  useEffect(() => {
+    if (!currentViewer?.nodeId) return;
+    sessionStorage.setItem(viewerStorageKey, currentViewer.nodeId);
+  }, [currentViewer?.nodeId, viewerStorageKey]);
 
   // Month
   const [selectedMonth, setSelectedMonth] = useState(MONTHLY_SNAPSHOTS[MONTHLY_SNAPSHOTS.length - 1].month);
@@ -1362,6 +1380,34 @@ export function WorkGraphBuilder({
     onSaveSuccess: () => toast.success('Graph saved'),
     onSaveError: () => toast.error('Failed to save'),
   });
+
+  const runGraphMigration = useCallback(async () => {
+    const migrated = migrateGraphForVisibility(allNodes, allEdges);
+    if (!migrated.changed) {
+      toast.info('Graph already up to date');
+      return;
+    }
+
+    setAllNodes(migrated.nodes);
+    setAllEdges(migrated.edges);
+
+    try {
+      await updateProject(projectId, {
+        graph: {
+          nodes: migrated.nodes,
+          edges: migrated.edges,
+        },
+      }, accessToken);
+      toast.success('Graph migrated', {
+        description: `Added ${migrated.summary.personPartyLinksAdded} person-org links and ${migrated.summary.employsEdgesAdded} membership edges.`,
+      });
+    } catch (error) {
+      console.error('Graph migration save failed:', error);
+      toast.warning('Graph migrated locally', {
+        description: 'Could not persist migration to server yet. Use Save after reconnecting.',
+      });
+    }
+  }, [allNodes, allEdges, projectId, accessToken]);
 
   // Compute scoped view
   const scopedView = useMemo(
@@ -1481,6 +1527,16 @@ export function WorkGraphBuilder({
               <List className="h-3.5 w-3.5" /> List
             </button>
           </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={runGraphMigration}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <AlertCircle className="h-3.5 w-3.5" />
+            Repair Graph
+          </Button>
 
           <Button
             variant="outline"

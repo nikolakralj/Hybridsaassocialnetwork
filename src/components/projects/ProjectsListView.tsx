@@ -24,6 +24,7 @@ import {
   listProjects,
   deleteProject as deleteProjectApi,
   getProjectMembers,
+  isLocalProjectFallbackEnabled,
   type StoredProjectInvitation,
 } from '../../utils/api/projects-api';
 import type { ProjectRole } from '../../types/collaboration';
@@ -204,6 +205,12 @@ export function ProjectsListView() {
           New Project
         </Button>
       </div>
+
+      {isLocalProjectFallbackEnabled && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Running in local fallback mode (`VITE_ENABLE_LOCAL_FALLBACK=true`). Project data is saved in this browser only.
+        </div>
+      )}
 
       {/* Search and Filters */}
       {invitations.length > 0 && (

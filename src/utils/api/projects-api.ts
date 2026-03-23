@@ -5,6 +5,8 @@ import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info'
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
+const ENABLE_LOCAL_FALLBACK = import.meta.env.VITE_ENABLE_LOCAL_FALLBACK === 'true';
+export const isLocalProjectFallbackEnabled = ENABLE_LOCAL_FALLBACK;
 
 function getHeaders(accessToken?: string | null): HeadersInit {
   return {
@@ -35,6 +37,7 @@ function generateId(prefix: string): string {
 }
 
 function canUseLocalFallback(status?: number, accessToken?: string | null): boolean {
+  if (!ENABLE_LOCAL_FALLBACK) return false;
   if (!accessToken) return true;
   return status === 401 || status === 403;
 }
