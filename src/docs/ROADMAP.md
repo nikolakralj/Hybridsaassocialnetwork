@@ -221,6 +221,9 @@ This is the real onboarding phase. Until this exists, the graph is still partly 
   - contributor
   - viewer
 - Ensure graph visibility and workspace navigation derive from the signed-in user and org
+- Make top-level workspace controls functional:
+  - `Team` opens real member management (list + invite + role visibility)
+  - `Settings` opens project configuration and saves per-project preferences
 
 ### Critical workflow to support
 

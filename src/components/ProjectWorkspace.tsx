@@ -22,6 +22,10 @@ import { toast } from "sonner";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
+import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
+import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
+import { useAuth } from "../contexts/AuthContext";
+import type { ProjectMember, ProjectRole } from "../types/collaboration";
 
 // Module definitions
 type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
@@ -45,6 +49,7 @@ export function ProjectWorkspace({
   projectId: propProjectId,
   projectName: propProjectName,
 }: ProjectWorkspaceProps) {
+  const { accessToken } = useAuth();
   // Read from sessionStorage if not passed as prop (set by ProjectsListView on navigate)
   const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
   const [projectName, setProjectName] = useState(propProjectName || sessionStorage.getItem('currentProjectName') || 'Project');
@@ -169,9 +174,62 @@ export function ProjectWorkspace({
 
   const [activeTab, setActiveTab] = useState<ModuleId>("overview");
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
+  const [isTeamLoading, setIsTeamLoading] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
 
   const enabledModules = modules.filter(m => m.isEnabled);
   const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
+
+  const enableAndOpenModule = (moduleId: ModuleId) => {
+    setModules(prev => prev.map(m => m.id === moduleId ? { ...m, isEnabled: true } : m));
+    setActiveTab(moduleId);
+  };
+
+  const handleOpenTeam = () => {
+    enableAndOpenModule("team");
+  };
+
+  const handleOpenSettings = () => {
+    setEditingProject({
+      id: projectId,
+      name: projectName,
+      description: "",
+      approvalChain: [],
+      contracts: [],
+      settings: {
+        requireSequentialApproval: true,
+        allowBulkApproval: true,
+        monthlyInvoicing: true,
+      },
+      createdAt: new Date().toISOString(),
+      status: "active",
+    });
+    setIsDrawerOpen(true);
+  };
+
+  const loadTeamMembers = async () => {
+    if (!projectId) return;
+    setIsTeamLoading(true);
+    try {
+      const members = await getProjectMembers(projectId, accessToken);
+      setTeamMembers(members);
+    } catch {
+      setTeamMembers([]);
+    } finally {
+      setIsTeamLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTeamMembers();
+  }, [projectId, accessToken]);
+
+  const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
+    await addProjectMember(projectId, payload, accessToken);
+    toast.success(`Invitation sent to ${payload.userEmail}`);
+    await loadTeamMembers();
+  };
 
   // Listen for custom tab change events (from deep links)
   useEffect(() => {
@@ -230,11 +288,11 @@ export function ProjectWorkspace({
             </div>
             <div className="flex gap-2">
               <NotificationCenterBell />
-              <Button variant="outline" size="sm" className="gap-2">
+              <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenTeam}>
                 <Users className="w-4 h-4" />
-                Team (4)
+                Team ({teamMembers.length || 0})
               </Button>
-              <Button variant="outline" size="sm" className="gap-2">
+              <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenSettings}>
                 <Settings className="w-4 h-4" />
                 Settings
               </Button>
@@ -396,7 +454,12 @@ export function ProjectWorkspace({
             </TabsContent>
 
             <TabsContent value="team" className="space-y-6">
-              <TeamModule />
+              <TeamModule
+                members={teamMembers}
+                loading={isTeamLoading}
+                onInvite={() => setIsInviteOpen(true)}
+                onRefresh={loadTeamMembers}
+              />
             </TabsContent>
 
             <TabsContent value="messages" className="space-y-6">
@@ -405,6 +468,23 @@ export function ProjectWorkspace({
           </Tabs>
         </MonthProvider>
       </div>
+
+      <ProjectConfigurationDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => {
+          setIsDrawerOpen(false);
+          setEditingProject(undefined);
+        }}
+        project={editingProject}
+        onSave={handleSaveProject}
+      />
+
+      <ProjectInviteMemberDialog
+        open={isInviteOpen}
+        projectName={projectName}
+        onOpenChange={setIsInviteOpen}
+        onInvite={handleInviteMember}
+      />
     </div>
   );
 }
@@ -577,15 +657,58 @@ function AnalyticsModule() {
   );
 }
 
-function TeamModule() {
+function TeamModule({
+  members,
+  loading,
+  onInvite,
+  onRefresh,
+}: {
+  members: ProjectMember[];
+  loading: boolean;
+  onInvite: () => void;
+  onRefresh: () => void;
+}) {
   return (
-    <Card className="p-6 text-center py-12">
-      <Users className="w-12 h-12 text-accent-brand mx-auto mb-4" />
-      <h3 className="mb-2">Team Management</h3>
-      <p className="text-muted-foreground mb-4">
-        Manage project members, roles, and permissions.
-      </p>
-      <Badge>Coming Soon</Badge>
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="mb-1">Team Management</h3>
+          <p className="text-sm text-muted-foreground m-0">Manage members, roles, and project access.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onRefresh}>Refresh</Button>
+          <Button size="sm" className="gap-2" onClick={onInvite}>
+            <Plus className="w-4 h-4" />
+            Invite Member
+          </Button>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading team members...</p>
+      ) : members.length === 0 ? (
+        <div className="text-center py-12 border border-dashed rounded-lg">
+          <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">No members found for this project yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {members.map((member) => (
+            <div key={member.id} className="flex items-center justify-between p-3 border rounded-lg">
+              <div>
+                <p className="text-sm font-medium m-0">{member.userName || member.userEmail || member.userId}</p>
+                <p className="text-xs text-muted-foreground m-0">{member.userEmail || member.userId}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">{member.role}</Badge>
+                <Badge variant={member.acceptedAt ? "default" : "secondary"}>
+                  {member.acceptedAt ? "Active" : "Invited"}
+                </Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
