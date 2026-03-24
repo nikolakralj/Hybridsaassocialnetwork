@@ -218,8 +218,9 @@ Owner: Codex
 Phase: Phase 3 / Phase 4 Prep
 Files: src/contexts/TimesheetDataContext.tsx, src/components/timesheets/UnifiedTimesheetView.tsx, src/utils/graph/auto-generate.ts
 Goal: Ensure Timesheets strictly filter by projectId/viewer-meta instead of merging global demo data. Formalize approval fallback rules.
-Status: planned
-Notes: Assigned by Antigravity. Codex to implement, test, and commit. Once done, Antigravity will claim ownership for Phase 4 Invoicing.
+Status: in-progress
+Progress: Slice 1 implemented - new timesheet domain types file, backward-compatible day/week normalization in store, monthly submission envelope APIs in store, and submission validation hook before status changes.
+Notes: Demo-data merge removed, project-scoped viewer fallback added, and person-view draft-seeding restored. Remaining item: formal approval fallback rule in graph generation/approval filtering.
 ```
 
 ```
@@ -228,6 +229,6 @@ Owner: Codex (after task above is done)
 Phase: Phase 3.5
 Files: src/contexts/TimesheetDataContext.tsx, src/types/timesheets.ts (new), src/components/timesheets/*
 Goal: Expand StoredDay to support multi-category TimeEntry[] (regular/overtime/travel/etc), monthly SubmissionEnvelope, custom WorkWeek days, and pre-submission validation.
-Status: planned
+Status: in-progress
 Notes: Full spec approved by Nikola — see src/docs/TIMESHEET_STRATEGY.md. Antigravity authored strategy; Codex implements.
 ```

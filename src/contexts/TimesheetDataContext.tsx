@@ -17,10 +17,20 @@ import {
   saveTimesheetWeek,
   updateTimesheetStatus,
 } from '../utils/api/timesheets-api';
+import type { SubmissionEnvelope, TimeEntry } from '../types/timesheets';
+import {
+  normalizeStoredDay,
+  normalizeStoredWeek,
+  sumWeekHours,
+  sumWeekBillableHours,
+  validateTimesheetWeek,
+} from '../types/timesheets';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+export { sumWeekHours } from '../types/timesheets';
 
 export interface DayTask {
   id: string;
@@ -32,6 +42,8 @@ export interface DayTask {
 export interface StoredDay {
   day: string;       // 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri'
   hours: number;
+  totalHours?: number;
+  entries?: TimeEntry[];
   startTime?: string;  // HH:mm — only editable in full editor
   endTime?: string;
   breakMinutes?: number;
@@ -79,6 +91,8 @@ export interface TimesheetStoreAPI {
   batchApproveMonth: (personId: string, month: string, approverName: string) => number;
   /** Ensure a person has draft week rows for all Mondays in the given month (YYYY-MM) */
   seedMonthForPerson: (personId: string, month: string) => number;
+  submitMonthForPerson: (personId: string, month: string) => SubmissionEnvelope | null;
+  getSubmissionEnvelopes: (personId?: string, month?: string) => SubmissionEnvelope[];
 
   /** Monotonically increasing version — subscribe to re-render on changes */
   version: number;
@@ -92,14 +106,13 @@ export interface TimesheetStoreAPI {
 // ============================================================================
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
+const DEFAULT_PROJECT_ID = 'project-main';
 
 function mkDays(hours: number[]): StoredDay[] {
-  return DAY_LABELS.map((day, i) => ({ day, hours: hours[i] ?? 0 }));
+  return DAY_LABELS.map((day, i) => normalizeStoredDay({ day, hours: hours[i] ?? 0 }));
 }
 
-export function sumWeekHours(week: StoredWeek): number {
-  return week.days.reduce((s, d) => s + d.hours, 0);
-}
+
 
 /** Derive which month a week belongs to from its weekStart (YYYY-MM) */
 function monthOf(weekStart: string): string {
@@ -220,7 +233,7 @@ function createSeedData(): StoredWeek[] {
 
 /** Convert API week data to StoredWeek format */
 function apiWeekToStored(apiWeek: any): StoredWeek {
-  return {
+  return normalizeStoredWeek({
     personId: apiWeek.personId || '',
     weekLabel: apiWeek.weekLabel || generateWeekLabel(apiWeek.weekStart),
     weekStart: apiWeek.weekStart,
@@ -239,7 +252,7 @@ function apiWeekToStored(apiWeek: any): StoredWeek {
     approvedBy: apiWeek.approvedBy,
     rejectedBy: apiWeek.rejectedBy,
     rejectionNote: apiWeek.rejectionNote,
-  };
+  });
 }
 
 // ============================================================================
@@ -251,6 +264,7 @@ const TimesheetStoreContext = createContext<TimesheetStoreAPI | null>(null);
 export function TimesheetStoreProvider({ children }: { children: React.ReactNode }) {
   const { user, accessToken } = useAuth();
   const [weeks, setWeeks] = useState<StoredWeek[]>(createSeedData);
+  const [submissionEnvelopes, setSubmissionEnvelopes] = useState<SubmissionEnvelope[]>([]);
   const [version, setVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
@@ -314,10 +328,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     // Debounce: persist after 500ms of inactivity
     const timeout = setTimeout(async () => {
       try {
+        const normalizedWeek = normalizeStoredWeek(weekData);
         await saveTimesheetWeek(weekStart, {
-          days: weekData.days,
-          tasks: weekData.tasks,
-          status: weekData.status,
+          days: normalizedWeek.days,
+          tasks: normalizedWeek.tasks,
+          status: normalizedWeek.status,
           notes: undefined,
         }, accessToken);
         console.log(`[TimesheetStore] Persisted week ${weekStart} to API`);
@@ -353,11 +368,15 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   // --- Read ---
 
   const getWeeksForPerson = useCallback((personId: string, month: string): StoredWeek[] => {
-    return weeks.filter(w => w.personId === personId && monthOf(w.weekStart) === month);
+    return weeks
+      .filter(w => w.personId === personId && monthOf(w.weekStart) === month)
+      .map(normalizeStoredWeek);
   }, [weeks]);
 
   const getAllWeeksForMonth = useCallback((month: string): StoredWeek[] => {
-    return weeks.filter(w => monthOf(w.weekStart) === month);
+    return weeks
+      .filter(w => monthOf(w.weekStart) === month)
+      .map(normalizeStoredWeek);
   }, [weeks]);
 
   const getPersonIds = useCallback((): string[] => {
@@ -370,12 +389,12 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     setWeeks(prev => {
       const updated = prev.map(w =>
         w.personId === personId && w.weekStart === weekStart
-          ? { ...w, days: days.map(d => ({ ...d })) }
+          ? { ...w, days: days.map(d => normalizeStoredDay({ ...d })) }
           : w
       );
       // Find the updated week and persist
       const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
-      if (updatedWeek) persistWeek(personId, weekStart, updatedWeek);
+      if (updatedWeek) persistWeek(personId, weekStart, normalizeStoredWeek(updatedWeek));
       return updated;
     });
     bump();
@@ -385,11 +404,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     setWeeks(prev => {
       const updated = prev.map(w =>
         w.personId === personId && w.weekStart === weekStart
-          ? { ...w, days: w.days.map((d, i) => i === dayIndex ? { ...day } : d) }
+          ? { ...w, days: w.days.map((d, i) => i === dayIndex ? normalizeStoredDay({ ...day }) : d) }
           : w
       );
       const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
-      if (updatedWeek) persistWeek(personId, weekStart, updatedWeek);
+      if (updatedWeek) persistWeek(personId, weekStart, normalizeStoredWeek(updatedWeek));
       return updated;
     });
     bump();
@@ -399,7 +418,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     setWeeks(prev => {
       const updated = prev.map(w =>
         w.personId === personId && w.weekStart === weekStart
-          ? { ...w, tasks: [...tasks] }
+          ? normalizeStoredWeek({ ...w, tasks: [...tasks] })
           : w
       );
       const updatedWeek = updated.find(w => w.personId === personId && w.weekStart === weekStart);
@@ -415,9 +434,19 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     status: WeekStatus,
     meta?: { note?: string; by?: string }
   ) => {
+    let submissionBlocked = false;
     setWeeks(prev => prev.map(w => {
       if (w.personId !== personId || w.weekStart !== weekStart) return w;
-      const updated: StoredWeek = { ...w, status };
+      const normalizedWeek = normalizeStoredWeek(w);
+      if (status === 'submitted') {
+        const validation = validateTimesheetWeek(normalizedWeek);
+        if (validation.errors.length > 0) {
+          submissionBlocked = true;
+          console.warn('[TimesheetStore] Submission blocked by validation', validation.errors);
+          return normalizedWeek;
+        }
+      }
+      const updated: StoredWeek = { ...normalizedWeek, status };
       if (status === 'submitted') updated.submittedAt = new Date().toISOString();
       if (status === 'approved' && meta?.by) updated.approvedBy = meta.by;
       if (status === 'rejected') {
@@ -433,6 +462,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       }
       return updated;
     }));
+    if (submissionBlocked) return;
     // Persist status change to API
     persistStatus(personId, weekStart, status, meta);
     bump();
@@ -479,7 +509,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         days: mkDays([0, 0, 0, 0, 0]),
         tasks: [],
         status: 'draft',
-      }));
+      }))
+      .map(normalizeStoredWeek);
 
     if (created.length === 0) return 0;
 
@@ -489,6 +520,72 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     return created.length;
   }, [bump, persistWeek, weeks]);
+
+  const submitMonthForPerson = useCallback((personId: string, month: string): SubmissionEnvelope | null => {
+    const personWeeks = weeks
+      .filter(w => w.personId === personId && monthOf(w.weekStart) === month)
+      .map(normalizeStoredWeek);
+
+    if (personWeeks.length === 0) return null;
+
+    const submitCandidates = personWeeks.filter(w => w.status === 'draft' || w.status === 'rejected');
+    if (submitCandidates.length === 0) return null;
+
+    const periodStart = submitCandidates
+      .map(w => w.weekStart)
+      .sort()[0];
+    const sortedWeekStarts = submitCandidates.map(w => w.weekStart).sort();
+    const periodEndDate = new Date(`${sortedWeekStarts[sortedWeekStarts.length - 1]}T00:00:00`);
+    periodEndDate.setDate(periodEndDate.getDate() + 6);
+    const periodEnd = formatISODateLocal(periodEndDate);
+    const submittedAt = new Date().toISOString();
+
+    const envelope: SubmissionEnvelope = {
+      id: `submission_${personId}_${month}_${Date.now()}`,
+      type: 'monthly',
+      personId,
+      projectId: sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID,
+      period: { start: periodStart, end: periodEnd },
+      weekIds: submitCandidates.map(w => w.weekStart),
+      status: 'submitted',
+      submittedAt,
+      totalHours: submitCandidates.reduce((sum, week) => sum + sumWeekHours(week), 0),
+      totalBillableHours: submitCandidates.reduce((sum, week) => sum + sumWeekBillableHours(week), 0),
+    };
+
+    setWeeks(prev => prev.map(w => {
+      if (w.personId !== personId || monthOf(w.weekStart) !== month) return w;
+      if (w.status !== 'draft' && w.status !== 'rejected') return w;
+      const normalized = normalizeStoredWeek(w);
+      return {
+        ...normalized,
+        status: 'submitted',
+        submittedAt,
+      };
+    }));
+
+    submitCandidates.forEach(week => {
+      persistStatus(personId, week.weekStart, 'submitted');
+    });
+
+    setSubmissionEnvelopes(prev => {
+      const withoutPrior = prev.filter(
+        e => !(e.personId === personId && e.period.start.startsWith(month) && e.type === 'monthly')
+      );
+      return [...withoutPrior, envelope];
+    });
+
+    bump();
+    return envelope;
+  }, [weeks, persistStatus, bump]);
+
+  const getSubmissionEnvelopes = useCallback((personId?: string, month?: string): SubmissionEnvelope[] => {
+    return submissionEnvelopes.filter(envelope => {
+      if (personId && envelope.personId !== personId) return false;
+      if (month && !envelope.period.start.startsWith(month)) return false;
+      return true;
+    });
+  }, [submissionEnvelopes]);
 
   const api = useMemo<TimesheetStoreAPI>(() => ({
     getWeeksForPerson,
@@ -500,9 +597,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     setWeekStatus,
     batchApproveMonth,
     seedMonthForPerson,
+    submitMonthForPerson,
+    getSubmissionEnvelopes,
     version,
     isLoading,
-  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, seedMonthForPerson, version, isLoading]);
+  }), [getWeeksForPerson, getAllWeeksForMonth, getPersonIds, updateWeekDays, updateSingleDay, updateWeekTasks, setWeekStatus, batchApproveMonth, seedMonthForPerson, submitMonthForPerson, getSubmissionEnvelopes, version, isLoading]);
 
   return (
     <TimesheetStoreContext.Provider value={api}>

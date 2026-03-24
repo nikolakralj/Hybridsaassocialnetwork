@@ -1,209 +1,271 @@
-/**
- * Timesheet Types - Production Ready
- * Extracted from demo data and consolidated for production use
- */
-
-// ============================================================================
-// ORGANIZATIONS
-// ============================================================================
-
-export type OrganizationType = 'company' | 'agency' | 'freelancer';
-
-export interface Organization {
+export interface DayTask {
   id: string;
-  name: string;
-  type: OrganizationType;
-  logo?: string;
+  description: string;
+  hours: number;
+  category?: string;
 }
 
-// ============================================================================
-// CONTRACTS
-// ============================================================================
+export type TimeCategory =
+  | 'regular'
+  | 'overtime'
+  | 'travel'
+  | 'on_call'
+  | 'training'
+  | 'admin'
+  | 'sick'
+  | 'vacation'
+  | 'public_holiday';
 
-export type ContractType = 'hourly' | 'daily' | 'fixed' | 'custom';
-export type ContractorRole = 'individual_contributor' | 'company_employee' | 'agency_contractor';
-
-export interface ProjectContract {
-  id: string;
-  userId: string;
-  userName: string;
-  userRole: ContractorRole;
-  organizationId: string;
-  projectId: string;
-  contractType: ContractType;
-  rate: number; // Unified rate field
-  hourlyRate?: number;
-  dailyRate?: number;
-  fixedAmount?: number;
-  hideRate?: boolean; // Role-based rate visibility
-  startDate: string;
-  endDate?: string;
+export interface TimeEntryMetadata {
+  distanceKm?: number;
+  vehicleType?: string;
+  location?: string;
 }
 
-// ============================================================================
-// APPROVAL STATUS & FLAGS
-// ============================================================================
-
-// Database status values (matches Postgres CHECK constraint)
-export type ApprovalStatus = 
-  | 'draft' 
-  | 'submitted' 
-  | 'manager_approved' 
-  | 'client_approved' 
-  | 'fully_approved' 
-  | 'rejected'
-  // Legacy values for backward compatibility
-  | 'pending' 
-  | 'approved' 
-  | 'changes_requested';
-
-export interface ReviewFlag {
+export interface TimeEntry {
   id: string;
-  type: 'warning' | 'error' | 'info';
-  message: string;
-  severity: 'low' | 'medium' | 'high';
-}
-
-export interface AllocatedTask {
-  id: string;
-  name: string;
-  allocatedHours: number;
-  loggedHours: number;
-  status: 'on_track' | 'over' | 'under' | 'not_started';
-}
-
-export interface Attachment {
-  id: string;
-  name: string;
-  type: string;
-  url: string;
-  uploadedAt: string;
-  size: number; // bytes
-}
-
-// ============================================================================
-// TIMESHEET PERIODS (WEEKLY)
-// ============================================================================
-
-export interface TimesheetPeriod {
-  id: string;
-  contractId: string;
-  weekStartDate: string; // ISO date (Monday)
-  weekEndDate: string; // ISO date (Sunday)
-  totalHours: number;
-  totalDays?: number;
-  totalAmount?: number; // Calculated amount for this period
-  status: ApprovalStatus;
-  submittedAt?: string;
-  approvedAt?: string;
-  approvedBy?: string;
-  rejectedAt?: string;
-  rejectedBy?: string;
-  rejectionReason?: string;
-  approvalHistory: ApprovalHistoryEntry[];
-  
-  // Enhanced approval context
-  contractorNotes?: string;
-  attachments?: Attachment[];
-  reviewFlags?: ReviewFlag[];
-  allocatedTasks?: AllocatedTask[];
-  projectBudget?: {
-    allocated: number;
-    spent: number;
-    thisPeriod: number;
-  };
-  
-  // Entries for this period (populated when needed for drawer)
-  entries?: TimesheetEntry[];
-}
-
-export interface ApprovalHistoryEntry {
-  timestamp: string;
-  actor: string;
-  action: 'submitted' | 'approved' | 'rejected' | 'changes_requested';
-  comment?: string;
-}
-
-// ============================================================================
-// TIMESHEET ENTRIES (DAILY)
-// ============================================================================
-
-export interface TimesheetEntry {
-  id: string;
-  periodId: string;
-  date: string; // ISO date
-  hours?: number;
-  days?: number;
-  taskDescription: string;
+  category: TimeCategory;
+  hours: number;
+  description?: string;
   billable: boolean;
-  startTime?: string; // HH:MM format
-  endTime?: string; // HH:MM format
+  rateMultiplier?: number;
+  metadata?: TimeEntryMetadata;
+}
+
+export interface StoredDay {
+  day: string;
+  hours: number;
+  totalHours?: number;
+  entries?: TimeEntry[];
+  startTime?: string;
+  endTime?: string;
   breakMinutes?: number;
   notes?: string;
+  tasks?: DayTask[];
 }
 
-// ============================================================================
-// MONTHLY AGGREGATION
-// ============================================================================
+export type WeekStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
 
-export interface MonthlyTimesheetView {
-  contractId: string;
-  month: string; // YYYY-MM format
-  monthStart: string; // First day of month (ISO date)
-  monthEnd: string; // Last day of month (ISO date)
-  weeks: TimesheetPeriod[];
-  totalHours: number;
-  totalDays: number;
-  totalAmount: number | null;
-  aggregatedFlags: ReviewFlag[];
-  aggregatedTasks: AllocatedTask[];
-  aggregatedBudget: {
-    allocated: number;
-    spent: number;
-    monthPeriod: number;
-  } | null;
-  monthlyStatus: ApprovalStatus; // Overall status
-  allAttachments: Attachment[];
-  combinedNotes: string[];
+export interface StoredWeek {
+  personId: string;
+  weekLabel: string;
+  weekStart: string;
+  days: StoredDay[];
+  tasks: string[];
+  status: WeekStatus;
+  submittedAt?: string;
+  approvedBy?: string;
+  rejectedBy?: string;
+  rejectionNote?: string;
 }
 
-// ============================================================================
-// UTILITY TYPES
-// ============================================================================
+export type SubmissionEnvelopeType = 'weekly' | 'monthly' | 'custom';
 
-export interface TimesheetStats {
-  total: number;
-  pending: number;
-  approved: number;
-  rejected: number;
-  changesRequested?: number;
-}
-
-export interface ContractWithPeriods extends ProjectContract {
-  periods: TimesheetPeriod[];
-  currentPeriod?: TimesheetPeriod;
-  monthlyView?: MonthlyTimesheetView;
-}
-
-export interface OrganizationWithContracts extends Organization {
-  contracts: ContractWithPeriods[];
-  stats: TimesheetStats;
-}
-
-// ============================================================================
-// FILTER TYPES
-// ============================================================================
-
-export type OrganizationFilter = 'all' | string; // 'all' or specific org ID
-export type StatusFilter = 'all' | ApprovalStatus;
-export type RoleFilter = 'all' | ContractorRole;
-
-export interface TimesheetFilters {
-  organization: OrganizationFilter;
-  status: StatusFilter;
-  role: RoleFilter;
-  dateRange?: {
+export interface SubmissionEnvelope {
+  id: string;
+  type: SubmissionEnvelopeType;
+  personId: string;
+  projectId: string;
+  period: {
     start: string;
     end: string;
   };
+  weekIds: string[];
+  status: WeekStatus;
+  submittedAt?: string;
+  approvedBy?: string;
+  totalHours: number;
+  totalBillableHours: number;
+}
+
+export type ValidationSeverity = 'error' | 'warning';
+
+export interface ValidationIssue {
+  code: string;
+  message: string;
+  severity: ValidationSeverity;
+  day?: string;
+}
+
+export interface ValidationResult {
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+}
+
+export interface ValidationOptions {
+  maxDailyHours?: number;
+  maxWeeklyHours?: number;
+  requireEntryDescription?: boolean;
+  warnOnMissingDays?: boolean;
+  blockFutureDates?: boolean;
+}
+
+const NON_BILLABLE_CATEGORIES = new Set<TimeCategory>([
+  'training',
+  'admin',
+  'sick',
+  'vacation',
+  'public_holiday',
+]);
+
+export function defaultBillableForCategory(category: TimeCategory): boolean {
+  return !NON_BILLABLE_CATEGORIES.has(category);
+}
+
+export function makeRegularEntry(hours: number, description?: string): TimeEntry {
+  return {
+    id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    category: 'regular',
+    hours,
+    description,
+    billable: true,
+  };
+}
+
+export function computeDayHours(day: StoredDay): number {
+  if (Array.isArray(day.entries) && day.entries.length > 0) {
+    return day.entries.reduce((sum, entry) => sum + (entry.hours || 0), 0);
+  }
+  if (typeof day.totalHours === 'number') {
+    return day.totalHours;
+  }
+  return day.hours || 0;
+}
+
+export function normalizeStoredDay(day: StoredDay): StoredDay {
+  const normalizedEntries =
+    Array.isArray(day.entries) && day.entries.length > 0
+      ? day.entries.map((entry) => ({
+          ...entry,
+          billable:
+            typeof entry.billable === 'boolean'
+              ? entry.billable
+              : defaultBillableForCategory(entry.category),
+        }))
+      : day.tasks && day.tasks.length > 0
+      ? day.tasks.map((task) => ({
+          id: task.id || `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          category: 'regular' as const,
+          hours: task.hours || 0,
+          description: task.description,
+          billable: true,
+        }))
+      : day.hours > 0
+      ? [makeRegularEntry(day.hours)]
+      : [];
+
+  const totalHours = normalizedEntries.reduce((sum, entry) => sum + (entry.hours || 0), 0);
+
+  return {
+    ...day,
+    entries: normalizedEntries,
+    totalHours,
+    hours: totalHours,
+  };
+}
+
+export function normalizeStoredWeek(week: StoredWeek): StoredWeek {
+  return {
+    ...week,
+    days: (week.days || []).map((day) => normalizeStoredDay(day)),
+  };
+}
+
+export function sumWeekHours(week: StoredWeek): number {
+  return (week.days || []).reduce((sum, day) => sum + computeDayHours(day), 0);
+}
+
+export function sumWeekBillableHours(week: StoredWeek): number {
+  return (week.days || []).reduce((sum, day) => {
+    const normalized = normalizeStoredDay(day);
+    return (
+      sum +
+      normalized.entries!.reduce((entrySum, entry) => {
+        if (!entry.billable) return entrySum;
+        return entrySum + (entry.hours || 0);
+      }, 0)
+    );
+  }, 0);
+}
+
+function weekDayDate(weekStart: string, dayIndex: number): Date {
+  const start = new Date(`${weekStart}T00:00:00`);
+  const result = new Date(start);
+  result.setDate(start.getDate() + dayIndex);
+  return result;
+}
+
+export function validateTimesheetWeek(
+  week: StoredWeek,
+  options?: ValidationOptions
+): ValidationResult {
+  const maxDailyHours = options?.maxDailyHours ?? 12;
+  const maxWeeklyHours = options?.maxWeeklyHours ?? 60;
+  const requireEntryDescription = options?.requireEntryDescription ?? false;
+  const warnOnMissingDays = options?.warnOnMissingDays ?? true;
+  const blockFutureDates = options?.blockFutureDates ?? true;
+
+  const errors: ValidationIssue[] = [];
+  const warnings: ValidationIssue[] = [];
+
+  week.days.forEach((day, dayIndex) => {
+    const normalized = normalizeStoredDay(day);
+    const dayHours = normalized.totalHours || 0;
+
+    if (dayHours > maxDailyHours) {
+      errors.push({
+        code: 'MAX_DAILY_HOURS_EXCEEDED',
+        message: `${day.day} has ${dayHours}h (max ${maxDailyHours}h).`,
+        severity: 'error',
+        day: day.day,
+      });
+    }
+
+    if (warnOnMissingDays && dayHours === 0) {
+      warnings.push({
+        code: 'MISSING_DAY_HOURS',
+        message: `${day.day} has no logged hours.`,
+        severity: 'warning',
+        day: day.day,
+      });
+    }
+
+    if (blockFutureDates && dayHours > 0) {
+      const date = weekDayDate(week.weekStart, dayIndex);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (date.getTime() > today.getTime()) {
+        errors.push({
+          code: 'FUTURE_DATE_HOURS',
+          message: `${day.day} is in the future and cannot be submitted.`,
+          severity: 'error',
+          day: day.day,
+        });
+      }
+    }
+
+    if (requireEntryDescription) {
+      normalized.entries?.forEach((entry) => {
+        if (entry.hours > 0 && !entry.description?.trim()) {
+          warnings.push({
+            code: 'ENTRY_DESCRIPTION_MISSING',
+            message: `${day.day} has entries without description.`,
+            severity: 'warning',
+            day: day.day,
+          });
+        }
+      });
+    }
+  });
+
+  const weeklyHours = sumWeekHours(week);
+  if (weeklyHours > maxWeeklyHours) {
+    warnings.push({
+      code: 'MAX_WEEKLY_HOURS_EXCEEDED',
+      message: `Week has ${weeklyHours}h (recommended max ${maxWeeklyHours}h).`,
+      severity: 'warning',
+    });
+  }
+
+  return { errors, warnings };
 }

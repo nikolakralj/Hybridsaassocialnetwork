@@ -495,6 +495,7 @@ export function ProjectWorkspace({
                   id: effectiveViewer.nodeId,
                   type: effectiveViewer.type,
                   name: effectiveViewer.name,
+                  orgId: effectiveViewer.orgId,
                 } : undefined}
               />
             </TabsContent>
