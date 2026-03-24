@@ -120,8 +120,12 @@ Run locally:
 
 ### Next (recommended)
 
-1. Finalize approval fallback policy (same-company approver first, then upstream)
-2. Implement policy in graph generation + approval queue filtering
+**🔥 Immediate Codex Handoff Task:**
+1. **Fix Timesheets Data Sync:** The `TimesheetDataContext.tsx` is currently merging hardcoded demo data (Alex Chen, BrightWorks) into the UI. Ensure `UnifiedTimesheetView.tsx` (and related timesheet tables) strictly filter by the actual `projectId` and the `workgraph-viewer-meta:${projectId}` state. Discard demo profiles so that only the real graph members (e.g., Nikola, David, John) render in the Timesheets tab.
+2. **Approval Fallback Policy:** Finalize approval fallback policy (same-company approver first, then upstream) and implement policy in graph generation + approval queue filtering.
+
+*(Once Codex completes these fixes, update this worklog and Antigravity will scaffold Phase 4 Invoicing.)*
+
 3. Add lightweight test harness for role/viewer permutations
 4. Start Phase 4 invoice generation scaffold (approved timesheet -> invoice draft)
 
@@ -204,4 +208,16 @@ Files:
 Goal:
 Status: planned | in-progress | done
 Notes:
+```
+
+### Current Active Tasks
+
+```
+Task: Fix Timesheet Demo Data Sync + Approval Fallback Policy
+Owner: Codex
+Phase: Phase 3 / Phase 4 Prep
+Files: src/contexts/TimesheetDataContext.tsx, src/components/timesheets/UnifiedTimesheetView.tsx, src/utils/graph/auto-generate.ts
+Goal: Ensure Timesheets strictly filter by projectId/viewer-meta instead of merging global demo data. Formalize approval fallback rules.
+Status: planned
+Notes: Assigned by Antigravity. Codex to implement, test, and commit. Once done, Antigravity will claim ownership for Phase 4 Invoicing.
 ```
