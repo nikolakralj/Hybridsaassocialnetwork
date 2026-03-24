@@ -139,3 +139,69 @@ When proposing changes:
 1. Keep changes aligned to Phase 3/4 priorities.
 2. Avoid adding enterprise-scale features prematurely.
 3. Document behavior changes in this worklog with date + commit hash.
+
+---
+
+## Two-Agent Coding Protocol (Codex + Antigravity)
+
+This protocol is active while Claude is unavailable.
+
+### Roles
+
+- **Antigravity**
+  - proposes strategy and comments on roadmap/product direction
+  - can implement isolated feature slices when ownership is clearly assigned
+- **Codex**
+  - owns integration, bug fixes, build verification, and final push safety checks
+  - resolves merge conflicts and keeps implementation aligned with roadmap phases
+
+### File Ownership Rule (Critical)
+
+- Do not edit the same file in parallel.
+- Before starting a task, claim file ownership in this worklog:
+  - `Owner: Codex` or `Owner: Antigravity`
+  - list exact file paths
+  - add claim timestamp
+- Ownership is released only after:
+  - code is committed, or
+  - a handoff note is written here.
+
+### Task Lifecycle
+
+1. **Plan**
+   - Add a short task entry under "Active Tasks" with scope, owner, files, and expected output.
+2. **Implement**
+   - Keep commits small and scoped to owned files.
+3. **Handoff**
+   - Write what changed, risks, and test status.
+4. **Integrate**
+   - Codex pulls latest, verifies build/runtime, and pushes stable result.
+
+### Branch / Commit Convention
+
+- Default branch: `main` (current repo practice).
+- Commit message format:
+  - `feat: ...` for new functionality
+  - `fix: ...` for defects/regressions
+  - `docs: ...` for protocol/spec/worklog updates
+
+### Conflict Prevention Checklist
+
+- Pull latest before editing.
+- Declare owned files in this worklog before coding.
+- If overlap is discovered, pause and reassign ownership in this file first.
+- Never force-push over another agent's work.
+
+### Active Tasks (Template)
+
+Copy and fill this block for each new task:
+
+```
+Task:
+Owner:
+Phase:
+Files:
+Goal:
+Status: planned | in-progress | done
+Notes:
+```
