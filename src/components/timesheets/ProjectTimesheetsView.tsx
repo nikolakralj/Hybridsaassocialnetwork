@@ -28,7 +28,8 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
-import { useTimesheetStore, sumWeekHours } from '../../contexts/TimesheetDataContext';
+import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
+import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask } from '../../contexts/TimesheetDataContext';
 import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
@@ -36,34 +37,85 @@ import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
 
 // ============================================================================
-// Person / Org helpers
+// Person / Org helpers — graph-aware resolution
 // ============================================================================
 
+type NameDirEntry = { name: string; type: string; orgId?: string };
+type NameDir = Record<string, NameDirEntry>;
+
+let activeProjectId = '';
+let cachedNameDir: NameDir | null = null;
+let cachedOrgMap: Record<string, OrgInfo> | null = null;
+
+function getNameDir(): NameDir {
+  if (!activeProjectId) return {};
+  if (cachedNameDir) return cachedNameDir;
+  try {
+    const raw = sessionStorage.getItem(`workgraph-name-dir:${activeProjectId}`);
+    cachedNameDir = raw ? JSON.parse(raw) : {};
+    return cachedNameDir!;
+  } catch {
+    return {};
+  }
+}
+
 function personName(id: string): string {
-  return TEST_PERSONAS.find(t => t.id === id)?.name ?? id;
+  const entry = getNameDir()[id];
+  if (entry?.name) return entry.name;
+  const persona = TEST_PERSONAS.find(t => t.id === id);
+  if (persona?.name) return persona.name;
+  return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 24);
 }
 function personInitials(id: string): string {
   return personName(id).split(' ').map(n => n[0]).join('');
 }
 function personOrgId(id: string): string | undefined {
-  return TEST_PERSONAS.find(t => t.id === id)?.graphOrgId;
+  return getNameDir()[id]?.orgId ?? TEST_PERSONAS.find(t => t.id === id)?.graphOrgId;
 }
 function personViewerType(id: string): string | undefined {
   return TEST_PERSONAS.find(t => t.id === id)?.graphViewerType;
 }
 
 interface OrgInfo { id: string; name: string; color: string; bgColor: string; }
-const ORG_MAP: Record<string, OrgInfo> = {
-  'org-acme': { id: 'org-acme', name: 'Acme Dev Studio', color: 'text-blue-700', bgColor: 'bg-blue-100' },
-  'org-brightworks': { id: 'org-brightworks', name: 'BrightWorks Design', color: 'text-purple-700', bgColor: 'bg-purple-100' },
-  '__freelancers__': { id: '__freelancers__', name: 'Independent Freelancers', color: 'text-emerald-700', bgColor: 'bg-emerald-100' },
-};
+
+function getOrgMap(): Record<string, OrgInfo> {
+  if (cachedOrgMap) return cachedOrgMap;
+  const PALETTE: Array<[string, string]> = [
+    ['text-blue-700', 'bg-blue-100'],
+    ['text-purple-700', 'bg-purple-100'],
+    ['text-amber-700', 'bg-amber-100'],
+    ['text-rose-700', 'bg-rose-100'],
+    ['text-cyan-700', 'bg-cyan-100'],
+    ['text-pink-700', 'bg-pink-100'],
+  ];
+  const map: Record<string, OrgInfo> = {};
+  let colorIdx = 0;
+
+  Object.entries(getNameDir()).forEach(([id, entry]) => {
+    if (entry.type === 'party' && !map[id]) {
+      const [color, bgColor] = PALETTE[colorIdx % PALETTE.length];
+      map[id] = { id, name: entry.name, color, bgColor };
+      colorIdx++;
+    }
+  });
+
+  if (Object.keys(map).length === 0) {
+    map['org-acme'] = { id: 'org-acme', name: 'Acme Dev Studio', color: 'text-blue-700', bgColor: 'bg-blue-100' };
+    map['org-brightworks'] = { id: 'org-brightworks', name: 'BrightWorks Design', color: 'text-purple-700', bgColor: 'bg-purple-100' };
+  }
+  map['__freelancers__'] = { id: '__freelancers__', name: 'Independent Freelancers', color: 'text-emerald-700', bgColor: 'bg-emerald-100' };
+  map['__other__'] = { id: '__other__', name: 'Other', color: 'text-slate-700', bgColor: 'bg-slate-100' };
+  
+  cachedOrgMap = map;
+  return map;
+}
 
 function getOrgForPerson(pid: string): OrgInfo {
+  const map = getOrgMap();
   const oid = personOrgId(pid);
-  if (oid && ORG_MAP[oid]) return ORG_MAP[oid];
-  if (personViewerType(pid) === 'freelancer') return ORG_MAP['__freelancers__'];
-  return { id: '__other__', name: 'Other', color: 'text-slate-700', bgColor: 'bg-slate-100' };
+  if (oid && map[oid]) return map[oid];
+  if (personViewerType(pid) === 'freelancer') return map['__freelancers__'];
+  return map['__other__'] ?? { id: '__other__', name: 'Other', color: 'text-slate-700', bgColor: 'bg-slate-100' };
 }
 
 // ============================================================================
@@ -114,6 +166,7 @@ interface ProjectTimesheetsViewProps {
     id: string;
     type: 'admin' | 'company' | 'agency' | 'client' | 'freelancer';
     name: string;
+    orgId?: string;
   };
 }
 
@@ -122,6 +175,12 @@ interface ProjectTimesheetsViewProps {
 // ============================================================================
 
 export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTimesheetsViewProps) {
+  if (activeProjectId !== projectId) {
+    activeProjectId = projectId;
+    cachedNameDir = null;
+    cachedOrgMap = null;
+  }
+
   const store = useTimesheetStore();
   const { currentPersona } = usePersona();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();

@@ -1330,6 +1330,23 @@ export function WorkGraphBuilder({
   const skipNextViewerPersistRef = useRef(false);
   const hasRestoredViewerRef = useRef(false);
 
+  // Persist a lightweight name directory so other tabs (Timesheets, Approvals)
+  // can resolve person/party names from graph node IDs.
+  useEffect(() => {
+    const dir: Record<string, { name: string; type: string; orgId?: string }> = {};
+    viewerOptions.forEach(v => {
+      if (v.nodeId === '__admin__') return;
+      dir[v.nodeId] = { name: v.name, type: v.type, orgId: v.orgId };
+    });
+    // Also include party names from allNodes
+    allNodes.forEach(n => {
+      if (n.type === 'party' && n.data?.name && !dir[n.id]) {
+        dir[n.id] = { name: n.data.name, type: 'party' };
+      }
+    });
+    sessionStorage.setItem(`workgraph-name-dir:${projectId}`, JSON.stringify(dir));
+  }, [viewerOptions, allNodes, projectId]);
+
   // ── Sync with PersonaContext ──
   const { setPersonaByNodeId, currentPersona } = usePersona();
 

@@ -52,6 +52,9 @@ We intentionally avoid jumping to enterprise/real-time/mobile or complex AI Matc
 - `b17a213` Phase 3 hardening for viewer/persistence/graph migration
 - `5d0d660` Keep real project people visible outside demo snapshots
 - `aaaaa8e` Restore coworker visibility for person viewers
+- `build-fix` (Antigravity) Remove duplicate `sumWeekHours` declaration in `TimesheetDataContext.tsx`
+- `fix` (Antigravity) Pass `orgId` to `ProjectTimesheetsView` in `ProjectWorkspace.tsx` to enable Codex's person-viewer fix
+
 
 ---
 
@@ -220,6 +223,7 @@ Files: src/contexts/TimesheetDataContext.tsx, src/components/timesheets/UnifiedT
 Goal: Ensure Timesheets strictly filter by projectId/viewer-meta instead of merging global demo data. Formalize approval fallback rules.
 Status: in-progress
 Progress: Slice 1 implemented - new timesheet domain types file, backward-compatible day/week normalization in store, monthly submission envelope APIs in store, and submission validation hook before status changes.
+Update: Antigravity fixed a duplicate `sumWeekHours` declaration regression from commit 2982d8c.
 Notes: Demo-data merge removed, project-scoped viewer fallback added, and person-view draft-seeding restored. Remaining item: formal approval fallback rule in graph generation/approval filtering.
 ```
 
@@ -232,3 +236,4 @@ Goal: Expand StoredDay to support multi-category TimeEntry[] (regular/overtime/t
 Status: in-progress
 Notes: Full spec approved by Nikola — see src/docs/TIMESHEET_STRATEGY.md. Antigravity authored strategy; Codex implements.
 ```
+

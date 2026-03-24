@@ -48,7 +48,8 @@ import {
   getSnapshotForMonth,
   getPersonMonthlyActivity,
 } from './graph-data-flows';
-import { useTimesheetStoreSafe, sumWeekHours } from '../../contexts/TimesheetDataContext';
+import { useTimesheetStoreSafe } from '../../contexts/TimesheetDataContext';
+import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay } from '../../contexts/TimesheetDataContext';
 
 // ============================================================================

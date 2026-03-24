@@ -30,8 +30,6 @@ import {
 // Types
 // ============================================================================
 
-export { sumWeekHours } from '../types/timesheets';
-
 export interface DayTask {
   id: string;
   description: string;
@@ -91,7 +89,7 @@ export interface TimesheetStoreAPI {
   batchApproveMonth: (personId: string, month: string, approverName: string) => number;
   /** Ensure a person has draft week rows for all Mondays in the given month (YYYY-MM) */
   seedMonthForPerson: (personId: string, month: string) => number;
-  submitMonthForPerson: (personId: string, month: string) => SubmissionEnvelope | null;
+  submitMonthForPerson: (personId: string, month: string, projectId?: string) => SubmissionEnvelope | null;
   getSubmissionEnvelopes: (personId?: string, month?: string) => SubmissionEnvelope[];
 
   /** Monotonically increasing version — subscribe to re-render on changes */
@@ -163,6 +161,7 @@ function getMondaysForMonth(monthKey: string): string[] {
 // ============================================================================
 
 function createSeedData(): StoredWeek[] {
+  if (!import.meta.env.DEV) return [];
   return [
     // --- Sarah Johnson (user-sarah) ---
     { personId: 'user-sarah', weekLabel: 'Nov 3-7',   weekStart: '2025-11-03', days: mkDays([8,7,8,7,6]), tasks: ['Frontend dev','Code review'], status: 'approved' },
@@ -521,7 +520,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     return created.length;
   }, [bump, persistWeek, weeks]);
 
-  const submitMonthForPerson = useCallback((personId: string, month: string): SubmissionEnvelope | null => {
+  const submitMonthForPerson = useCallback((personId: string, month: string, projectId?: string): SubmissionEnvelope | null => {
     const personWeeks = weeks
       .filter(w => w.personId === personId && monthOf(w.weekStart) === month)
       .map(normalizeStoredWeek);
@@ -544,7 +543,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       id: `submission_${personId}_${month}_${Date.now()}`,
       type: 'monthly',
       personId,
-      projectId: sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID,
+      projectId: projectId || sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID,
       period: { start: periodStart, end: periodEnd },
       weekIds: submitCandidates.map(w => w.weekStart),
       status: 'submitted',
