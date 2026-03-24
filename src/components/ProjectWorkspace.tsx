@@ -46,6 +46,17 @@ interface ProjectWorkspaceProps {
   projectName?: string;
 }
 
+interface ProjectConfiguration {
+  id: string;
+  name: string;
+  description?: string;
+  approvalChain: any[];
+  contracts: any[];
+  settings: any;
+  createdAt: string;
+  status: 'active' | 'archived' | 'draft';
+}
+
 export function ProjectWorkspace({ 
   projectId: propProjectId,
   projectName: propProjectName,
@@ -175,6 +186,8 @@ export function ProjectWorkspace({
 
   const [activeTab, setActiveTab] = useState<ModuleId>("overview");
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -207,6 +220,12 @@ export function ProjectWorkspace({
       status: "active",
     });
     setIsDrawerOpen(true);
+  };
+
+  const handleSaveProject = (project: ProjectConfiguration) => {
+    setProjectName(project.name || projectName);
+    sessionStorage.setItem('currentProjectName', project.name || projectName);
+    toast.success('Project settings updated');
   };
 
   const loadTeamMembers = async () => {
