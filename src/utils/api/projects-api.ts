@@ -54,6 +54,29 @@ function readLocalProjects(): LocalProjectRecord[] {
   }
 }
 
+function readLocalProjectList() {
+  return readLocalProjects()
+    .map((record) => record.project)
+    .filter(Boolean);
+}
+
+function hasLocalProject(projectId: string): boolean {
+  return readLocalProjects().some((record) => record.project?.id === projectId);
+}
+
+function mergeProjectsById(primary: any[], secondary: any[]) {
+  const merged = new Map<string, any>();
+  [...secondary, ...primary].forEach((project) => {
+    if (!project?.id) return;
+    merged.set(project.id, project);
+  });
+  return [...merged.values()].sort(
+    (a, b) =>
+      new Date(b.updatedAt || b.createdAt || 0).getTime() -
+      new Date(a.updatedAt || a.createdAt || 0).getTime()
+  );
+}
+
 function writeLocalProjects(records: LocalProjectRecord[]) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(records));
@@ -207,7 +230,7 @@ export async function listProjects(accessToken?: string | null) {
       console.error('listProjects error:', data);
       throw new Error(data.error || 'Failed to list projects');
     }
-    return data.projects || [];
+    return mergeProjectsById(data.projects || [], readLocalProjectList());
   } catch (error) {
     if (canUseLocalFallback(undefined, accessToken)) {
       return localListProjects();
@@ -223,6 +246,9 @@ export async function getProject(projectId: string, accessToken?: string | null)
     });
     const data = await res.json();
     if (!res.ok) {
+      if (hasLocalProject(projectId)) {
+        return localGetProject(projectId);
+      }
       if (canUseLocalFallback(res.status, accessToken)) {
         return localGetProject(projectId);
       }
@@ -230,6 +256,9 @@ export async function getProject(projectId: string, accessToken?: string | null)
     }
     return data;
   } catch (error) {
+    if (hasLocalProject(projectId)) {
+      return localGetProject(projectId);
+    }
     if (canUseLocalFallback(undefined, accessToken)) {
       return localGetProject(projectId);
     }
@@ -289,6 +318,9 @@ export async function updateProject(
     });
     const data = await res.json();
     if (!res.ok) {
+      if (hasLocalProject(projectId)) {
+        return localUpdateProject(projectId, updates);
+      }
       if (canUseLocalFallback(res.status, accessToken)) {
         return localUpdateProject(projectId, updates);
       }
@@ -296,6 +328,9 @@ export async function updateProject(
     }
     return data.project;
   } catch (error) {
+    if (hasLocalProject(projectId)) {
+      return localUpdateProject(projectId, updates);
+    }
     if (canUseLocalFallback(undefined, accessToken)) {
       return localUpdateProject(projectId, updates);
     }
@@ -311,6 +346,10 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
     });
     const data = await res.json();
     if (!res.ok) {
+      if (hasLocalProject(projectId)) {
+        localDeleteProject(projectId);
+        return true;
+      }
       if (canUseLocalFallback(res.status, accessToken)) {
         localDeleteProject(projectId);
         return true;
@@ -319,6 +358,10 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
     }
     return true;
   } catch (error) {
+    if (hasLocalProject(projectId)) {
+      localDeleteProject(projectId);
+      return true;
+    }
     if (canUseLocalFallback(undefined, accessToken)) {
       localDeleteProject(projectId);
       return true;
@@ -336,6 +379,9 @@ export async function getProjectMembers(projectId: string, accessToken?: string 
     });
     const data = await res.json();
     if (!res.ok) {
+      if (hasLocalProject(projectId)) {
+        return localGetProjectMembers(projectId);
+      }
       if (canUseLocalFallback(res.status, accessToken)) {
         return localGetProjectMembers(projectId);
       }
@@ -343,6 +389,9 @@ export async function getProjectMembers(projectId: string, accessToken?: string 
     }
     return data.members || [];
   } catch (error) {
+    if (hasLocalProject(projectId)) {
+      return localGetProjectMembers(projectId);
+    }
     if (canUseLocalFallback(undefined, accessToken)) {
       return localGetProjectMembers(projectId);
     }
