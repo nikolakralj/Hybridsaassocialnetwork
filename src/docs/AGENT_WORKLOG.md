@@ -228,12 +228,12 @@ Notes: Demo-data merge removed, project-scoped viewer fallback added, and person
 ```
 
 ```
-Task: Implement Industry-Ready Timesheet Data Model (Phase 3.5)
-Owner: Codex (after task above is done)
+Task: Implement Industry-Ready Timesheet Data Model UI (Phase 3.5)
+Owner: Antigravity
 Phase: Phase 3.5
-Files: src/contexts/TimesheetDataContext.tsx, src/types/timesheets.ts (new), src/components/timesheets/*
-Goal: Expand StoredDay to support multi-category TimeEntry[] (regular/overtime/travel/etc), monthly SubmissionEnvelope, custom WorkWeek days, and pre-submission validation.
+Files: src/components/timesheets/ProjectTimesheetsView.tsx
+Goal: Update UI to match the newly implemented TimeEntry[] data model in `src/types/timesheets.ts` to resolve TypeScript errors and show multiple categories.
 Status: in-progress
-Notes: Full spec approved by Nikola — see src/docs/TIMESHEET_STRATEGY.md. Antigravity authored strategy; Codex implements.
+Notes: Codex implemented the underlying data model. Antigravity officially claims the UI refactoring to clear TS errors, wire up the TimeEntry[] design, and finish Phase 3.5 visualization.
 ```
 
