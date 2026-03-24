@@ -366,8 +366,14 @@ Status: DONE — see handoff note below
 
 **Build status:** `npm run build` — clean, zero errors, 3296 modules.
 
+**Migration status: LIVE ✅ — 2026-03-25**
+- `005_workgraph_core.sql` was run successfully against Supabase project `gcdtimasyknakdojiufl`
+- All 5 tables (`wg_projects`, `wg_project_members`, `wg_project_invitations`, `wg_contracts`, `wg_timesheet_weeks`) are now live in the Primary Database
+- Edge functions (`projects-api`, `timesheets-api`, `contracts-api`) are now SQL-backed and ready to deploy
+
 **What is NOT done yet (next agent action):**
-- Run `005_workgraph_core.sql` against the live Supabase project (manual step in Dashboard)
+- **Deploy edge functions:** Run `npm run edge:deploy` or push via Supabase CLI so the new SQL-backed functions go live
 - Kill the PersonaContext / real Auth integration (separate task above)
+- Phase 4 invoicing scaffold: approved timesheet → invoice draft
 - Rename `supabase/migrations/001_timesheet_approval_tables.sql.tsx` → `.sql` (wrong extension, never applied)
 
