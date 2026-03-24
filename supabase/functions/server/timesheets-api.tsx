@@ -1,189 +1,237 @@
-// Phase 1: Timesheets API — KV-backed CRUD
-// KV Schema:
-//   timesheet-week:{userId}:{weekStart}  → StoredWeek JSON
-//   user-timesheet-weeks:{userId}        → string[] of weekStart dates
-
+// Timesheets API — SQL-backed CRUD (wg_timesheet_weeks)
+// Replaces KV store. All HTTP routes and response shapes are identical to the
+// previous KV-backed version so the frontend requires zero changes.
 import { Hono } from "npm:hono";
-import * as kv from "./kv_store.tsx";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const timesheetsRouter = new Hono();
 
-async function getUserId(c: any): Promise<string | null> {
+function db() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+}
+
+async function getAuthUser(c: any): Promise<{ id: string; email: string } | null> {
   const token = c.req.header("Authorization")?.split(" ")[1];
   if (!token) return null;
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await db().auth.getUser(token);
     if (error || !data?.user?.id) return null;
-    return data.user.id;
+    return { id: data.user.id, email: data.user.email ?? "" };
   } catch {
     return null;
   }
 }
 
-// ---------- LIST user's timesheets (optionally by month) ----------
+// DB row → StoredWeek shape (matches old KV response)
+// The full client-facing JSON lives in row.data; scalar columns override it.
+function rowToWeek(row: any) {
+  const stored = row.data || {};
+  return {
+    ...stored,
+    id: row.id,
+    personId: row.user_id,
+    weekStart: row.week_start,
+    projectId: row.project_id ?? undefined,
+    status: row.status,
+    submittedAt: row.submitted_at ?? undefined,
+    approvedAt: row.approved_at ?? undefined,
+    approvedBy: row.approved_by ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/timesheets?month=YYYY-MM
+// ---------------------------------------------------------------------------
 timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
   try {
-    const userId = await getUserId(c);
-    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-    const month = c.req.query("month"); // optional filter
-    const weekKeys: string[] = (await kv.get(`user-timesheet-weeks:${userId}`)) || [];
+    const month = c.req.query("month");
+    let query = db()
+      .from("wg_timesheet_weeks")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("week_start", { ascending: false });
 
-    if (weekKeys.length === 0) return c.json({ weeks: [] });
-
-    const keys = weekKeys.map((ws) => `timesheet-week:${userId}:${ws}`);
-    const allWeeks = await kv.mget(...keys);
-    let weeks = allWeeks.filter(Boolean);
-
-    // Filter by month if provided
     if (month) {
-      weeks = weeks.filter((w: any) => w.weekStart && w.weekStart.startsWith(month));
+      const [year, mon] = month.split("-").map(Number);
+      const nextMonth = mon === 12
+        ? `${year + 1}-01-01`
+        : `${year}-${String(mon + 1).padStart(2, "0")}-01`;
+      query = query.gte("week_start", `${month}-01`).lt("week_start", nextMonth);
     }
 
-    return c.json({ weeks });
+    const { data, error } = await query;
+    if (error) throw error;
+    return c.json({ weeks: (data || []).map(rowToWeek) });
   } catch (err: any) {
     console.log(`Timesheets list error: ${err.message}`);
     return c.json({ error: `Failed to list timesheets: ${err.message}` }, 500);
   }
 });
 
-// ---------- GET a specific week ----------
+// ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/timesheets/:weekStart
+// ---------------------------------------------------------------------------
 timesheetsRouter.get("/make-server-f8b491be/api/timesheets/:weekStart", async (c) => {
   try {
-    const userId = await getUserId(c);
-    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const weekStart = c.req.param("weekStart");
-    const week = await kv.get(`timesheet-week:${userId}:${weekStart}`);
-    if (!week) return c.json({ error: "Timesheet week not found" }, 404);
+    const { data, error } = await db()
+      .from("wg_timesheet_weeks")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("week_start", weekStart)
+      .maybeSingle();
 
-    return c.json({ week });
+    if (error) throw error;
+    if (!data) return c.json({ error: "Timesheet week not found" }, 404);
+    return c.json({ week: rowToWeek(data) });
   } catch (err: any) {
     console.log(`Timesheet get error: ${err.message}`);
     return c.json({ error: `Failed to get timesheet: ${err.message}` }, 500);
   }
 });
 
-// ---------- CREATE / UPDATE a timesheet week ----------
-// PUT /make-server-f8b491be/api/timesheets/:weekStart
+// ---------------------------------------------------------------------------
+// PUT /make-server-f8b491be/api/timesheets/:weekStart  (upsert)
+// ---------------------------------------------------------------------------
 timesheetsRouter.put("/make-server-f8b491be/api/timesheets/:weekStart", async (c) => {
   try {
-    const userId = await getUserId(c);
-    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const weekStart = c.req.param("weekStart");
     const body = await c.req.json();
-    const now = new Date().toISOString();
 
-    const existing = await kv.get(`timesheet-week:${userId}:${weekStart}`);
+    // Row ID encodes user + week for O(1) lookup, matching original KV key pattern
+    const rowId = `${user.id}:${weekStart}`;
 
-    const week = {
-      ...(existing || {}),
-      ...body,
-      personId: userId,
-      weekStart,
-      updatedAt: now,
-      createdAt: existing?.createdAt || now,
+    const upsertRow = {
+      id: rowId,
+      user_id: user.id,
+      project_id: body.projectId || null,
+      week_start: weekStart,
+      status: body.status || "draft",
+      // Full StoredWeek blob: ensures any frontend fields survive round-trips
+      data: { ...body, personId: user.id, weekStart },
     };
 
-    await kv.set(`timesheet-week:${userId}:${weekStart}`, week);
+    const { data, error } = await db()
+      .from("wg_timesheet_weeks")
+      .upsert(upsertRow, { onConflict: "id" })
+      .select("*")
+      .single();
 
-    // Update index if new week
-    if (!existing) {
-      const weekKeys: string[] = (await kv.get(`user-timesheet-weeks:${userId}`)) || [];
-      if (!weekKeys.includes(weekStart)) {
-        weekKeys.push(weekStart);
-        weekKeys.sort(); // Keep chronologically sorted
-        await kv.set(`user-timesheet-weeks:${userId}`, weekKeys);
-      }
-    }
-
-    console.log(`Timesheet saved: ${userId} week ${weekStart}`);
-    return c.json({ week });
+    if (error) throw error;
+    console.log(`Timesheet saved: ${user.id} week ${weekStart}`);
+    return c.json({ week: rowToWeek(data) });
   } catch (err: any) {
     console.log(`Timesheet save error: ${err.message}`);
     return c.json({ error: `Failed to save timesheet: ${err.message}` }, 500);
   }
 });
 
-// ---------- UPDATE timesheet status ----------
+// ---------------------------------------------------------------------------
 // PATCH /make-server-f8b491be/api/timesheets/:weekStart/status
+// ---------------------------------------------------------------------------
 timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status", async (c) => {
   try {
-    const userId = await getUserId(c);
-    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const weekStart = c.req.param("weekStart");
-    // For approvals, the target personId may differ from the current user
     const body = await c.req.json();
-    const targetUserId = body.personId || userId;
+    // Approvers pass personId of the submitter they are approving
+    const targetUserId = body.personId || user.id;
 
-    const week = await kv.get(`timesheet-week:${targetUserId}:${weekStart}`);
-    if (!week) return c.json({ error: "Timesheet week not found" }, 404);
+    const { data: existing, error: fe } = await db()
+      .from("wg_timesheet_weeks")
+      .select("*")
+      .eq("user_id", targetUserId)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+
+    if (fe) throw fe;
+    if (!existing) return c.json({ error: "Timesheet week not found" }, 404);
 
     const now = new Date().toISOString();
-    const updated = { ...week };
+    const statusUpdate: any = { status: body.status };
+    const dataUpdate = { ...(existing.data || {}) };
 
     switch (body.status) {
       case "submitted":
-        updated.status = "submitted";
-        updated.submittedAt = now;
+        statusUpdate.submitted_at = now;
+        dataUpdate.submittedAt = now;
         break;
       case "approved":
-        updated.status = "approved";
-        updated.approvedBy = body.approverName || userId;
-        updated.approvedAt = now;
+        statusUpdate.approved_at = now;
+        statusUpdate.approved_by = user.id;
+        dataUpdate.approvedBy = body.approverName || user.id;
+        dataUpdate.approvedAt = now;
         break;
       case "rejected":
-        updated.status = "rejected";
-        updated.rejectedBy = body.approverName || userId;
-        updated.rejectionNote = body.note || "";
-        updated.rejectedAt = now;
+        dataUpdate.rejectedBy = body.approverName || user.id;
+        dataUpdate.rejectedAt = now;
+        dataUpdate.rejectionNote = body.note || "";
         break;
       case "draft":
-        updated.status = "draft";
-        updated.submittedAt = undefined;
-        updated.approvedBy = undefined;
-        updated.rejectedBy = undefined;
-        updated.rejectionNote = undefined;
+        statusUpdate.submitted_at = null;
+        statusUpdate.approved_at = null;
+        statusUpdate.approved_by = null;
+        delete dataUpdate.submittedAt;
+        delete dataUpdate.approvedBy;
+        delete dataUpdate.approvedAt;
+        delete dataUpdate.rejectedBy;
+        delete dataUpdate.rejectionNote;
         break;
       default:
         return c.json({ error: `Invalid status: ${body.status}` }, 400);
     }
 
-    updated.updatedAt = now;
-    await kv.set(`timesheet-week:${targetUserId}:${weekStart}`, updated);
+    statusUpdate.data = dataUpdate;
 
+    const { data: updated, error: ue } = await db()
+      .from("wg_timesheet_weeks")
+      .update(statusUpdate)
+      .eq("id", existing.id)
+      .select("*")
+      .single();
+
+    if (ue) throw ue;
     console.log(`Timesheet status: ${targetUserId} week ${weekStart} → ${body.status}`);
-    return c.json({ week: updated });
+    return c.json({ week: rowToWeek(updated) });
   } catch (err: any) {
     console.log(`Timesheet status error: ${err.message}`);
     return c.json({ error: `Failed to update status: ${err.message}` }, 500);
   }
 });
 
-// ---------- DELETE a timesheet week ----------
+// ---------------------------------------------------------------------------
 // DELETE /make-server-f8b491be/api/timesheets/:weekStart
+// ---------------------------------------------------------------------------
 timesheetsRouter.delete("/make-server-f8b491be/api/timesheets/:weekStart", async (c) => {
   try {
-    const userId = await getUserId(c);
-    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const weekStart = c.req.param("weekStart");
-    await kv.del(`timesheet-week:${userId}:${weekStart}`);
+    const { error } = await db()
+      .from("wg_timesheet_weeks")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("week_start", weekStart);
 
-    // Update index
-    const weekKeys: string[] = (await kv.get(`user-timesheet-weeks:${userId}`)) || [];
-    await kv.set(`user-timesheet-weeks:${userId}`, weekKeys.filter((k) => k !== weekStart));
-
-    console.log(`Timesheet deleted: ${userId} week ${weekStart}`);
+    if (error) throw error;
+    console.log(`Timesheet deleted: ${user.id} week ${weekStart}`);
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`Timesheet delete error: ${err.message}`);

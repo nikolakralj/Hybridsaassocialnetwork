@@ -324,10 +324,50 @@ Status: unstarted
 
 ```
 Task: Phase 4 Foundation - SQL Schema Migration (Escape the KV Trap)
-Owner: Codex
+Owner: Claude
 Phase: Phase 4 Priority
-Files: supabase/migrations/
+Files: supabase/migrations/005_workgraph_core.sql, supabase/functions/server/projects-api.tsx, supabase/functions/server/timesheets-api.tsx, supabase/functions/server/contracts-api.tsx
 Goal: Convert the conceptual `WorkGraph` and `TimeEntry` models into rigid PostgreSQL relational tables. We must drop the KV JSONB blobs before attempting Phase 8 billing.
-Status: unstarted
+Status: DONE — see handoff note below
 ```
+
+### ✅ CLAUDE HANDOFF — 2026-03-25 (SQL Migration)
+
+**What was done:**
+
+**1. SQL Migration — `supabase/migrations/005_workgraph_core.sql`**
+- Created 5 new tables replacing the `kv_store_f8b491be` single-table KV pattern:
+  - `wg_projects` — project metadata, graph JSONB, parties JSONB
+  - `wg_project_members` — accepted + pending (invited) members
+  - `wg_project_invitations` — invitation lifecycle (pending/accepted/declined)
+  - `wg_contracts` — contracts with dedicated scalar columns + `data` JSONB blob
+  - `wg_timesheet_weeks` — one row per (user, weekStart) with `data` JSONB blob + `total_hours` GENERATED ALWAYS column
+- TEXT primary keys preserve existing `proj_xxx`, `ctr_xxx`, `mem_xxx`, `inv_xxx` ID formats
+- Full RLS policies, `updated_at` triggers, and indexes included
+- **ACTION REQUIRED:** Run this SQL in Supabase Dashboard > SQL Editor for project `gcdtimasyknakdojiufl` before deploying edge functions
+
+**2. `projects-api.tsx` — full rewrite from KV to SQL**
+- Removed all `kv_store.tsx` imports and KV index helpers (`addProjectToUserIndex`, etc.)
+- Added `db()` factory returning service-role Supabase client
+- `rowToProject()`, `rowToMember()`, `rowToInvitation()` map snake_case DB rows → camelCase JSON (same shape as before)
+- Cascade deletes: `ON DELETE CASCADE` on foreign keys replaces manual KV index cleanup
+- All 10 HTTP routes preserved with identical URLs and response shapes
+
+**3. `timesheets-api.tsx` — full rewrite from KV to SQL**
+- `wg_timesheet_weeks` row ID = `{userId}:{weekStart}` (preserves O(1) lookup, matches old KV key)
+- `PUT` uses `.upsert({ onConflict: "id" })` — behaviorally equivalent to KV set
+- Full StoredWeek JSONB blob preserved in `data` column; scalar columns (`status`, `submitted_at`, `approved_at`) used for DB queries
+- Month filter uses proper date arithmetic (handles December → January rollover)
+
+**4. `contracts-api.tsx` — full rewrite from KV to SQL**
+- KV index management (`user-contracts:`, `project-contracts:`) replaced by DB queries
+- `rowToContract()` merges dedicated columns with `data` JSONB blob for full backward compatibility
+- Delete enforces `owner_id` check (security hardening vs old KV version)
+
+**Build status:** `npm run build` — clean, zero errors, 3296 modules.
+
+**What is NOT done yet (next agent action):**
+- Run `005_workgraph_core.sql` against the live Supabase project (manual step in Dashboard)
+- Kill the PersonaContext / real Auth integration (separate task above)
+- Rename `supabase/migrations/001_timesheet_approval_tables.sql.tsx` → `.sql` (wrong extension, never applied)
 

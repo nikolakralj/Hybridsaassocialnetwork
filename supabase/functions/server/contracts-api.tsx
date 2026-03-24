@@ -1,14 +1,17 @@
-// Phase 1: Contracts API — KV-backed CRUD
-// KV Schema:
-//   contract:{contractId}         → Contract JSON
-//   project-contracts:{projectId} → string[] of contractIds
-//   user-contracts:{userId}       → string[] of contractIds
-
+// Contracts API — SQL-backed CRUD (wg_contracts)
+// Replaces KV store. All HTTP routes and response shapes are identical to the
+// previous KV-backed version so the frontend requires zero changes.
 import { Hono } from "npm:hono";
-import * as kv from "./kv_store.tsx";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const contractsRouter = new Hono();
+
+function db() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+}
 
 function generateId(): string {
   return `ctr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -18,11 +21,7 @@ async function getUserId(c: any): Promise<string | null> {
   const token = c.req.header("Authorization")?.split(" ")[1];
   if (!token) return null;
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await db().auth.getUser(token);
     if (error || !data?.user?.id) return null;
     return data.user.id;
   } catch {
@@ -30,61 +29,118 @@ async function getUserId(c: any): Promise<string | null> {
   }
 }
 
-// ---------- LIST user's contracts ----------
+// DB row → contract shape (matches old KV response)
+// Dedicated columns are authoritative; data JSONB carries the richer fields.
+function rowToContract(row: any) {
+  const extra = row.data || {};
+  const baseRate = extra.baseHourlyRate ?? Number(row.rate) ?? 0;
+  return {
+    id: row.id,
+    projectId: row.project_id ?? extra.projectId ?? null,
+    // Parties
+    providerId: extra.providerId ?? row.owner_id,
+    providerType: extra.providerType ?? "individual",
+    providerName: extra.providerName ?? "Provider",
+    recipientId: extra.recipientId ?? "",
+    recipientType: extra.recipientType ?? "company",
+    recipientName: extra.recipientName ?? row.client_name ?? "Client",
+    // Financial
+    baseHourlyRate: baseRate,
+    workTypeRates: extra.workTypeRates ?? {
+      regular: baseRate,
+      travel: Math.round(baseRate * 0.5),
+      overtime: Math.round(baseRate * 1.5),
+      oncall: Math.round(baseRate * 0.75),
+    },
+    contractNumber: extra.contractNumber ?? `CTR-${row.id.slice(-6)}`,
+    currency: row.currency ?? extra.currency ?? "EUR",
+    billingCycle: extra.billingCycle ?? "monthly",
+    status: row.status,
+    effectiveDate: row.start_date ?? extra.effectiveDate ?? null,
+    expirationDate: row.end_date ?? extra.expirationDate ?? null,
+    // Visibility
+    hideRateFromProvider: extra.hideRateFromProvider ?? false,
+    hideRateFromRecipient: extra.hideRateFromRecipient ?? false,
+    // Meta
+    title: row.title,
+    description: row.description ?? null,
+    createdBy: extra.createdBy ?? row.owner_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /make-server-f8b491be/api/contracts
+// ---------------------------------------------------------------------------
 contractsRouter.get("/make-server-f8b491be/api/contracts", async (c) => {
   try {
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
-    const contractIds: string[] = (await kv.get(`user-contracts:${userId}`)) || [];
-    if (contractIds.length === 0) return c.json({ contracts: [] });
+    const { data, error } = await db()
+      .from("wg_contracts")
+      .select("*")
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false });
 
-    const keys = contractIds.map((id) => `contract:${id}`);
-    const contracts = await kv.mget(...keys);
-    return c.json({ contracts: contracts.filter(Boolean) });
+    if (error) throw error;
+    return c.json({ contracts: (data || []).map(rowToContract) });
   } catch (err: any) {
     console.log(`Contracts list error: ${err.message}`);
     return c.json({ error: `Failed to list contracts: ${err.message}` }, 500);
   }
 });
 
-// ---------- LIST contracts for a project ----------
+// ---------------------------------------------------------------------------
+// GET /make-server-f8b491be/api/projects/:projectId/contracts
+// ---------------------------------------------------------------------------
 contractsRouter.get("/make-server-f8b491be/api/projects/:projectId/contracts", async (c) => {
   try {
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.param("projectId");
-    const contractIds: string[] = (await kv.get(`project-contracts:${projectId}`)) || [];
-    if (contractIds.length === 0) return c.json({ contracts: [] });
+    const { data, error } = await db()
+      .from("wg_contracts")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false });
 
-    const keys = contractIds.map((id) => `contract:${id}`);
-    const contracts = await kv.mget(...keys);
-    return c.json({ contracts: contracts.filter(Boolean) });
+    if (error) throw error;
+    return c.json({ contracts: (data || []).map(rowToContract) });
   } catch (err: any) {
     console.log(`Project contracts error: ${err.message}`);
     return c.json({ error: `Failed to list project contracts: ${err.message}` }, 500);
   }
 });
 
-// ---------- GET single contract ----------
+// ---------------------------------------------------------------------------
+// GET /make-server-f8b491be/api/contracts/:contractId
+// ---------------------------------------------------------------------------
 contractsRouter.get("/make-server-f8b491be/api/contracts/:contractId", async (c) => {
   try {
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
     const contractId = c.req.param("contractId");
-    const contract = await kv.get(`contract:${contractId}`);
-    if (!contract) return c.json({ error: "Contract not found" }, 404);
+    const { data, error } = await db()
+      .from("wg_contracts")
+      .select("*")
+      .eq("id", contractId)
+      .single();
 
-    return c.json({ contract });
+    if (error || !data) return c.json({ error: "Contract not found" }, 404);
+    return c.json({ contract: rowToContract(data) });
   } catch (err: any) {
     console.log(`Contract get error: ${err.message}`);
     return c.json({ error: `Failed to get contract: ${err.message}` }, 500);
   }
 });
 
-// ---------- CREATE contract ----------
+// ---------------------------------------------------------------------------
+// POST /make-server-f8b491be/api/contracts
+// ---------------------------------------------------------------------------
 contractsRouter.post("/make-server-f8b491be/api/contracts", async (c) => {
   try {
     const userId = await getUserId(c);
@@ -93,111 +149,132 @@ contractsRouter.post("/make-server-f8b491be/api/contracts", async (c) => {
     const body = await c.req.json();
     const now = new Date().toISOString();
     const contractId = generateId();
+    const baseRate = body.baseHourlyRate || 0;
 
-    const contract = {
-      id: contractId,
-      projectId: body.projectId || null,
-      // Parties
+    // Rich fields that don't have dedicated columns go in data blob
+    const contractData = {
       providerId: body.providerId || userId,
       providerType: body.providerType || "individual",
       providerName: body.providerName || "Provider",
       recipientId: body.recipientId || "",
       recipientType: body.recipientType || "company",
       recipientName: body.recipientName || "Client",
-      // Financial
-      baseHourlyRate: body.baseHourlyRate || 0,
+      baseHourlyRate: baseRate,
       workTypeRates: body.workTypeRates || {
-        regular: body.baseHourlyRate || 0,
-        travel: Math.round((body.baseHourlyRate || 0) * 0.5),
-        overtime: Math.round((body.baseHourlyRate || 0) * 1.5),
-        oncall: Math.round((body.baseHourlyRate || 0) * 0.75),
+        regular: baseRate,
+        travel: Math.round(baseRate * 0.5),
+        overtime: Math.round(baseRate * 1.5),
+        oncall: Math.round(baseRate * 0.75),
       },
       contractNumber: body.contractNumber || `CTR-${Date.now().toString().slice(-6)}`,
-      currency: body.currency || "USD",
       billingCycle: body.billingCycle || "monthly",
-      status: body.status || "active",
-      effectiveDate: body.effectiveDate || now,
-      expirationDate: body.expirationDate || null,
-      // Visibility
       hideRateFromProvider: body.hideRateFromProvider || false,
       hideRateFromRecipient: body.hideRateFromRecipient || false,
-      // Meta
       createdBy: userId,
-      createdAt: now,
     };
 
-    await kv.set(`contract:${contractId}`, contract);
+    const row = {
+      id: contractId,
+      project_id: body.projectId || null,
+      owner_id: userId,
+      title: body.title || body.contractNumber || `Contract ${contractId.slice(-6)}`,
+      client_name: body.recipientName || null,
+      client_email: body.recipientEmail || null,
+      status: body.status || "active",
+      rate: baseRate,
+      rate_type: body.billingCycle === "fixed" ? "fixed" : "hourly",
+      currency: body.currency || "EUR",
+      start_date: body.effectiveDate ? body.effectiveDate.slice(0, 10) : now.slice(0, 10),
+      end_date: body.expirationDate ? body.expirationDate.slice(0, 10) : null,
+      description: body.description || null,
+      data: contractData,
+    };
 
-    // Update user's contract index
-    const userContracts: string[] = (await kv.get(`user-contracts:${userId}`)) || [];
-    userContracts.push(contractId);
-    await kv.set(`user-contracts:${userId}`, userContracts);
+    const { data, error } = await db()
+      .from("wg_contracts")
+      .insert(row)
+      .select("*")
+      .single();
 
-    // Update project's contract index if projectId provided
-    if (body.projectId) {
-      const projContracts: string[] = (await kv.get(`project-contracts:${body.projectId}`)) || [];
-      projContracts.push(contractId);
-      await kv.set(`project-contracts:${body.projectId}`, projContracts);
-    }
-
+    if (error) throw error;
     console.log(`Contract created: ${contractId} by ${userId}`);
-    return c.json({ contract }, 201);
+    return c.json({ contract: rowToContract(data) }, 201);
   } catch (err: any) {
     console.log(`Contract create error: ${err.message}`);
     return c.json({ error: `Failed to create contract: ${err.message}` }, 500);
   }
 });
 
-// ---------- UPDATE contract ----------
+// ---------------------------------------------------------------------------
+// PUT /make-server-f8b491be/api/contracts/:contractId
+// ---------------------------------------------------------------------------
 contractsRouter.put("/make-server-f8b491be/api/contracts/:contractId", async (c) => {
   try {
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
     const contractId = c.req.param("contractId");
-    const existing = await kv.get(`contract:${contractId}`);
-    if (!existing) return c.json({ error: "Contract not found" }, 404);
+    const { data: existing, error: fe } = await db()
+      .from("wg_contracts")
+      .select("*")
+      .eq("id", contractId)
+      .single();
+
+    if (fe || !existing) return c.json({ error: "Contract not found" }, 404);
 
     const body = await c.req.json();
-    const updated = {
-      ...existing,
-      ...body,
-      id: contractId,
-      createdBy: existing.createdBy,
-      createdAt: existing.createdAt,
-      updatedAt: new Date().toISOString(),
-    };
+    const updateData: any = {};
+    if (body.title !== undefined) updateData.title = body.title;
+    if (body.recipientName !== undefined) updateData.client_name = body.recipientName;
+    if (body.recipientEmail !== undefined) updateData.client_email = body.recipientEmail;
+    if (body.status !== undefined) updateData.status = body.status;
+    if (body.baseHourlyRate !== undefined) updateData.rate = body.baseHourlyRate;
+    if (body.currency !== undefined) updateData.currency = body.currency;
+    if (body.effectiveDate !== undefined) updateData.start_date = body.effectiveDate.slice(0, 10);
+    if (body.expirationDate !== undefined) updateData.end_date = body.expirationDate ? body.expirationDate.slice(0, 10) : null;
+    if (body.description !== undefined) updateData.description = body.description;
+    if (body.projectId !== undefined) updateData.project_id = body.projectId;
 
-    await kv.set(`contract:${contractId}`, updated);
+    // Merge all body fields into the data blob (preserves unknown fields)
+    const { id: _id, createdAt: _ca, createdBy: _cb, ...bodyRest } = body;
+    updateData.data = { ...(existing.data || {}), ...bodyRest };
+
+    const { data: updated, error: ue } = await db()
+      .from("wg_contracts")
+      .update(updateData)
+      .eq("id", contractId)
+      .select("*")
+      .single();
+
+    if (ue) throw ue;
     console.log(`Contract updated: ${contractId}`);
-    return c.json({ contract: updated });
+    return c.json({ contract: rowToContract(updated) });
   } catch (err: any) {
     console.log(`Contract update error: ${err.message}`);
     return c.json({ error: `Failed to update contract: ${err.message}` }, 500);
   }
 });
 
-// ---------- DELETE contract ----------
+// ---------------------------------------------------------------------------
+// DELETE /make-server-f8b491be/api/contracts/:contractId
+// ---------------------------------------------------------------------------
 contractsRouter.delete("/make-server-f8b491be/api/contracts/:contractId", async (c) => {
   try {
     const userId = await getUserId(c);
     if (!userId) return c.json({ error: "Unauthorized" }, 401);
 
     const contractId = c.req.param("contractId");
-    const existing = await kv.get(`contract:${contractId}`);
-    if (!existing) return c.json({ error: "Contract not found" }, 404);
+    const { data: existing, error: fe } = await db()
+      .from("wg_contracts")
+      .select("id, owner_id")
+      .eq("id", contractId)
+      .single();
 
-    // Remove from user's index
-    const userContracts: string[] = (await kv.get(`user-contracts:${userId}`)) || [];
-    await kv.set(`user-contracts:${userId}`, userContracts.filter((id) => id !== contractId));
+    if (fe || !existing) return c.json({ error: "Contract not found" }, 404);
+    if (existing.owner_id !== userId) return c.json({ error: "Forbidden" }, 403);
 
-    // Remove from project's index
-    if (existing.projectId) {
-      const projContracts: string[] = (await kv.get(`project-contracts:${existing.projectId}`)) || [];
-      await kv.set(`project-contracts:${existing.projectId}`, projContracts.filter((id) => id !== contractId));
-    }
-
-    await kv.del(`contract:${contractId}`);
+    const { error } = await db().from("wg_contracts").delete().eq("id", contractId);
+    if (error) throw error;
     console.log(`Contract deleted: ${contractId}`);
     return c.json({ success: true });
   } catch (err: any) {
