@@ -5,13 +5,13 @@ Owner thread: Nikola + Codex
 
 ## Purpose
 
-This file records:
-- important product/technical decisions discussed in this thread
+This file serves as the **central synchronization point** for multi-agent collaboration (Nikola, Codex, and Antigravity). It records:
+- important product/technical decisions discussed across all threads
 - code changes already implemented
 - open issues and debugging context
 - next steps aligned to the roadmap
 
-Any new agent should read this file first, then:
+Any new agent acting on this repo MUST read this file first, then review:
 1. `src/docs/ROADMAP.md`
 2. `src/docs/ARCHITECTURE.md`
 3. `src/utils/graph/graph-visibility.ts`
@@ -24,11 +24,12 @@ Any new agent should read this file first, then:
 ## Current Product Direction (Agreed)
 
 We are following the product-first roadmap (`src/docs/ROADMAP.md`) with this priority:
-1. Phase 3 hardening (auth-aware behavior, invite/member workflows, stable viewer behavior)
-2. Phase 4 invoicing (money loop after approvals)
-3. Phase 5 import/export (CSV/PDF)
+1. **Phase 3 hardening** (auth-aware behavior, invite/member workflows, stable viewer behavior)
+2. **Phase 4 invoicing** (closing the money loop after approvals — this is the core operational driver)
+3. **Phase 8 Stripe integration** (accelerated priority to capture transactional GMV and drive real profitability)
+4. **Phase 5 import/export** (CSV/PDF for lowering adoption friction)
 
-We intentionally avoid jumping to enterprise/real-time/mobile features before core workflow quality.
+We intentionally avoid jumping to enterprise/real-time/mobile or complex AI Matchmaking features until core workflow quality is proven. Recent deep-dive analyses confirm the fastest path to success is executing the payment transactional layer (Phases 4 & 8).
 
 ---
 
