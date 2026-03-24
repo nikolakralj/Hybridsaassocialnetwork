@@ -105,6 +105,7 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
 // ============================================================================
 
 interface ProjectTimesheetsViewProps {
+  projectId: string;
   ownerId: string;
   ownerName: string;
   contractors: any[];
@@ -120,7 +121,7 @@ interface ProjectTimesheetsViewProps {
 // Main Component
 // ============================================================================
 
-export function ProjectTimesheetsView({ viewerOverride }: ProjectTimesheetsViewProps) {
+export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTimesheetsViewProps) {
   const store = useTimesheetStore();
   const { currentPersona } = usePersona();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
@@ -155,8 +156,20 @@ export function ProjectTimesheetsView({ viewerOverride }: ProjectTimesheetsViewP
     setSelectedMonth(d);
   }, [selectedMonth, setSelectedMonth]);
 
-  const viewerId = viewerOverride?.id || currentPersona?.id;
-  const viewerType = viewerOverride?.type || currentPersona?.graphViewerType;
+  const storedViewerMeta = useMemo(() => {
+    try {
+      const raw = sessionStorage.getItem(`workgraph-viewer-meta:${projectId}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.nodeId && parsed?.type) return parsed;
+      return null;
+    } catch {
+      return null;
+    }
+  }, [projectId]);
+
+  const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || currentPersona?.id;
+  const viewerType = viewerOverride?.type || storedViewerMeta?.type || currentPersona?.graphViewerType;
   const isAdmin = viewerType === 'admin' || currentPersona?.role === 'admin';
   const isMultiPersonViewer =
     isAdmin ||

@@ -477,6 +477,7 @@ export function ProjectWorkspace({
 
             <TabsContent value="timesheets" className="space-y-6">
               <ProjectTimesheetsView
+                projectId={projectId}
                 ownerId="demo-owner-id"
                 ownerName="Demo Project Owner"
                 contractors={[

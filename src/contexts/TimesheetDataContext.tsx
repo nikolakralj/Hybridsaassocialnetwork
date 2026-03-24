@@ -258,6 +258,12 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   const bump = useCallback(() => setVersion(v => v + 1), []);
 
+  // When authenticated, strip demo seed rows so project views only show real data.
+  useEffect(() => {
+    if (!user?.id || !accessToken) return;
+    setWeeks(prev => prev.filter(w => !w.personId.startsWith('user-')));
+  }, [user?.id, accessToken]);
+
   // --- Load from API on auth ---
   useEffect(() => {
     if (!user?.id || !accessToken || hasLoadedRef.current) return;
@@ -273,18 +279,13 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
         if (apiWeeks && apiWeeks.length > 0) {
           const converted = apiWeeks.map(apiWeekToStored);
-          // Merge: API data for the authenticated user + seed data for demo users
-          setWeeks(prev => {
-            // Keep seed data for non-authenticated demo personIds
-            const demoWeeks = prev.filter(w => !w.personId.match(/^[0-9a-f-]{36}$/));
-            // Deduplicate: if API returned data for the same personId+weekStart, use API version
-            const apiKeys = new Set(converted.map(w => `${w.personId}:${w.weekStart}`));
-            const filteredDemo = demoWeeks.filter(w => !apiKeys.has(`${w.personId}:${w.weekStart}`));
-            return [...converted, ...filteredDemo];
-          });
+          // Authenticated mode: API rows are source of truth (no demo merge).
+          setWeeks(converted);
           console.log(`[TimesheetStore] Loaded ${converted.length} weeks from API`);
         } else {
-          console.log('[TimesheetStore] No API timesheets found, using seed data');
+          // Authenticated mode: keep clean state if backend has no rows yet.
+          setWeeks([]);
+          console.log('[TimesheetStore] No API timesheets found, using empty authenticated state');
         }
 
         hasLoadedRef.current = true;
