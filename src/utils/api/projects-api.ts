@@ -42,6 +42,15 @@ function canUseLocalFallback(status?: number, accessToken?: string | null): bool
   return status === 401 || status === 403;
 }
 
+// Resilient fallback for demo/prototype workflows:
+// if backend is temporarily unavailable, keep the user unblocked with local storage.
+function canUseResilientFallback(status?: number, accessToken?: string | null): boolean {
+  if (canUseLocalFallback(status, accessToken)) return true;
+  if (typeof window === 'undefined') return false;
+  if (status === undefined) return true; // network/parse/runtime fetch failure
+  return status >= 500 || status === 404 || status === 429;
+}
+
 function readLocalProjects(): LocalProjectRecord[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -224,7 +233,7 @@ export async function listProjects(accessToken?: string | null) {
     });
     const data = await res.json();
     if (!res.ok) {
-      if (canUseLocalFallback(res.status, accessToken)) {
+      if (canUseResilientFallback(res.status, accessToken)) {
         return localListProjects();
       }
       console.error('listProjects error:', data);
@@ -232,7 +241,7 @@ export async function listProjects(accessToken?: string | null) {
     }
     return mergeProjectsById(data.projects || [], readLocalProjectList());
   } catch (error) {
-    if (canUseLocalFallback(undefined, accessToken)) {
+    if (canUseResilientFallback(undefined, accessToken)) {
       return localListProjects();
     }
     throw error;
@@ -291,14 +300,14 @@ export async function createProject(
     });
     const data = await res.json();
     if (!res.ok) {
-      if (canUseLocalFallback(res.status, accessToken)) {
+      if (canUseResilientFallback(res.status, accessToken)) {
         return localCreateProject(project);
       }
       throw new Error(data.error || 'Failed to create project');
     }
     return data;
   } catch (error) {
-    if (canUseLocalFallback(undefined, accessToken)) {
+    if (canUseResilientFallback(undefined, accessToken)) {
       return localCreateProject(project);
     }
     throw error;
