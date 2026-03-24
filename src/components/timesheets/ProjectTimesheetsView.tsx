@@ -170,14 +170,18 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
   const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || currentPersona?.id;
   const viewerType = viewerOverride?.type || storedViewerMeta?.type || currentPersona?.graphViewerType;
+  const viewerOrgId = viewerOverride?.orgId || storedViewerMeta?.orgId;
+  const isPersonViewer = Boolean(viewerOrgId);
   const isAdmin = viewerType === 'admin' || currentPersona?.role === 'admin';
   const isMultiPersonViewer =
-    isAdmin ||
-    viewerType === 'company' ||
-    viewerType === 'agency' ||
-    viewerType === 'client' ||
-    viewerId?.startsWith('org-') ||
-    viewerId?.startsWith('client-');
+    !isPersonViewer && (
+      isAdmin ||
+      viewerType === 'company' ||
+      viewerType === 'agency' ||
+      viewerType === 'client' ||
+      viewerId?.startsWith('org-') ||
+      viewerId?.startsWith('client-')
+    );
 
   // Persona-filtered weeks
   const { orgGroups, flatPersonWeeks } = useMemo(() => {
@@ -215,7 +219,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     toast.success('Opening Project Graph');
   };
 
-  const canSeedMonth = Boolean(viewerId && !isMultiPersonViewer);
+  const canSeedMonth = Boolean(viewerId && (isPersonViewer || !isMultiPersonViewer));
   const handleSeedMonth = useCallback(() => {
     if (!viewerId) return;
     const created = store.seedMonthForPerson(viewerId, monthKey);

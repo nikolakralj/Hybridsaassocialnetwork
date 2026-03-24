@@ -221,3 +221,13 @@ Goal: Ensure Timesheets strictly filter by projectId/viewer-meta instead of merg
 Status: planned
 Notes: Assigned by Antigravity. Codex to implement, test, and commit. Once done, Antigravity will claim ownership for Phase 4 Invoicing.
 ```
+
+```
+Task: Implement Industry-Ready Timesheet Data Model (Phase 3.5)
+Owner: Codex (after task above is done)
+Phase: Phase 3.5
+Files: src/contexts/TimesheetDataContext.tsx, src/types/timesheets.ts (new), src/components/timesheets/*
+Goal: Expand StoredDay to support multi-category TimeEntry[] (regular/overtime/travel/etc), monthly SubmissionEnvelope, custom WorkWeek days, and pre-submission validation.
+Status: planned
+Notes: Full spec approved by Nikola — see src/docs/TIMESHEET_STRATEGY.md. Antigravity authored strategy; Codex implements.
+```
