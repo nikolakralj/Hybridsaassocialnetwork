@@ -1337,7 +1337,12 @@ export function WorkGraphBuilder({
   const handleViewerChange = useCallback((viewer: ViewerIdentity) => {
     setCurrentViewer(viewer);
     setPersonaByNodeId(viewer.nodeId);
-  }, [setPersonaByNodeId]);
+    sessionStorage.setItem(viewerStorageKey, viewer.nodeId);
+    sessionStorage.setItem(viewerMetaStorageKey, JSON.stringify(viewer));
+    window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
+      detail: { projectId, viewer }
+    }));
+  }, [setPersonaByNodeId, viewerStorageKey, viewerMetaStorageKey, projectId]);
 
   // Keep selected viewer valid after graph/viewer changes.
   useEffect(() => {
@@ -1363,9 +1368,13 @@ export function WorkGraphBuilder({
       skipNextViewerPersistRef.current = true;
       setCurrentViewer(savedViewer);
       setPersonaByNodeId(savedViewer.nodeId);
+      sessionStorage.setItem(viewerMetaStorageKey, JSON.stringify(savedViewer));
+      window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
+        detail: { projectId, viewer: savedViewer }
+      }));
     }
     hasRestoredViewerRef.current = true;
-  }, [viewerOptions, viewerStorageKey, currentViewer.nodeId, setPersonaByNodeId]);
+  }, [viewerOptions, viewerStorageKey, viewerMetaStorageKey, currentViewer.nodeId, setPersonaByNodeId, projectId]);
 
   // Persist selected viewer per project.
   useEffect(() => {
