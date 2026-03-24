@@ -295,3 +295,42 @@ Goal: Convert the conceptual `WorkGraph` and `TimeEntry` models into rigid Postg
 Status: unstarted
 ```
 
+---
+
+## Coordination Update (March 24, 2026 Late Night)
+
+### Current Parallel Work State
+
+- Claude is actively implementing the three confirmed blockers:
+  - edge-function local runtime reliability
+  - graph -> timesheets viewer sync consistency
+  - deterministic approval fallback behavior
+- Codex is temporarily focused on documentation and integration readiness to avoid file collisions.
+- Antigravity remains available for strategy and scoped UI iterations after blocker integration.
+
+### File Ownership Claim (Active)
+
+```
+Task: Documentation hardening and integration runbook
+Owner: Codex
+Phase: Phase 3 hardening support
+Files: src/docs/AGENT_WORKLOG.md, src/docs/DEV_RUNBOOK.md
+Goal: Keep agent coordination explicit and provide a deterministic local run/test checklist while blocker code is in flight.
+Status: in-progress
+Notes: No overlap with Claude's implementation files.
+```
+
+### Decision Log
+
+- UI-only polish on Timesheets was paused for now to avoid merge churn while blocker work is being shipped.
+- Next integration pass should happen only after Claude confirms blocker branch is merged/pushed.
+- After merge, Codex will run full regression:
+  - project create/list
+  - graph viewer propagation
+  - submit -> approval chain -> fallback path
+
+### New Reference Doc
+
+- Local setup and troubleshooting runbook:
+  - `src/docs/DEV_RUNBOOK.md`
+
