@@ -216,15 +216,13 @@ Notes:
 ### Current Active Tasks
 
 ```
-Task: Fix Timesheet Demo Data Sync + Approval Fallback Policy
+Task: Complete Approval Fallback Policy + Regression Checks
 Owner: Codex
-Phase: Phase 3 / Phase 4 Prep
-Files: src/contexts/TimesheetDataContext.tsx, src/components/timesheets/UnifiedTimesheetView.tsx, src/utils/graph/auto-generate.ts
-Goal: Ensure Timesheets strictly filter by projectId/viewer-meta instead of merging global demo data. Formalize approval fallback rules.
+Phase: Phase 4 Prep
+Files: src/utils/graph/auto-generate.ts, approval filtering logic
+Goal: Implement proper approval fallback: 1. same-company approver, 2. upstream approver, 3. client approver. Define final fallback and add role/viewer regression checks.
 Status: in-progress
-Progress: Slice 1 implemented - new timesheet domain types file, backward-compatible day/week normalization in store, monthly submission envelope APIs in store, and submission validation hook before status changes.
-Update: Antigravity fixed a duplicate `sumWeekHours` declaration regression from commit 2982d8c.
-Notes: Demo-data merge removed, project-scoped viewer fallback added, and person-view draft-seeding restored. Remaining item: formal approval fallback rule in graph generation/approval filtering.
+Notes: Antigravity gave the green light for Codex to start this while Antigravity styles the onboarding wizard.
 ```
 
 ```
@@ -233,7 +231,17 @@ Owner: Antigravity
 Phase: Phase 3.5
 Files: src/components/timesheets/ProjectTimesheetsView.tsx
 Goal: Update UI to match the newly implemented TimeEntry[] data model in `src/types/timesheets.ts` to resolve TypeScript errors and show multiple categories.
+Status: done
+Notes: Codex implemented the underlying data model. Antigravity completed the UI refactoring to clear TS errors, wire up the TimeEntry[] design, and finish Phase 3.5 visualization.
+```
+
+```
+Task: Premium UI Styling for Create Project Wizard
+Owner: Antigravity
+Phase: UI Polish
+Files: src/components/projects/CreateProjectWizard.tsx (or relevant wizard file)
+Goal: Elevate the visual design of the Supply Chain / Graph generation wizard (add soft shadows, animated bezier curves, hover styles) to achieve an enterprise-grade aesthetic.
 Status: in-progress
-Notes: Codex implemented the underlying data model. Antigravity officially claims the UI refactoring to clear TS errors, wire up the TimeEntry[] design, and finish Phase 3.5 visualization.
+Notes: Antigravity is working on this entirely visually while Codex handles the backend approval fallback logic in parallel.
 ```
 
