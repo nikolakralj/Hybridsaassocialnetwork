@@ -271,6 +271,23 @@ export function ProjectWorkspace({
     return () => window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
   }, [projectId]);
 
+  const resolveStoredViewer = (): ViewerIdentity | null => {
+    const key = `workgraph-viewer-meta:${projectId}`;
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return activeGraphViewer;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.nodeId && parsed?.type && parsed?.name) {
+        return parsed as ViewerIdentity;
+      }
+    } catch {
+      // Ignore malformed storage payload
+    }
+    return activeGraphViewer;
+  };
+
+  const effectiveViewer = resolveStoredViewer();
+
   const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
     await addProjectMember(projectId, payload, accessToken);
     toast.success(`Invitation sent to ${payload.userEmail}`);
@@ -473,10 +490,10 @@ export function ProjectWorkspace({
                   { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
                 ]}
                 hourlyRate={95}
-                viewerOverride={activeGraphViewer ? {
-                  id: activeGraphViewer.nodeId,
-                  type: activeGraphViewer.type,
-                  name: activeGraphViewer.name,
+                viewerOverride={effectiveViewer ? {
+                  id: effectiveViewer.nodeId,
+                  type: effectiveViewer.type,
+                  name: effectiveViewer.name,
                 } : undefined}
               />
             </TabsContent>
@@ -485,7 +502,7 @@ export function ProjectWorkspace({
               <ProjectApprovalsTab
                 projectId={projectId}
                 projectName={projectName}
-                viewerName={activeGraphViewer?.name}
+                viewerName={effectiveViewer?.name}
               />
             </TabsContent>
 
