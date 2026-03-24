@@ -61,11 +61,14 @@
     "@tailwindcss/vite": "4.1.12",
     "@types/node": "^20.10.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.1",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5"
   },
   "scripts": {
     "dev": "vite",
+    "dev:all": "concurrently -n vite,edge -c cyan,magenta \"npm run dev\" \"npm run edge:serve\"",
+    "dev:edge": "npm run edge:serve",
     "build": "vite build",
     "edge:serve": "npx supabase functions serve --workdir . --env-file .env --no-verify-jwt",
     "edge:deploy": "npx supabase functions deploy server --workdir .",

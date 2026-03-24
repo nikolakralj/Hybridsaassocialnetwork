@@ -47,7 +47,9 @@ type NameDir = Record<string, NameDirEntry>;
 let activeProjectId = '';
 let cachedNameDir: NameDir | null = null;
 let cachedOrgMap: Record<string, OrgInfo> | null = null;
-let cachedApprovalParties: ApprovalParty[] | null = null;
+// NOTE: approval-parties cache is intentionally NOT module-level persistent —
+// the component uses a state-driven invalidation via workgraph-viewer-changed events
+// so the useMemo dependency handles freshness correctly.
 
 function getNameDir(): NameDir {
   if (!activeProjectId) return {};
@@ -62,14 +64,13 @@ function getNameDir(): NameDir {
 }
 
 function getApprovalParties(projectId: string): ApprovalParty[] {
-  if (cachedApprovalParties) return cachedApprovalParties;
+  // Always read fresh from sessionStorage so graph-tab updates are reflected
+  // immediately without requiring a project navigation.
   try {
     const raw = sessionStorage.getItem(`workgraph-approval-dir:${projectId}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    const parties = Array.isArray(parsed?.parties) ? parsed.parties : [];
-    cachedApprovalParties = parties;
-    return parties;
+    return Array.isArray(parsed?.parties) ? parsed.parties : [];
   } catch {
     return [];
   }
@@ -232,7 +233,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     setSelectedMonth(d);
   }, [selectedMonth, setSelectedMonth]);
 
-  const storedViewerMeta = useMemo(() => {
+  // Read viewer meta from sessionStorage and stay in sync with graph-tab changes.
+  // useMemo([projectId]) would go stale when WorkGraphBuilder updates sessionStorage
+  // without changing projectId — so we use a state that re-reads on every
+  // workgraph-viewer-changed event.
+  const readViewerMeta = () => {
     try {
       const raw = sessionStorage.getItem(`workgraph-viewer-meta:${projectId}`);
       if (!raw) return null;
@@ -242,6 +247,23 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     } catch {
       return null;
     }
+  };
+  const [storedViewerMeta, setStoredViewerMeta] = useState(readViewerMeta);
+  // graphVersion increments on every workgraph-viewer-changed event so that
+  // approvalParties useMemo re-reads fresh data from sessionStorage.
+  const [graphVersion, setGraphVersion] = useState(0);
+
+  useEffect(() => {
+    // Re-read whenever the graph tab updates the viewer or approval parties.
+    const onViewerChanged = (e: Event) => {
+      const detail = (e as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId && detail.projectId !== projectId) return;
+      setStoredViewerMeta(readViewerMeta());
+      setGraphVersion(v => v + 1);
+    };
+    window.addEventListener('workgraph-viewer-changed', onViewerChanged);
+    return () => window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || currentPersona?.id;
@@ -306,8 +328,9 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     toast.info(`Draft weeks already exist for ${monthLabel}`);
   }, [viewerId, store, monthKey, monthLabel]);
 
-  const viewingAs = viewerOverride?.name
-    ? `${viewerOverride.name}${isAdmin ? ' (Admin)' : ''}`
+  const resolvedViewerName = viewerOverride?.name || storedViewerMeta?.name || null;
+  const viewingAs = resolvedViewerName
+    ? `${resolvedViewerName}${isAdmin ? ' (Admin)' : ''}`
     : isAdmin ? 'All people (Admin)'
       : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
       : viewerId?.startsWith('client-') ? 'All people (Client)'
@@ -329,7 +352,8 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayPopup, store.version, monthKey]);
 
-  const approvalParties = useMemo(() => getApprovalParties(projectId), [projectId, store.version]);
+  // graphVersion dependency ensures this re-reads when the graph tab updates sessionStorage.
+  const approvalParties = useMemo(() => getApprovalParties(projectId), [projectId, store.version, graphVersion]);
 
   const canEditDay = useCallback((personId: string, weekStatus: WeekStatus) => {
     const isOwn = viewerId === personId;
