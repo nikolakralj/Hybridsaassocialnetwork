@@ -461,14 +461,15 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
       )}
 
       {/* Add party */}
-      <div className="space-y-2">
-        <Label className="text-xs font-medium">Add party</Label>
-        <div className="flex flex-wrap gap-1.5">
+      <div className="space-y-3">
+        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add party</Label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
           {PARTY_TYPE_OPTIONS.map(opt => (
             <button key={opt.value} onClick={() => addParty(opt.value)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-border hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-all text-left group">
-              <span className="text-sm">{opt.emoji}</span>
-              <span className="text-xs font-medium text-foreground group-hover:text-blue-700 dark:group-hover:text-blue-300">{opt.label}</span>
+              className="flex flex-col items-center justify-center p-3 rounded-xl border border-border/60 bg-card hover:bg-white dark:hover:bg-slate-900 shadow-sm hover:shadow-md hover:border-blue-400/50 hover:-translate-y-0.5 transition-all group text-center gap-1.5 relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-10 transition-opacity duration-300" style={{ backgroundImage: `linear-gradient(to bottom right, transparent, ${opt.color})` }} />
+              <span className="text-2xl drop-shadow-sm group-hover:scale-110 transition-transform duration-300">{opt.emoji}</span>
+              <span className="text-[11px] font-bold text-foreground group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">{opt.label}</span>
             </button>
           ))}
         </div>
@@ -493,14 +494,15 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
   const otherParties = allParties.filter(p => p.id !== party.id);
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    <div className="rounded-xl border border-border/50 bg-card/60 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden relative group">
+      <div className="absolute left-0 top-0 bottom-0 w-1 opacity-70 transition-all duration-300 group-hover:w-1.5" style={{ backgroundColor: opt.color }} />
       {/* Header row */}
       <div className="flex items-center gap-2 px-3 py-2">
         <span className="text-base flex-shrink-0">{opt.emoji}</span>
         <Input value={party.name} onChange={(e: any) => onUpdate({ name: e.target.value })}
-          placeholder={`${opt.label} name...`} className="h-7 text-sm font-medium flex-1 border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none" />
+          placeholder={`${opt.label} name...`} className="h-8 text-sm font-semibold flex-1 border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none placeholder:font-normal" />
         <Select value={party.partyType} onValueChange={(v: string) => onUpdate({ partyType: v as PartyType })}>
-          <SelectTrigger className="h-7 w-[110px] text-[11px] border-0 bg-muted/50">
+          <SelectTrigger className="h-8 w-[120px] text-xs font-medium border-0 bg-muted/40 hover:bg-muted/60 transition-colors rounded-lg">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -529,12 +531,12 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
               const connected = party.billsTo.includes(target.id);
               return (
                 <button key={target.id} onClick={() => onToggleConnection(target.id)}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 transition-all duration-200 ${
                     connected
-                      ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200'
-                      : 'bg-muted/50 border-border text-muted-foreground hover:border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                      ? 'bg-gradient-to-r from-emerald-50 to-emerald-100 dark:from-emerald-900/60 dark:to-emerald-800/40 border-emerald-300 dark:border-emerald-600 text-emerald-800 dark:text-emerald-100 shadow-sm'
+                      : 'bg-muted/30 border-transparent text-muted-foreground hover:border-emerald-200 hover:bg-emerald-50/50 dark:hover:bg-emerald-900/20'
                   }`}>
-                  {connected ? <Link2 className="w-2.5 h-2.5" /> : <Unlink className="w-2.5 h-2.5 opacity-40" />}
+                  {connected ? <Link2 className="w-3 h-3 text-emerald-600" /> : <Unlink className="w-3 h-3 opacity-40" />}
                   <span>{tOpt.emoji}</span>
                   <span className="max-w-[80px] truncate">{target.name || tOpt.label}</span>
                 </button>
@@ -636,8 +638,8 @@ function MiniGraphPreview({ parties }: { parties: PartyEntry[] }) {
               <path
                 key={`${e.fromId}-${e.toId}`}
                 d={`M${e.from.x},${e.from.y} C${e.from.x},${midY} ${e.to.x},${midY} ${e.to.x},${e.to.y}`}
-                fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4 2"
-                markerEnd="url(#arrowhead-mini)" opacity={0.6}
+                fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="3 4"
+                markerEnd="url(#arrowhead-mini)" opacity={0.5} className="animate-[dash_2s_linear_infinite]"
               />
             );
           })}
@@ -995,7 +997,7 @@ function SideGraphPreview({ parties, step, generatedGraph }: { parties: PartyEnt
   const totalPeople = parties.reduce((s, p) => s + p.people.length, 0);
 
   return (
-    <div className="rounded-lg border border-border bg-muted/20 flex flex-col h-full overflow-hidden">
+    <div className="rounded-xl border border-border bg-card flex flex-col h-full overflow-hidden shadow-sm relative">
       {/* Header */}
       <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-border bg-muted/30">
         <Network className="w-3.5 h-3.5 text-accent-brand" />
@@ -1011,12 +1013,19 @@ function SideGraphPreview({ parties, step, generatedGraph }: { parties: PartyEnt
             <p className="text-[10px] text-muted-foreground/60 mt-1">Your supply chain will appear here</p>
           </div>
         ) : (
-          <svg width={panelW} height={svgH} className="block">
+          <svg width={panelW} height={svgH} className="block relative z-10 mx-auto">
             <defs>
+              <pattern id="dot-matrix" x="0" y="0" width="16" height="16" patternUnits="userSpaceOnUse">
+                <circle cx="2" cy="2" r="1.5" fill="#e2e8f0" className="dark:fill-slate-800" />
+              </pattern>
+              <filter id="node-shadow" x="-10%" y="-10%" width="130%" height="130%">
+                <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.08" />
+              </filter>
               <marker id="arrow-side" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
-                <polygon points="0 0, 7 2.5, 0 5" fill="#94a3b8" />
+                <polygon points="0 0, 7 2.5, 0 5" fill="#cbd5e1" className="dark:fill-slate-700" />
               </marker>
             </defs>
+            <rect width="100%" height="100%" fill="url(#dot-matrix)" />
 
             {/* Layer labels */}
             {layerKeys.map((layerIdx, li) => {
@@ -1036,8 +1045,9 @@ function SideGraphPreview({ parties, step, generatedGraph }: { parties: PartyEnt
               return (
                 <path key={`${e.fromId}-${e.toId}`}
                   d={`M${e.from.x},${e.from.y} C${e.from.x},${midY} ${e.to.x},${midY} ${e.to.x},${e.to.y}`}
-                  fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4 2"
-                  markerEnd="url(#arrow-side)" opacity={0.5} />
+                  fill="none" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round"
+                  className="dark:stroke-slate-700"
+                  opacity={0.8} />
               );
             })}
 
@@ -1051,24 +1061,24 @@ function SideGraphPreview({ parties, step, generatedGraph }: { parties: PartyEnt
               const hiddenCount = p.people.filter(pe => pe.visibleToChain === false).length;
               const visibleCount = p.people.length - hiddenCount;
               return (
-                <g key={p.id}>
-                  <rect x={pos.x} y={pos.y} width={nodeW} height={nodeH} rx={5}
-                    fill="white" stroke={opt.color} strokeWidth="1.5" />
-                  <text x={pos.x + 6} y={pos.y + nodeH / 2 + 1} fontSize="9"
-                    dominantBaseline="middle" fill="#374151" fontWeight="500">
+                <g key={p.id} className="transition-transform hover:scale-[1.02] duration-200 origin-center" style={{ transformOrigin: `${pos.x + nodeW/2}px ${pos.y + nodeH/2}px` }}>
+                  <rect x={pos.x} y={pos.y} width={nodeW} height={nodeH} rx={10}
+                    fill="white" stroke={opt.color} strokeWidth="1.5" filter="url(#node-shadow)" className="dark:fill-slate-900" />
+                  <text x={pos.x + 8} y={pos.y + nodeH / 2 + 1} fontSize="10"
+                    dominantBaseline="middle" fill="#1e293b" className="dark:fill-slate-200" fontWeight="600">
                     {opt.emoji} {label.slice(0, maxChars)}{label.length > maxChars ? '…' : ''}
                   </text>
                   {p.people.length > 0 && (
-                    <>
-                      <circle cx={pos.x + nodeW - 8} cy={pos.y + 8} r={6} fill={opt.color} opacity={0.15} />
-                      <text x={pos.x + nodeW - 8} y={pos.y + 8} fontSize="7"
-                        textAnchor="middle" dominantBaseline="central" fill={opt.color} fontWeight="600">
+                    <g>
+                      <circle cx={pos.x + nodeW - 10} cy={pos.y + nodeH / 2} r={7.5} fill={opt.color} opacity={0.15} />
+                      <text x={pos.x + nodeW - 10} y={pos.y + nodeH / 2 + 0.5} fontSize="9"
+                        textAnchor="middle" dominantBaseline="central" fill={opt.color} fontWeight="700">
                         {p.people.length}
                       </text>
                       {hiddenCount > 0 && (
                         <title>{visibleCount} visible, {hiddenCount} hidden from chain</title>
                       )}
-                    </>
+                    </g>
                   )}
                 </g>
               );

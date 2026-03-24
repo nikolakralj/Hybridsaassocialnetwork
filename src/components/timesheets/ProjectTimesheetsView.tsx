@@ -30,7 +30,7 @@ import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
-import type { StoredWeek, StoredDay, WeekStatus, DayTask } from '../../contexts/TimesheetDataContext';
+import type { StoredWeek, StoredDay, WeekStatus, DayTask, TimeEntry, TimeCategory } from '../../contexts/TimesheetDataContext';
 import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
@@ -661,18 +661,18 @@ function PersonSection({
                     } ${isDragSrc ? 'opacity-40 ring-1 ring-blue-300 bg-blue-50' : ''}
                     ${isDragTarget ? 'ring-2 ring-blue-400 bg-blue-100 scale-105' : ''}`}
                     onClick={editable ? (e) => onClickDay(e, w.weekStart, di, w.status) : undefined}
-                    title={editable ? (d.hours > 0 ? `Click to edit • Drag to copy` : `Click to add hours`) : `${d.day}: ${d.hours}h`}
+                    title={editable ? ((d.totalHours ?? d.hours) > 0 ? `Click to edit • Drag to copy` : `Click to add hours`) : `${d.day}: ${d.totalHours ?? d.hours}h`}
                   >
-                    {editable && d.hours > 0 && (
+                    {editable && (d.totalHours ?? d.hours) > 0 && (
                       <div className="absolute -top-0.5 -left-0.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 transition-opacity">
                         <GripVertical className="h-2.5 w-2.5 text-slate-400" />
                       </div>
                     )}
                     <div className="text-[8px] text-muted-foreground font-medium">{d.day}</div>
-                    <div className={`text-[11px] font-semibold ${d.hours === 0 ? 'text-slate-300' : 'text-foreground'}`}>{d.hours}h</div>
+                    <div className={`text-[11px] font-semibold ${d.totalHours === 0 && d.hours === 0 ? 'text-slate-300' : 'text-foreground'}`}>{d.totalHours ?? d.hours}h</div>
                     <div className="h-0.5 mt-0.5 rounded-full bg-slate-100 overflow-hidden">
-                      <div className={`h-full rounded-full ${d.hours >= 8 ? 'bg-blue-400' : d.hours > 0 ? 'bg-blue-300' : ''}`}
-                        style={{ width: `${Math.min((d.hours / 10) * 100, 100)}%` }} />
+                      <div className={`h-full rounded-full ${(d.totalHours ?? d.hours) >= 8 ? 'bg-blue-400' : (d.totalHours ?? d.hours) > 0 ? 'bg-blue-300' : ''}`}
+                        style={{ width: `${Math.min(((d.totalHours ?? d.hours) / 10) * 100, 100)}%` }} />
                     </div>
                     {isDragTarget && (
                       <div className="absolute inset-0 flex items-center justify-center bg-blue-200/60 rounded-md">
@@ -723,19 +723,23 @@ function DayEditPopup({
   onClose: () => void;
 }) {
   const popupRef = useRef<HTMLDivElement>(null);
-  const hoursRef = useRef<HTMLInputElement>(null);
   
-  const [hours, setHours] = useState(day.hours);
+  // Phase 3.5 Multi-Category State
+  const initialEntries = day.entries?.length ? day.entries : [
+    { id: `ent-${Date.now()}`, category: 'regular' as TimeCategory, hours: day.hours, billable: true }
+  ];
+  const [entries, setEntries] = useState<TimeEntry[]>(initialEntries);
+
   const [description, setDescription] = useState(day.notes || '');
   const [showTimeDetails, setShowTimeDetails] = useState(!!(day.startTime && day.endTime));
   const [startTime, setStartTime] = useState(day.startTime || '09:00');
   const [endTime, setEndTime] = useState(day.endTime || '17:30');
   const [breakMinutes, setBreakMinutes] = useState(day.breakMinutes ?? 30);
 
-  // Focus hours input on open
-  useEffect(() => {
-    setTimeout(() => hoursRef.current?.select(), 100);
-  }, []);
+  const totalHours = entries.reduce((sum, e) => sum + (e.hours || 0), 0);
+
+  // No auto-focus needed for multi-entry
+  useEffect(() => {}, []);
 
   // Close on click outside
   useEffect(() => {
@@ -755,7 +759,7 @@ function DayEditPopup({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hours, description, startTime, endTime, breakMinutes, showTimeDetails]);
+  }, [entries, description, startTime, endTime, breakMinutes, showTimeDetails]);
 
   const popupStyle = useMemo(() => {
     const POPUP_W = 300;
@@ -775,12 +779,18 @@ function DayEditPopup({
 
   const applyTimeCalc = () => {
     const calc = calcHoursFromTime(startTime, endTime, breakMinutes);
-    setHours(calc);
+    if (!entries.find(e => e.category === 'regular')) {
+      setEntries([...entries, { id: `ent-${Date.now()}`, category: 'regular' as TimeCategory, hours: calc, billable: true }]);
+    } else {
+      setEntries(entries.map(e => e.category === 'regular' ? { ...e, hours: calc } : e));
+    }
   };
 
   const buildDay = (): StoredDay => ({
     ...day,
-    hours: Math.round(hours * 10) / 10,
+    hours: totalHours, // legacy fallback
+    totalHours,
+    entries,
     startTime: showTimeDetails ? startTime : undefined,
     endTime: showTimeDetails ? endTime : undefined,
     breakMinutes: showTimeDetails ? breakMinutes : undefined,
@@ -807,21 +817,33 @@ function DayEditPopup({
         </div>
 
         <div className="px-4 py-3 space-y-3">
-          {/* HOURS — the hero */}
+          {/* PHASE 3.5: Multi-Category Entries */}
           <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">Hours</label>
-            <div className="flex items-center gap-2">
-              <input ref={hoursRef} type="number" min={0} max={24} step={0.5} value={hours}
-                onChange={e => setHours(Math.max(0, Math.min(24, Number(e.target.value))))}
-                className="w-20 h-11 text-center text-xl font-bold rounded-lg border-2 border-blue-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none" />
-              <div className="flex flex-wrap gap-1">
-                {HOUR_PRESETS.map(h => (
-                  <button key={h} onClick={() => setHours(h)}
-                    className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md border transition-colors ${
-                      hours === h ? 'bg-blue-100 border-blue-300 text-blue-700' : 'text-slate-500 hover:bg-slate-50'
-                    }`}>{h}h</button>
-                ))}
-              </div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">Time Entries</label>
+              <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{totalHours}h Total</div>
+            </div>
+            <div className="space-y-2">
+              {['regular', 'overtime', 'travel'].map(cat => {
+                const entry = entries.find(e => e.category === cat) || { hours: 0 };
+                const isSelected = entry.hours > 0;
+                return (
+                  <div key={cat} className={`flex items-center gap-2 p-1.5 rounded-lg border transition-colors ${isSelected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
+                    <div className="w-20 text-[11px] font-medium capitalize text-slate-600 pl-1">{cat}</div>
+                    <input type="number" min={0} max={24} step={0.5} value={entry.hours || ''} placeholder="0"
+                      onChange={e => {
+                        const val = Math.max(0, Math.min(24, Number(e.target.value)));
+                        if (entries.find(ex => ex.category === cat)) {
+                          setEntries(entries.map(ex => ex.category === cat ? { ...ex, hours: val } : ex));
+                        } else {
+                          setEntries([...entries, { id: `ent-${Date.now()}-${cat}`, category: cat as TimeCategory, hours: val, billable: true }]);
+                        }
+                      }}
+                      className="w-16 h-8 text-center text-sm font-bold rounded-md border focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none" />
+                    <span className="text-[10px] text-muted-foreground mr-1">h</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -873,7 +895,7 @@ function DayEditPopup({
           </div>
 
           {/* Copy actions */}
-          {hours > 0 && dayIndex < 4 && (
+          {totalHours > 0 && dayIndex < 4 && (
             <div className="flex gap-1.5">
               <button onClick={() => onCopyToRest(buildDay())}
                 className="flex-1 flex items-center justify-center gap-1 h-7 text-[10px] font-medium text-slate-600 bg-slate-50 rounded-md border hover:bg-slate-100 transition-colors">
