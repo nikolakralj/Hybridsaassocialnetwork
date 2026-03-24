@@ -23,6 +23,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
+import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
 import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
