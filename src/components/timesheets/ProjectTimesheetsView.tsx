@@ -35,6 +35,7 @@ import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
+import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -46,6 +47,7 @@ type NameDir = Record<string, NameDirEntry>;
 let activeProjectId = '';
 let cachedNameDir: NameDir | null = null;
 let cachedOrgMap: Record<string, OrgInfo> | null = null;
+let cachedApprovalParties: ApprovalParty[] | null = null;
 
 function getNameDir(): NameDir {
   if (!activeProjectId) return {};
@@ -56,6 +58,20 @@ function getNameDir(): NameDir {
     return cachedNameDir!;
   } catch {
     return {};
+  }
+}
+
+function getApprovalParties(projectId: string): ApprovalParty[] {
+  if (cachedApprovalParties) return cachedApprovalParties;
+  try {
+    const raw = sessionStorage.getItem(`workgraph-approval-dir:${projectId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const parties = Array.isArray(parsed?.parties) ? parsed.parties : [];
+    cachedApprovalParties = parties;
+    return parties;
+  } catch {
+    return [];
   }
 }
 
@@ -179,6 +195,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     activeProjectId = projectId;
     cachedNameDir = null;
     cachedOrgMap = null;
+    cachedApprovalParties = null;
   }
 
   const store = useTimesheetStore();
@@ -312,10 +329,18 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayPopup, store.version, monthKey]);
 
+  const approvalParties = useMemo(() => getApprovalParties(projectId), [projectId, store.version]);
+
   const canEditDay = useCallback((personId: string, weekStatus: WeekStatus) => {
     const isOwn = viewerId === personId;
     return isOwn && (weekStatus === 'draft' || weekStatus === 'rejected');
   }, [viewerId]);
+
+  const canViewerApprovePerson = useCallback((personId: string) => {
+    if (isAdmin) return true;
+    if (!viewerId) return false;
+    return canViewerApproveSubmitter(viewerId, personId, approvalParties);
+  }, [viewerId, approvalParties, isAdmin]);
 
   const handleDayClick = useCallback((e: React.MouseEvent, personId: string, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => {
     e.stopPropagation();
@@ -443,6 +468,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
                     <div className="divide-y">
                       {people.map(([pid, weeks]) => (
                         <PersonSection key={pid} personId={pid} weeks={weeks} viewerId={viewerId} isAdmin={isAdmin} store={store}
+                          canApprovePerson={canViewerApprovePerson}
                           onClickWeek={(ws) => setDrawerWeek({ personId: pid, weekStart: ws })}
                           onClickDay={(e, ws, di, status) => handleDayClick(e, pid, ws, di, status)}
                           canEditDay={(ws) => canEditDay(pid, ws)}
@@ -461,6 +487,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
             flatPersonWeeks.map(([pid, weeks]) => (
               <div key={pid} className="border rounded-xl overflow-hidden">
                 <PersonSection personId={pid} weeks={weeks} viewerId={viewerId} isAdmin={isAdmin} store={store}
+                  canApprovePerson={canViewerApprovePerson}
                   onClickWeek={(ws) => setDrawerWeek({ personId: pid, weekStart: ws })}
                   onClickDay={(e, ws, di, status) => handleDayClick(e, pid, ws, di, status)}
                   canEditDay={(ws) => canEditDay(pid, ws)}
@@ -562,6 +589,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
           week={drawerWeekData} personId={drawerWeek.personId}
           allWeeks={store.getWeeksForPerson(drawerWeek.personId, monthKey)}
           viewerId={viewerId} isAdmin={isAdmin} store={store}
+          canApprove={canViewerApprovePerson(drawerWeek.personId)}
           onClose={() => setDrawerWeek(null)}
           onNavigateWeek={(ws) => setDrawerWeek(prev => prev ? { ...prev, weekStart: ws } : null)}
           onViewInGraph={viewInGraph}
@@ -579,7 +607,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 // ============================================================================
 
 function PersonSection({
-  personId, weeks, viewerId, isAdmin, store, onClickWeek, onClickDay, canEditDay, onViewInGraph,
+  personId, weeks, viewerId, isAdmin, store, canApprovePerson, onClickWeek, onClickDay, canEditDay, onViewInGraph,
   onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, dragSource, dragOverDay,
 }: {
   personId: string;
@@ -587,6 +615,7 @@ function PersonSection({
   viewerId?: string;
   isAdmin: boolean;
   store: ReturnType<typeof useTimesheetStore>;
+  canApprovePerson: (personId: string) => boolean;
   onClickWeek: (weekStart: string) => void;
   onClickDay: (e: React.MouseEvent, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => void;
   canEditDay: (weekStatus: WeekStatus) => boolean;
@@ -600,7 +629,7 @@ function PersonSection({
   dragOverDay: number | null;
 }) {
   const isOwn = viewerId === personId;
-  const isApprover = isAdmin || (!isOwn && (viewerId?.startsWith('org-') || viewerId?.startsWith('client-')));
+  const isApprover = canApprovePerson(personId);
   const total = weeks.reduce((s, w) => s + sumWeekHours(w), 0);
   const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
   const notifStore = useNotificationStore();
@@ -926,13 +955,14 @@ function DayEditPopup({
 // ============================================================================
 
 function WeekDetailDrawer({
-  week, personId, allWeeks, viewerId, isAdmin, store, onClose, onNavigateWeek, onViewInGraph, onOpenDayPopup,
+  week, personId, allWeeks, viewerId, isAdmin, canApprove, store, onClose, onNavigateWeek, onViewInGraph, onOpenDayPopup,
 }: {
   week: StoredWeek;
   personId: string;
   allWeeks: StoredWeek[];
   viewerId?: string;
   isAdmin: boolean;
+  canApprove: boolean;
   store: ReturnType<typeof useTimesheetStore>;
   onClose: () => void;
   onNavigateWeek: (weekStart: string) => void;
@@ -941,7 +971,6 @@ function WeekDetailDrawer({
 }) {
   const notifStore = useNotificationStore();
   const isOwn = viewerId === personId;
-  const canApprove = isAdmin || (!isOwn && (viewerId?.startsWith('org-') || viewerId?.startsWith('client-')));
   const canEdit = isOwn && (week.status === 'draft' || week.status === 'rejected');
 
   const [rejectMode, setRejectMode] = useState(false);

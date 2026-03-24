@@ -1345,7 +1345,37 @@ export function WorkGraphBuilder({
       }
     });
     sessionStorage.setItem(`workgraph-name-dir:${projectId}`, JSON.stringify(dir));
-  }, [viewerOptions, allNodes, projectId]);
+
+    const parties = allNodes
+      .filter((n) => n.type === 'party')
+      .map((partyNode) => {
+        const partyId = partyNode.id;
+        const people = allNodes
+          .filter((n) => n.type === 'person' && (n.data?.partyId === partyId || n.data?.orgId === partyId))
+          .map((personNode) => ({
+            id: personNode.id,
+            name: personNode.data?.name || personNode.id,
+            canApprove: personNode.data?.canApprove === true,
+          }));
+
+        const billsTo = allEdges
+          .filter((e) =>
+            e.source === partyId &&
+            (e.data?.edgeType === 'billsTo' || e.data?.edgeType === 'subcontracts' || e.data?.edgeType === 'bills_to')
+          )
+          .map((e) => e.target);
+
+        return {
+          id: partyId,
+          name: partyNode.data?.name || partyId,
+          partyType: partyNode.data?.partyType || 'company',
+          billsTo,
+          people,
+        };
+      });
+
+    sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, JSON.stringify({ parties }));
+  }, [viewerOptions, allNodes, allEdges, projectId]);
 
   // ── Sync with PersonaContext ──
   const { setPersonaByNodeId, currentPersona } = usePersona();

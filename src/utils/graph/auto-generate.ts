@@ -16,6 +16,7 @@ import type {
   PartyType,
   EdgeType,
 } from '../../types/workgraph';
+import { getApprovalStepsForParty } from './approval-fallback';
 
 // ============================================================================
 // Input Types (from wizard)
@@ -251,25 +252,24 @@ export function generateGraphFromWizard(
     });
   });
 
-  // 4. Approval edges
-  parties.forEach(party => {
-    const approvers = party.people.filter(p => p.canApprove);
-    if (approvers.length === 0) return;
+  // 4. Approval edges with fallback policy:
+  // same-company approver -> nearest upstream approver -> client approver
+  parties.forEach((submitterParty) => {
+    const steps = getApprovalStepsForParty(submitterParty.id, parties);
 
-    // Find parties that bill TO this party (i.e., parties this party approves)
-    const subordinates = parties.filter(p => p.billsTo.includes(party.id));
-
-    approvers.forEach((approver, idx) => {
-      subordinates.forEach(sub => {
+    steps.forEach((step) => {
+      step.approverIds.forEach((approverId) => {
         edges.push({
-          id: `edge-approves-${approver.id}-${sub.id}`,
+          id: `edge-approves-${approverId}-${submitterParty.id}-step${step.step}`,
           type: 'approves',
-          source: approver.id,
-          target: sub.id,
+          source: approverId,
+          target: submitterParty.id,
           data: {
             edgeType: 'approves',
-            order: idx + 1,
+            order: step.step,
             required: true,
+            mode: step.mode,
+            approverPartyId: step.partyId,
             label: 'approves',
           },
         });
@@ -318,6 +318,15 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
   parties.forEach(p => {
     if (p.people.length === 0) {
       errors.push(`"${p.name || p.partyType}" has no people assigned`);
+    }
+  });
+
+  // Check fallback approval coverage for each party with people.
+  parties.forEach((party) => {
+    if (party.people.length === 0) return;
+    const steps = getApprovalStepsForParty(party.id, parties);
+    if (steps.length === 0) {
+      errors.push(`"${party.name || party.partyType}" has no approver path (same-company, upstream, or client)`);
     }
   });
 

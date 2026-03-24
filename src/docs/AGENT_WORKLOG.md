@@ -225,6 +225,35 @@ Status: in-progress
 Notes: Antigravity gave the green light for Codex to start this while Antigravity styles the onboarding wizard.
 ```
 
+### Codex Update — 2026-03-24 (Step 2 Implementation)
+
+Status: in-progress (implementation complete, local verification pending)
+
+Completed in code:
+- Added shared fallback policy utility:
+  - `src/utils/graph/approval-fallback.ts`
+  - deterministic order: same-company approver -> nearest upstream approver -> client approver
+  - exposed:
+    - `getApprovalStepsForParty(...)`
+    - `canViewerApproveSubmitter(...)`
+- Updated wizard graph generator:
+  - `src/utils/graph/auto-generate.ts`
+  - approval edges now emit per fallback step with metadata:
+    - `order`, `mode`, `approverPartyId`
+  - added validation guard for parties with no fallback approver path
+- Added runtime approval directory for cross-tab consistency:
+  - `src/components/workgraph/WorkGraphBuilder.tsx`
+  - persists `workgraph-approval-dir:${projectId}` in `sessionStorage` from graph nodes/edges
+- Replaced prefix-based approver checks in timesheets with policy-based checks:
+  - `src/components/timesheets/ProjectTimesheetsView.tsx`
+  - approver rights now evaluate against fallback chain via `canViewerApproveSubmitter(...)`
+  - wired into both row-level and drawer-level approve actions
+
+Verification note:
+- Could not complete `npm install` / `npm run build` verification in this workspace path (`G:\My Drive\HybridSocialApp`) due repeated tar extraction/EPERM/EBADSIZE errors (Google Drive sync-lock behavior on `node_modules`).
+- Recommended verification path remains:
+  - `C:\Users\NK\Projects\HybridSocialApp-run`
+
 ```
 Task: Implement Industry-Ready Timesheet Data Model UI (Phase 3.5)
 Owner: Antigravity
