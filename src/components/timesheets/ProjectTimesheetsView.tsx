@@ -832,118 +832,120 @@ function DayEditPopup({
     <>
       <div className="fixed inset-0 z-40" />
       <div ref={popupRef} style={popupStyle}
-        className="fixed z-[60] w-[300px] bg-white rounded-xl shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+        className="fixed z-[60] w-[320px] bg-white dark:bg-slate-950 rounded-2xl shadow-xl shadow-slate-900/10 border border-slate-200/70 dark:border-slate-800 animate-in fade-in zoom-in-95 duration-150 overflow-hidden flex flex-col">
         
-        {/* Header with big hours */}
-        <div className="px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-white">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-bold">{day.day}</div>
-              <div className="text-[10px] text-muted-foreground">{week.weekLabel}</div>
-            </div>
-            <button onClick={onClose} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800/50 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-none">{format(date, 'EEEE')}</h3>
+            <p className="text-[10px] font-medium text-slate-500 mt-1">{format(date, 'MMM d, yyyy')}</p>
           </div>
+          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        <div className="px-4 py-3 space-y-3">
-          {/* PHASE 3.5: Multi-Category Entries */}
+        <div className="p-4 space-y-4">
+          {/* Categories */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">Time Entries</label>
-              <div className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{totalHours}h Total</div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Time Entries</label>
+              <div className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300 px-2.5 py-0.5 rounded-full shadow-sm">{totalHours}h Total</div>
             </div>
-            <div className="space-y-2">
+            
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 p-1.5 space-y-1">
               {['regular', 'overtime', 'travel'].map(cat => {
                 const entry = entries.find(e => e.category === cat) || { hours: 0 };
                 const isSelected = entry.hours > 0;
                 return (
-                  <div key={cat} className={`flex items-center gap-2 p-1.5 rounded-lg border transition-colors ${isSelected ? 'border-blue-200 bg-blue-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
-                    <div className="w-20 text-[11px] font-medium capitalize text-slate-600 pl-1">{cat}</div>
-                    <input type="number" min={0} max={24} step={0.5} value={entry.hours || ''} placeholder="0"
-                      onChange={e => {
-                        const val = Math.max(0, Math.min(24, Number(e.target.value)));
-                        if (entries.find(ex => ex.category === cat)) {
-                          setEntries(entries.map(ex => ex.category === cat ? { ...ex, hours: val } : ex));
-                        } else {
-                          setEntries([...entries, { id: `ent-${Date.now()}-${cat}`, category: cat as TimeCategory, hours: val, billable: true }]);
-                        }
-                      }}
-                      className="w-16 h-8 text-center text-sm font-bold rounded-md border focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none" />
-                    <span className="text-[10px] text-muted-foreground mr-1">h</span>
+                  <div key={cat} className={`flex items-center justify-between px-3 py-1.5 rounded-lg transition-all ${isSelected ? 'bg-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-700 dark:bg-slate-800' : 'hover:bg-white/50 dark:hover:bg-slate-800/50'}`}>
+                    <div className={`text-[11px] font-semibold capitalize ${isSelected ? 'text-slate-800 dark:text-slate-200' : 'text-slate-500'}`}>{cat}</div>
+                    <div className="flex items-center">
+                      <input type="number" min={0} max={24} step={0.5} value={entry.hours || ''} placeholder="0"
+                        onChange={e => {
+                          const val = Math.max(0, Math.min(24, Number(e.target.value)));
+                          if (entries.find(ex => ex.category === cat)) {
+                            setEntries(entries.map(ex => ex.category === cat ? { ...ex, hours: val } : ex));
+                          } else {
+                            setEntries([...entries, { id: `ent-${Date.now()}-${cat}`, category: cat as TimeCategory, hours: val, billable: true }]);
+                          }
+                        }}
+                        className="w-10 h-7 text-right text-sm font-bold bg-transparent focus:outline-none" />
+                      <span className="text-[11px] font-medium text-slate-400 select-none pointer-events-none pl-1">h</span>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* What I worked on (descriptive, not time-splitting) */}
+          {/* Note */}
           <div>
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">What I worked on</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2 px-1">Worked On</label>
             <input type="text" value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="e.g. Frontend dev, API integration, Code review..."
-              className="w-full h-9 px-3 text-xs rounded-lg border focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none" />
+              placeholder="e.g. Frontend dev, debugging..."
+              className="w-full h-9 px-3 text-[11px] font-medium rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 focus:bg-white dark:focus:bg-slate-950 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 outline-none transition-all shadow-sm" />
           </div>
 
-          {/* Time details — collapsible */}
-          <div className="border rounded-lg overflow-hidden">
+          {/* Time Picker Tool */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 overflow-hidden text-left">
             <button onClick={() => setShowTimeDetails(!showTimeDetails)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:bg-muted/30 transition-colors">
-              <Timer className="h-3 w-3" />
-              <span className="flex-1 text-left">Time Details</span>
-              <span className="text-[9px] font-normal normal-case tracking-normal">{showTimeDetails ? 'optional' : 'expand if needed'}</span>
-              {showTimeDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                <Timer className="h-3.5 w-3.5" /> Time Details
+              </span>
+              <span className="text-[9px] font-medium text-slate-400 tracking-wide uppercase">Optional {showTimeDetails ? '↑' : '↓'}</span>
             </button>
             {showTimeDetails && (
-              <div className="px-3 pb-3 pt-1 border-t space-y-2">
+              <div className="p-3 bg-white dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800 space-y-3">
                 <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="text-[9px] text-muted-foreground block mb-0.5">Start</label>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Start</label>
                     <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
-                      className="w-full h-7 px-1.5 text-[11px] rounded border focus:border-blue-400 outline-none" />
+                      className="w-full h-8 px-2 text-[11px] font-medium bg-slate-50/50 rounded-lg border border-slate-200 outline-none focus:border-blue-400" />
                   </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground block mb-0.5">End</label>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">End</label>
                     <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
-                      className="w-full h-7 px-1.5 text-[11px] rounded border focus:border-blue-400 outline-none" />
+                      className="w-full h-8 px-2 text-[11px] font-medium bg-slate-50/50 rounded-lg border border-slate-200 outline-none focus:border-blue-400" />
                   </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground block mb-0.5">Break</label>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Break</label>
                     <div className="relative">
                       <input type="number" min={0} max={120} value={breakMinutes} onChange={e => setBreakMinutes(Number(e.target.value))}
-                        className="w-full h-7 px-1.5 pr-7 text-[11px] rounded border focus:border-blue-400 outline-none" />
-                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground">m</span>
+                        className="w-full h-8 px-2 pr-6 text-[11px] font-medium bg-slate-50/50 rounded-lg border border-slate-200 outline-none focus:border-blue-400" />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-medium text-slate-400">m</span>
                     </div>
                   </div>
                 </div>
                 <button onClick={applyTimeCalc}
-                  className="w-full flex items-center justify-center gap-1.5 h-7 text-[10px] font-medium text-blue-600 bg-blue-50 rounded border border-blue-200 hover:bg-blue-100 transition-colors">
-                  <Zap className="h-3 w-3" /> Calculate: {calcHoursFromTime(startTime, endTime, breakMinutes)}h → Apply
+                  className="w-full flex items-center justify-center gap-1.5 h-8 text-[11px] font-bold text-blue-700 bg-blue-50/80 rounded-lg border border-blue-200/60 shadow-sm hover:bg-blue-100 transition-colors">
+                  <Zap className="h-3 w-3" /> Auto-fill {calcHoursFromTime(startTime, endTime, breakMinutes)}h Regular
                 </button>
               </div>
             )}
           </div>
-
-          {/* Copy actions */}
-          {totalHours > 0 && dayIndex < 4 && (
-            <div className="flex gap-1.5">
-              <button onClick={() => onCopyToRest(buildDay())}
-                className="flex-1 flex items-center justify-center gap-1 h-7 text-[10px] font-medium text-slate-600 bg-slate-50 rounded-md border hover:bg-slate-100 transition-colors">
-                <Copy className="h-3 w-3" /> Copy → {DAY_LABELS[dayIndex]}–Fri
-              </button>
-              <button onClick={() => onCopyToAll(buildDay())}
-                className="flex items-center justify-center gap-1 h-7 px-2.5 text-[10px] font-medium text-slate-600 bg-slate-50 rounded-md border hover:bg-slate-100 transition-colors">
-                <Copy className="h-3 w-3" /> All
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2.5 border-t bg-muted/20 flex items-center gap-2">
-          <Button size="sm" className="flex-1 h-8 text-xs gap-1.5" onClick={handleSave}>
-            <Save className="h-3.5 w-3.5" /> Save {day.day}
-          </Button>
-          <span className="text-[9px] text-muted-foreground">↵ Enter</span>
+        <div className="p-4 pt-0 space-y-2">
+          {totalHours > 0 && dayIndex < 4 && (
+            <div className="flex gap-2">
+              <button onClick={() => onCopyToRest(buildDay())}
+                className="flex-1 flex items-center justify-center gap-1.5 h-8 text-[10px] font-bold text-slate-600 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                <Copy className="h-3 w-3 text-slate-400" /> Copy M-F
+              </button>
+              <button onClick={() => onCopyToAll(buildDay())}
+                className="flex items-center justify-center h-8 px-3 text-[10px] font-bold text-slate-600 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                All
+              </button>
+            </div>
+          )}
+          
+          <button onClick={handleSave}
+            className="w-full flex items-center justify-center gap-1.5 h-10 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md transition-all active:scale-[0.98]">
+            <Save className="h-4 w-4" /> Save {format(date, 'EEEE')} 
+          </button>
         </div>
       </div>
     </>
