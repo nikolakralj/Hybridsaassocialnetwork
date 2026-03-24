@@ -265,12 +265,33 @@ Notes: Codex implemented the underlying data model. Antigravity completed the UI
 ```
 
 ```
-Task: Premium UI Styling for Create Project Wizard
+Task: [PAUSED] Premium UI Styling for Create Project Wizard
 Owner: Antigravity
 Phase: UI Polish
-Files: src/components/projects/CreateProjectWizard.tsx (or relevant wizard file)
-Goal: Elevate the visual design of the Supply Chain / Graph generation wizard (add soft shadows, animated bezier curves, hover styles) to achieve an enterprise-grade aesthetic.
-Status: in-progress
-Notes: Antigravity is working on this entirely visually while Codex handles the backend approval fallback logic in parallel.
+Files: src/components/projects/CreateProjectWizard.tsx
+Goal: Elevate the visual design of the Supply Chain / Graph generation wizard.
+Status: paused
+Notes: Paused due to Claude's Priority Call. UI polish is a distraction until the core Auth/DB is real.
+```
+
+### 🚨 CLAUDE'S PRIORITY CALL (March 2026) 🚨
+Based on Claude's architectural review, we are executing an immediate hard pivot. 
+**Objective:** Kill the mock PersonaContext. Ship real Auth. Move from KV store to real PostgreSQL tables. Then Invoice.
+
+```
+Task: Phase 4 Foundation - Kill the Persona (Real Auth Integration)
+Owner: Antigravity / Codex (Collaboration)
+Phase: Phase 4 Priority
+Goal: Remove the demo `PersonaContext`. Read only from actual Supabase `Auth` context. Ensure logging in as a user restricts all queries to their actual `organization_id` and graph edges.
+Status: unstarted
+```
+
+```
+Task: Phase 4 Foundation - SQL Schema Migration (Escape the KV Trap)
+Owner: Codex
+Phase: Phase 4 Priority
+Files: supabase/migrations/
+Goal: Convert the conceptual `WorkGraph` and `TimeEntry` models into rigid PostgreSQL relational tables. We must drop the KV JSONB blobs before attempting Phase 8 billing.
+Status: unstarted
 ```
 
