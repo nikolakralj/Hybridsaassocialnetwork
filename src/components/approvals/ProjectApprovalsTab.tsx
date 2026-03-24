@@ -17,9 +17,10 @@ import { Skeleton } from "../ui/skeleton";
 interface ProjectApprovalsTabProps {
   projectId: string;
   projectName: string;
+  viewerName?: string;
 }
 
-export function ProjectApprovalsTab({ projectId, projectName }: ProjectApprovalsTabProps) {
+export function ProjectApprovalsTab({ projectId, projectName, viewerName }: ProjectApprovalsTabProps) {
   const [viewMode, setViewMode] = useState<"queue" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
   
@@ -42,6 +43,9 @@ export function ProjectApprovalsTab({ projectId, projectName }: ProjectApprovals
           <p className="text-sm text-muted-foreground m-0">
             Review and approve timesheets and expenses for this project
           </p>
+          {viewerName && (
+            <p className="text-xs text-muted-foreground m-0 mt-1">Viewing as: {viewerName}</p>
+          )}
         </div>
         
         <div className="flex gap-2">

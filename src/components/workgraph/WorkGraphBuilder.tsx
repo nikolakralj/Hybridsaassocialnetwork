@@ -1325,8 +1325,10 @@ export function WorkGraphBuilder({
   const viewerOptions = useMemo(() => buildViewerOptions(allNodes, allEdges), [allNodes, allEdges]);
   const [currentViewer, setCurrentViewer] = useState<ViewerIdentity>(viewerOptions[0]); // Admin by default
   const viewerStorageKey = `workgraph-viewer:${projectId}`;
+  const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;
   const restoredViewerKeyRef = useRef<string | null>(null);
   const skipNextViewerPersistRef = useRef(false);
+  const hasRestoredViewerRef = useRef(false);
 
   // ── Sync with PersonaContext ──
   const { setPersonaByNodeId, currentPersona } = usePersona();
@@ -1362,17 +1364,23 @@ export function WorkGraphBuilder({
       setCurrentViewer(savedViewer);
       setPersonaByNodeId(savedViewer.nodeId);
     }
+    hasRestoredViewerRef.current = true;
   }, [viewerOptions, viewerStorageKey, currentViewer.nodeId, setPersonaByNodeId]);
 
   // Persist selected viewer per project.
   useEffect(() => {
+    if (!hasRestoredViewerRef.current) return;
     if (!currentViewer?.nodeId) return;
     if (skipNextViewerPersistRef.current) {
       skipNextViewerPersistRef.current = false;
       return;
     }
     sessionStorage.setItem(viewerStorageKey, currentViewer.nodeId);
-  }, [currentViewer?.nodeId, viewerStorageKey]);
+    sessionStorage.setItem(viewerMetaStorageKey, JSON.stringify(currentViewer));
+    window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
+      detail: { projectId, viewer: currentViewer }
+    }));
+  }, [currentViewer, viewerStorageKey, viewerMetaStorageKey, projectId]);
 
   // Month
   const [selectedMonth, setSelectedMonth] = useState(MONTHLY_SNAPSHOTS[MONTHLY_SNAPSHOTS.length - 1].month);

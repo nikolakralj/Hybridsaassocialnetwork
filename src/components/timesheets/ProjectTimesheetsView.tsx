@@ -109,13 +109,18 @@ interface ProjectTimesheetsViewProps {
   ownerName: string;
   contractors: any[];
   hourlyRate?: number;
+  viewerOverride?: {
+    id: string;
+    type: 'admin' | 'company' | 'agency' | 'client' | 'freelancer';
+    name: string;
+  };
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function ProjectTimesheetsView(_props: ProjectTimesheetsViewProps) {
+export function ProjectTimesheetsView({ viewerOverride }: ProjectTimesheetsViewProps) {
   const store = useTimesheetStore();
   const { currentPersona } = usePersona();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
@@ -150,9 +155,16 @@ export function ProjectTimesheetsView(_props: ProjectTimesheetsViewProps) {
     setSelectedMonth(d);
   }, [selectedMonth, setSelectedMonth]);
 
-  const viewerId = currentPersona?.id;
-  const isAdmin = currentPersona?.role === 'admin';
-  const isMultiPersonViewer = isAdmin || viewerId?.startsWith('org-') || viewerId?.startsWith('client-');
+  const viewerId = viewerOverride?.id || currentPersona?.id;
+  const viewerType = viewerOverride?.type || currentPersona?.graphViewerType;
+  const isAdmin = viewerType === 'admin' || currentPersona?.role === 'admin';
+  const isMultiPersonViewer =
+    isAdmin ||
+    viewerType === 'company' ||
+    viewerType === 'agency' ||
+    viewerType === 'client' ||
+    viewerId?.startsWith('org-') ||
+    viewerId?.startsWith('client-');
 
   // Persona-filtered weeks
   const { orgGroups, flatPersonWeeks } = useMemo(() => {
@@ -201,10 +213,12 @@ export function ProjectTimesheetsView(_props: ProjectTimesheetsViewProps) {
     toast.info(`Draft weeks already exist for ${monthLabel}`);
   }, [viewerId, store, monthKey, monthLabel]);
 
-  const viewingAs = isAdmin ? 'All people (Admin)'
-    : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
-    : viewerId?.startsWith('client-') ? 'All people (Client)'
-    : currentPersona?.name ?? 'Unknown';
+  const viewingAs = viewerOverride?.name
+    ? `${viewerOverride.name}${isAdmin ? ' (Admin)' : ''}`
+    : isAdmin ? 'All people (Admin)'
+      : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
+      : viewerId?.startsWith('client-') ? 'All people (Client)'
+      : currentPersona?.name ?? 'Unknown';
 
   const drawerWeekData = useMemo(() => {
     if (!drawerWeek) return null;

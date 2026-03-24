@@ -27,6 +27,7 @@ import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawe
 import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
+import type { ViewerIdentity } from "./workgraph/graph-visibility";
 
 // Module definitions
 type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
@@ -191,6 +192,7 @@ export function ProjectWorkspace({
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [activeGraphViewer, setActiveGraphViewer] = useState<ViewerIdentity | null>(null);
 
   const enabledModules = modules.filter(m => m.isEnabled);
   const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
@@ -244,6 +246,30 @@ export function ProjectWorkspace({
   useEffect(() => {
     loadTeamMembers();
   }, [projectId, accessToken]);
+
+  useEffect(() => {
+    const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;
+    const raw = sessionStorage.getItem(viewerMetaStorageKey);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed?.nodeId && parsed?.type) {
+          setActiveGraphViewer(parsed as ViewerIdentity);
+        }
+      } catch {
+        // Ignore malformed viewer payloads
+      }
+    }
+
+    const onViewerChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ projectId?: string; viewer?: ViewerIdentity }>;
+      if (!custom.detail?.viewer || custom.detail?.projectId !== projectId) return;
+      setActiveGraphViewer(custom.detail.viewer);
+    };
+
+    window.addEventListener('workgraph-viewer-changed', onViewerChanged);
+    return () => window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
+  }, [projectId]);
 
   const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
     await addProjectMember(projectId, payload, accessToken);
@@ -447,6 +473,11 @@ export function ProjectWorkspace({
                   { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
                 ]}
                 hourlyRate={95}
+                viewerOverride={activeGraphViewer ? {
+                  id: activeGraphViewer.nodeId,
+                  type: activeGraphViewer.type,
+                  name: activeGraphViewer.name,
+                } : undefined}
               />
             </TabsContent>
 
@@ -454,6 +485,7 @@ export function ProjectWorkspace({
               <ProjectApprovalsTab
                 projectId={projectId}
                 projectName={projectName}
+                viewerName={activeGraphViewer?.name}
               />
             </TabsContent>
 
