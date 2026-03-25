@@ -1,6 +1,6 @@
 # WorkGraph Agent Worklog
 
-Last updated: March 26, 2026 09:22 (Europe/Zagreb)
+Last updated: March 26, 2026 09:50 (Europe/Zagreb)
 Owner thread: Nikola + Codex + Claude
 
 ## Purpose
@@ -9,8 +9,8 @@ Live snapshot only. Older detail lives in [AGENT_WORKLOG_ARCHIVE.md](AGENT_WORKL
 
 ## Current State
 
-- Phase 3 gate: NO-GO.
-- Keep Phase 4 blocked until the gate flips to GO.
+- Phase 3 gate: ✅ **GO**.
+- Phase 4 is OPEN. First feature: Approval-to-Invoice Orchestrator (see PHASE4_INVOICE_SPEC.md).
 - Autonomous Mode: ACTIVE. Antigravity directs Claude; Claude directs Codex.
 - Keep this file short: last 7 days, current blockers, current assignments.
 
@@ -24,20 +24,22 @@ Live snapshot only. Older detail lives in [AGENT_WORKLOG_ARCHIVE.md](AGENT_WORKL
 
 | # | Blocker | Owner | Status |
 |---|---|---|---|
-| 1 | `approval_records.approver_user_id` JOIN on `wg_project_members` | Claude | IN PROGRESS (Directive 001) |
-| 2 | E2E Verification of Transactional Submit | Codex | PLANNED |
+| 1 | Identity bridge UUID resolution | Copernicus | ✅ CLOSED (hard-fail on bad resolution) |
+| 2 | Transactional submit atomicity | Copernicus | ✅ CLOSED (rollback on failure) |
 | 3 | State integrity (DB triggers) | Claude | ✅ CLOSED (008 live) |
-| 4 | Viewer dropdown type filter needs verification | Locke (review) | PASS (VERIFIED) |
-| 5 | Timesheet refresh persistence needs verification | Locke (review) | PASS (VERIFIED) |
+| 4 | Viewer dropdown type filter | Locke | ✅ CLOSED (orgId-based detection) |
+| 5 | Timesheet refresh persistence | Locke | ✅ CLOSED (localStorage) |
+| 6 | Post-create supply chain editor | Codex | ✅ CLOSED (Edit Supply Chain, build passed) |
+| 7 | Version history panel | Codex | ✅ CLOSED (History drawer, build passed) |
 
 ## Current Assignments
 
-1. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - implement the identity bridge.
-2. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - make submit and approval creation atomic.
-3. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - add state integrity migration.
-4. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - run QA gate evidence pass.
-5. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - verify viewer dropdown behavior.
-6. [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) - verify refresh persistence behavior.
+**All Phase 3 blockers closed. Phase 4 open.**
+
+Next tasks (see [PHASE4_INVOICE_SPEC.md](PHASE4_INVOICE_SPEC.md)):
+1. DB schema: `wg_invoice_templates` + `wg_invoices` migration
+2. InvoiceImportPanel: wire Claude API extraction (scaffold exists at `src/components/invoices/InvoiceImportPanel.tsx`)
+3. EN16931 XML renderer for Croatian eRačun output
 
 ## Active Delegation
 
@@ -70,3 +72,20 @@ If you need dated implementation detail, read [AGENT_WORKLOG_ARCHIVE.md](AGENT_W
 - Recommended split: Claude/Codex stay on blockers 1-2; reviewer finishes tasks 4-6; park any Phase 4 expansion until the gate policy changes.
 - Risk: Antigravity's Gross Margin Dashboard / Approval-to-Invoice scope conflicts with the current Phase 3 NO-GO gate.
 - NEEDS CLARIFICATION: Should Gross Margin Dashboard remain blocked until Phase 3 = GO, or is it approved as an exception?
+
+## 2026-03-26 00:39 - Task 8 Version History
+
+- Changed: `src/components/workgraph/WorkGraphBuilder.tsx` only.
+- Added a `History` toolbar button and a right-side version history drawer that fetches `getVersionHistory()` on open.
+- Added per-version restore actions that call `loadVersionById()` and swap the restored nodes/edges into the canvas.
+- Verification: `npm run build` passed cleanly (`vite build`, 3300 modules).
+- Risk: history is fetched on open; if the backend ordering changes, the UI still normalizes newest-first locally.
+
+## 2026-03-26 09:46 - Task 7 Edit Supply Chain
+
+- Changed: `src/components/workgraph/WorkGraphBuilder.tsx`, `src/components/workgraph/ProjectCreateWizard.tsx`.
+- Added an `Edit Supply Chain` toolbar action in Work Graph that opens the project wizard in `editMode` with parties reconstructed from the current graph.
+- In edit mode, the wizard now starts on `Supply Chain`, skips `Basics` and `Review`, and saves through a dedicated callback instead of the project-create path.
+- Save behavior is additive only: new nodes/edges from the wizard are merged into the existing graph, then `graphPersistence.saveVersion(..., 'Supply chain updated')` runs after `updateProject()`.
+- Verification: `npm run build` passed on 2026-03-26 (`vite build`, 3300 modules, existing large-chunk warning only).
+- Risk: edit save currently preserves existing node/edge payloads for matching IDs, so the flow safely adds new structure but does not rewrite or delete existing graph objects.

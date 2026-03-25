@@ -17,16 +17,16 @@ Read [src/docs/README.md](src/docs/README.md) first.
 
 ## Phase Gate
 
-- Current gate: **Phase 3 = NO-GO**.
-- Do not open new Phase 4 scope until the gate flips to GO.
+- Current gate: **Phase 3 = ✅ GO**.
+- Phase 4 is OPEN. Read [src/docs/PHASE4_INVOICE_SPEC.md](src/docs/PHASE4_INVOICE_SPEC.md).
 - Live blocker state is in [src/docs/AGENT_WORKLOG.md](src/docs/AGENT_WORKLOG.md).
 
 ## Current Priority
 
-1. Identity bridge: graph approver node -> real UUID via `wg_project_members`.
-2. Transactional submit: no partial submit/approval creation state.
-3. State integrity: keep approval + timesheet status consistent.
-4. Verification: gate checklist, dropdown behavior, refresh persistence.
+1. DB migration: `wg_invoice_templates` + `wg_invoices` tables.
+2. Wire Claude API extraction in `src/components/invoices/InvoiceImportPanel.tsx`.
+3. EN16931 XML renderer for Croatian eRačun output.
+4. Gross Margin Dashboard card per project (Antigravity directive).
 
 ## Rules
 
