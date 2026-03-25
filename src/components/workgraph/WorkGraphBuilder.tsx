@@ -1283,21 +1283,30 @@ export function WorkGraphBuilder({
   onSave,
   initialConfig,
 }: WorkGraphBuilderProps) {
-  const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
+  const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || '';
   const { accessToken, user } = useAuth();
+  const isDemoProject = projectId === 'proj-alpha';
 
   const defaultTemplate = TEMPLATES[0];
-  const [allNodes, setAllNodes] = useState<BaseNode[]>(
-    (initialConfig?.graph.nodes || defaultTemplate.nodes || []) as BaseNode[]
-  );
-  const [allEdges, setAllEdges] = useState<BaseEdge[]>(
-    (initialConfig?.graph.edges || defaultTemplate.edges || []) as BaseEdge[]
-  );
-  const [graphLoaded, setGraphLoaded] = useState(!!initialConfig);
+  const [allNodes, setAllNodes] = useState<BaseNode[]>(() => {
+    if (initialConfig?.graph.nodes) return initialConfig.graph.nodes as BaseNode[];
+    if (isDemoProject) return (defaultTemplate.nodes || []) as BaseNode[];
+    return [];
+  });
+  const [allEdges, setAllEdges] = useState<BaseEdge[]>(() => {
+    if (initialConfig?.graph.edges) return initialConfig.graph.edges as BaseEdge[];
+    if (isDemoProject) return (defaultTemplate.edges || []) as BaseEdge[];
+    return [];
+  });
+  const [graphLoaded, setGraphLoaded] = useState(!!initialConfig || isDemoProject);
 
   // Try to load project graph from KV on mount
   useEffect(() => {
     if (graphLoaded || initialConfig) return;
+    if (!projectId) {
+      setGraphLoaded(true);
+      return;
+    }
     let cancelled = false;
 
     async function loadProjectGraph() {
@@ -1310,17 +1319,35 @@ export function WorkGraphBuilder({
           setGraphLoaded(true);
           console.log(`[WorkGraph] Loaded ${data.project.graph.nodes.length} nodes from project ${projectId}`);
         } else {
-          setGraphLoaded(true); // Fall through to template
+          if (!cancelled) {
+            if (isDemoProject) {
+              setAllNodes((defaultTemplate.nodes || []) as BaseNode[]);
+              setAllEdges((defaultTemplate.edges || []) as BaseEdge[]);
+            } else {
+              setAllNodes([]);
+              setAllEdges([]);
+            }
+            setGraphLoaded(true);
+          }
         }
       } catch (err) {
-        console.log(`[WorkGraph] No saved graph for ${projectId}, using template`);
-        if (!cancelled) setGraphLoaded(true);
+        console.log(`[WorkGraph] No saved graph for ${projectId}, using ${isDemoProject ? 'template' : 'empty state'}`);
+        if (!cancelled) {
+          if (isDemoProject) {
+            setAllNodes((defaultTemplate.nodes || []) as BaseNode[]);
+            setAllEdges((defaultTemplate.edges || []) as BaseEdge[]);
+          } else {
+            setAllNodes([]);
+            setAllEdges([]);
+          }
+          setGraphLoaded(true);
+        }
       }
     }
 
     loadProjectGraph();
     return () => { cancelled = true; };
-  }, [projectId, accessToken, graphLoaded, initialConfig]);
+  }, [projectId, accessToken, graphLoaded, initialConfig, isDemoProject, defaultTemplate.edges, defaultTemplate.nodes]);
 
   // Viewer options
   const viewerOptions = useMemo(() => buildViewerOptions(allNodes, allEdges), [allNodes, allEdges]);

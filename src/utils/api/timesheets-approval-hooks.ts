@@ -8,6 +8,11 @@
 import { useQuery, useMutation, useQueryClient, useQueries, UseQueryOptions } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import * as api from './timesheets-approval';
+import {
+  approveItem,
+  getLatestPendingApproval,
+  rejectItem,
+} from './approvals-supabase';
 import type { 
   Organization,
   ProjectContract,
@@ -40,6 +45,28 @@ export const queryKeys = {
   
   monthlyView: (contractId: string, month: string) => ['monthlyView', contractId, month] as const,
 };
+
+async function syncApprovalRecordIfPresent(
+  subjectId: string,
+  decision: 'approved' | 'rejected',
+  actorName: string,
+  notes?: string
+) {
+  const pendingApproval = await getLatestPendingApproval('timesheet', subjectId);
+  if (!pendingApproval) return null;
+
+  if (decision === 'approved') {
+    return approveItem(pendingApproval.id, {
+      approvedBy: actorName,
+      notes,
+    });
+  }
+
+  return rejectItem(pendingApproval.id, {
+    rejectedBy: actorName,
+    reason: notes,
+  });
+}
 
 // ============================================================================
 // ORGANIZATIONS
@@ -208,8 +235,10 @@ export function useApproveTimesheet() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ periodId, approverId, approverName }: ApproveTimesheetParams) =>
-      api.approveTimesheet(periodId, approverId, approverName),
+    mutationFn: async ({ periodId, approverId, approverName }: ApproveTimesheetParams) => {
+      await syncApprovalRecordIfPresent(periodId, 'approved', approverName);
+      return api.approveTimesheet(periodId, approverId, approverName);
+    },
     
     onSuccess: (_, variables) => {
       // Invalidate relevant queries to refresh data
@@ -242,8 +271,10 @@ export function useRejectTimesheet() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ periodId, approverId, approverName, reason }: RejectTimesheetParams) =>
-      api.rejectTimesheet(periodId, approverId, approverName, reason),
+    mutationFn: async ({ periodId, approverId, approverName, reason }: RejectTimesheetParams) => {
+      await syncApprovalRecordIfPresent(periodId, 'rejected', approverName, reason);
+      return api.rejectTimesheet(periodId, approverId, approverName, reason);
+    },
     
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.periods });
@@ -273,8 +304,25 @@ export function useBulkApprove() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ periodIds, approverId, approverName }: BulkApproveParams) =>
-      api.bulkApproveTimesheets(periodIds, approverId, approverName),
+    mutationFn: async ({ periodIds, approverId, approverName }: BulkApproveParams) => {
+      const succeeded: string[] = [];
+      const failed: string[] = [];
+
+      await Promise.all(
+        periodIds.map(async (periodId) => {
+          try {
+            await syncApprovalRecordIfPresent(periodId, 'approved', approverName);
+            await api.approveTimesheet(periodId, approverId, approverName);
+            succeeded.push(periodId);
+          } catch (error) {
+            console.error(`Failed to approve period ${periodId}:`, error);
+            failed.push(periodId);
+          }
+        })
+      );
+
+      return { succeeded, failed };
+    },
     
     onSuccess: (result, variables) => {
       // Invalidate all periods to refresh
@@ -315,8 +363,25 @@ export function useBulkReject() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ periodIds, approverId, approverName, reason }: BulkRejectParams) =>
-      api.bulkRejectTimesheets(periodIds, approverId, approverName, reason),
+    mutationFn: async ({ periodIds, approverId, approverName, reason }: BulkRejectParams) => {
+      const succeeded: string[] = [];
+      const failed: string[] = [];
+
+      await Promise.all(
+        periodIds.map(async (periodId) => {
+          try {
+            await syncApprovalRecordIfPresent(periodId, 'rejected', approverName, reason);
+            await api.rejectTimesheet(periodId, approverId, approverName, reason);
+            succeeded.push(periodId);
+          } catch (error) {
+            console.error(`Failed to reject period ${periodId}:`, error);
+            failed.push(periodId);
+          }
+        })
+      );
+
+      return { succeeded, failed };
+    },
     
     onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.periods });

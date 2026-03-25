@@ -28,6 +28,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
+import { EnhancedDayEntryModal } from './EnhancedDayEntryModal';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask, TimeEntry, TimeCategory } from '../../contexts/TimesheetDataContext';
@@ -218,6 +219,21 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   } | null>(null);
   const [dragOverDay, setDragOverDay] = useState<number | null>(null);
 
+  // Viewer picker dropdown
+  const [viewerPickerOpen, setViewerPickerOpen] = useState(false);
+  const viewerPickerRef = useRef<HTMLDivElement>(null);
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!viewerPickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (viewerPickerRef.current && !viewerPickerRef.current.contains(e.target as Node)) {
+        setViewerPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [viewerPickerOpen]);
+
   // Month helpers
   const monthKey = useMemo(() => {
     const d = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
@@ -275,7 +291,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || user?.id;
   const viewerType = viewerOverride?.type || storedViewerMeta?.type || authViewerType;
   const viewerOrgId = viewerOverride?.orgId || storedViewerMeta?.orgId;
-  const isPersonViewer = Boolean(viewerOrgId);
+  const isPersonViewer = Boolean(viewerOrgId || viewerId?.startsWith('user-') || viewerType === 'freelancer');
   const isAdmin = viewerType === 'admin';
   const isMultiPersonViewer =
     !isPersonViewer && (
@@ -290,11 +306,18 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   // Persona-filtered weeks
   const { orgGroups, flatPersonWeeks } = useMemo(() => {
     const allWeeks = store.getAllWeeksForMonth(monthKey);
+    const parties = getApprovalParties(projectId);
     let filtered: StoredWeek[];
     if (isAdmin) filtered = allWeeks;
     else if (viewerId?.startsWith('org-')) filtered = allWeeks.filter(w => personOrgId(w.personId) === viewerId);
     else if (viewerId?.startsWith('client-')) filtered = allWeeks;
-    else if (viewerId) filtered = allWeeks.filter(w => w.personId === viewerId);
+    else if (viewerId) {
+      // Show own weeks + weeks of people this viewer can approve
+      filtered = allWeeks.filter(w =>
+        w.personId === viewerId ||
+        canViewerApproveSubmitter(viewerId, w.personId, parties)
+      );
+    }
     else filtered = allWeeks;
 
     const byPerson = new Map<string, StoredWeek[]>();
@@ -341,6 +364,42 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
       : viewerId?.startsWith('client-') ? 'All people (Client)'
       : user?.name ?? 'Unknown';
+
+  // Build list of switchable people/orgs from graph name directory
+  const viewerOptions = useMemo(() => {
+    const dir = getNameDir();
+    const options: Array<{ id: string; name: string; type: string; label: string; orgId?: string }> = [];
+    // Add "Admin" option
+    options.push({ id: '__admin__', name: 'Admin', type: 'admin', label: 'Admin (Full View)' });
+    // Add people and orgs from graph
+    // People have orgId set (they belong to an org); orgs don't have orgId
+    Object.entries(dir).forEach(([id, entry]) => {
+      const isPerson = Boolean(entry.orgId || id.startsWith('user-') || entry.type === 'freelancer');
+      if (isPerson) {
+        // It's a person (has an org association or freelancer identity)
+        options.push({ id, name: entry.name, type: entry.type, label: entry.name, orgId: entry.orgId });
+        return;
+      }
+
+      // It's an organization/party
+      const suffix = entry.type === 'client' ? 'Client' : entry.type === 'agency' ? 'Agency' : 'Org';
+      options.push({ id, name: entry.name, type: entry.type, label: `${entry.name} (${suffix})` });
+    });
+    return options;
+  }, [graphVersion]);
+
+  const switchViewer = useCallback((option: { id: string; name: string; type: string; orgId?: string }) => {
+    // Write to sessionStorage so the rest of the app picks it up
+    const meta = option.id === '__admin__'
+      ? { nodeId: '__admin__', type: 'admin', name: 'Admin' }
+      : { nodeId: option.id, type: option.type, name: option.name, orgId: option.orgId };
+    sessionStorage.setItem(`workgraph-viewer-meta:${projectId}`, JSON.stringify(meta));
+    setStoredViewerMeta(meta);
+    setGraphVersion(v => v + 1);
+    setViewerPickerOpen(false);
+    // Also fire the event so other components stay in sync
+    window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', { detail: { projectId } }));
+  }, [projectId]);
 
   const drawerWeekData = useMemo(() => {
     if (!drawerWeek) return null;
@@ -425,7 +484,33 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
           <p className="text-sm text-muted-foreground">Synced with Project Graph</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] gap-1"><Eye className="h-3 w-3" /> {viewingAs}</Badge>
+          <div className="relative" ref={viewerPickerRef}>
+            <button
+              onClick={() => setViewerPickerOpen(!viewerPickerOpen)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium hover:bg-muted/50 transition-colors cursor-pointer"
+            >
+              <Eye className="h-3 w-3" /> {viewingAs}
+              <ChevronDown className="h-3 w-3 opacity-50" />
+            </button>
+            {viewerPickerOpen && viewerOptions.length > 0 && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border rounded-lg shadow-lg py-1 min-w-[180px] max-h-[280px] overflow-auto">
+                {viewerOptions.map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => switchViewer(opt)}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors flex items-center gap-2 ${
+                      (opt.id === viewerId || (opt.id === '__admin__' && isAdmin)) ? 'bg-blue-50 text-blue-700 font-semibold' : ''
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-bold shrink-0">
+                      {opt.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                    </span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={viewInGraph}>
             <Network className="h-3.5 w-3.5" /> Graph
           </Button>
@@ -574,42 +659,58 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
         </div>
       )}
 
-      {/* Day Edit Popup */}
+      {/* Enhanced Day Entry Modal (Figma-designed task editor) */}
       {dayPopup && dayPopupData && (
-        <DayEditPopup
-          day={dayPopupData.day}
-          dayIndex={dayPopupData.dayIndex}
-          week={dayPopupData.week}
-          anchorRect={dayPopup.anchorRect}
-          drawerOpen={!!drawerWeek}
-          onSave={(updatedDay) => {
+        <EnhancedDayEntryModal
+          open={true}
+          onOpenChange={(open) => { if (!open) setDayPopup(null); }}
+          date={(() => {
+            // Build the actual date from weekStart + dayIndex
+            const d = new Date(dayPopup.weekStart);
+            d.setDate(d.getDate() + dayPopup.dayIndex);
+            return d;
+          })()}
+          entry={{
+            date: (() => { const d = new Date(dayPopup.weekStart); d.setDate(d.getDate() + dayPopup.dayIndex); return d; })(),
+            hours: dayPopupData.day.hours || 0,
+            tasks: (dayPopupData.day.entries || []).map(e => ({
+              id: e.id || `task-${Date.now()}`,
+              hours: e.hours || 0,
+              workType: (e.category as 'regular' | 'travel' | 'overtime' | 'oncall') || 'regular',
+              taskCategory: 'Development' as const,
+              task: e.description || '',
+              notes: dayPopupData.day.notes || '',
+              billable: e.billable !== false,
+              tags: [],
+              detailsExpanded: false,
+              startTime: dayPopupData.day.startTime,
+              endTime: dayPopupData.day.endTime,
+              breakMinutes: dayPopupData.day.breakMinutes || 0,
+            })),
+            status: dayPopupData.week.status as 'draft' | 'submitted' | 'approved' | 'rejected',
+          }}
+          userRole={isAdmin ? 'company-owner' : viewerType === 'company' ? 'company-owner' : viewerType === 'agency' ? 'agency-owner' : 'individual-contributor'}
+          onSave={(_date, hours, tasks) => {
+            const updatedDay: StoredDay = {
+              ...dayPopupData.day,
+              hours,
+              totalHours: hours,
+              entries: tasks.map(t => ({
+                id: t.id,
+                category: t.workType as TimeCategory,
+                hours: t.hours,
+                billable: t.billable,
+                description: t.task || t.taskCategory,
+              })),
+              notes: tasks.map(t => t.notes).filter(Boolean).join('; ') || undefined,
+              startTime: tasks[0]?.startTime,
+              endTime: tasks[tasks.length - 1]?.endTime,
+              breakMinutes: tasks.reduce((s, t) => s + (t.breakMinutes || 0), 0) || undefined,
+            };
             store.updateSingleDay(dayPopup.personId, dayPopup.weekStart, dayPopup.dayIndex, updatedDay);
-            toast.success(`${dayPopupData.day.day} → ${updatedDay.hours}h`);
+            toast.success(`${dayPopupData.day.day} → ${hours}h (${tasks.length} task${tasks.length > 1 ? 's' : ''})`);
             setDayPopup(null);
           }}
-          onCopyToAll={(updatedDay) => {
-            const newDays = dayPopupData.week.days.map((d, i) => ({
-              ...updatedDay,
-              day: DAY_LABELS[i],
-              tasks: updatedDay.tasks?.map(t => ({ ...t, id: `task-${Date.now()}-${i}-${Math.random()}` })),
-            }));
-            store.updateWeekDays(dayPopup.personId, dayPopup.weekStart, newDays);
-            toast.success(`Applied to all days — ${updatedDay.hours}h × 5`);
-            setDayPopup(null);
-          }}
-          onCopyToRest={(updatedDay) => {
-            for (let i = dayPopup.dayIndex + 1; i < 5; i++) {
-              const copiedDay: StoredDay = {
-                ...updatedDay,
-                day: DAY_LABELS[i],
-                tasks: updatedDay.tasks?.map(t => ({ ...t, id: `task-${Date.now()}-${i}-${Math.random()}` })),
-              };
-              store.updateSingleDay(dayPopup.personId, dayPopup.weekStart, i, copiedDay);
-            }
-            toast.success(`Copied to ${DAY_LABELS[dayPopup.dayIndex]}–Fri`);
-            setDayPopup(null);
-          }}
-          onClose={() => setDayPopup(null)}
         />
       )}
 

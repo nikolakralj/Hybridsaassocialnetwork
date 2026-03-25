@@ -4,6 +4,44 @@
 import { createClient } from '../supabase/client';
 
 const supabase = createClient();
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const APPROVAL_CREATE_IN_FLIGHT = new Map<string, Promise<ApprovalRecord>>();
+const ROLE_PRIORITY: Record<string, number> = {
+  Owner: 0,
+  Editor: 1,
+  Contributor: 2,
+  Commenter: 3,
+  Viewer: 4,
+};
+
+interface NameDirEntry {
+  name?: string;
+  type?: string;
+  orgId?: string;
+}
+
+interface ApprovalDirPerson {
+  id: string;
+  name?: string;
+  canApprove?: boolean;
+}
+
+interface ApprovalDirParty {
+  id: string;
+  name?: string;
+  partyType?: string;
+  people?: ApprovalDirPerson[];
+}
+
+interface WgProjectMember {
+  id: string;
+  user_id: string | null;
+  user_name?: string | null;
+  user_email?: string | null;
+  role?: string | null;
+  scope?: string | null;
+  graph_node_id?: string | null;
+}
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -29,7 +67,6 @@ export interface ApprovalRecord {
 }
 
 export interface ApprovalQueueItem extends ApprovalRecord {
-  // Additional fields from joined data
   timesheetData?: {
     weekStart: string;
     weekEnd: string;
@@ -44,67 +81,307 @@ export interface ApprovalQueueFilters {
   subjectType?: 'all' | 'timesheet' | 'expense' | 'invoice' | 'contract';
   projectId?: string;
   approverUserId?: string;
-  approverNodeId?: string; // Graph node ID (e.g. "org-nas") — used when UUID mapping is unavailable
+  approverNodeId?: string;
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function isUuid(value?: string | null): value is string {
+  return Boolean(value && UUID_REGEX.test(value));
+}
+
+function normalizeMatchValue(value?: string | null): string {
+  return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function readSessionJson<T>(key: string): T | null {
+  if (typeof sessionStorage === 'undefined') return null;
+
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNameDir(projectId: string): Record<string, NameDirEntry> {
+  if (!projectId) return {};
+  return readSessionJson<Record<string, NameDirEntry>>(`workgraph-name-dir:${projectId}`) || {};
+}
+
+function readApprovalParties(projectId: string): ApprovalDirParty[] {
+  if (!projectId) return [];
+  const parsed = readSessionJson<{ parties?: ApprovalDirParty[] }>(`workgraph-approval-dir:${projectId}`);
+  return Array.isArray(parsed?.parties) ? parsed.parties : [];
+}
+
+async function fetchProjectMembers(projectId: string): Promise<WgProjectMember[]> {
+  const withGraphNode = await supabase
+    .from('wg_project_members')
+    .select('id, user_id, user_name, user_email, role, scope, graph_node_id')
+    .eq('project_id', projectId);
+
+  if (!withGraphNode.error) {
+    return (withGraphNode.data || []) as WgProjectMember[];
+  }
+
+  if (!withGraphNode.error.message?.includes('graph_node_id')) {
+    throw new Error(`Failed to load wg_project_members: ${withGraphNode.error.message}`);
+  }
+
+  const withoutGraphNode = await supabase
+    .from('wg_project_members')
+    .select('id, user_id, user_name, user_email, role, scope')
+    .eq('project_id', projectId);
+
+  if (withoutGraphNode.error) {
+    throw new Error(`Failed to load wg_project_members: ${withoutGraphNode.error.message}`);
+  }
+
+  return (withoutGraphNode.data || []) as WgProjectMember[];
+}
+
+function getCandidateNodeIds(projectId: string, nodeId: string): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  const push = (value?: string | null) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    ordered.push(value);
+  };
+
+  push(nodeId);
+
+  const party = readApprovalParties(projectId).find((entry) => entry.id === nodeId);
+  if (!party) return ordered;
+
+  const people = [...(party.people || [])].sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id)
+  );
+  const approvers = people.filter((person) => person.canApprove);
+
+  (approvers.length > 0 ? approvers : people).forEach((person) => push(person.id));
+  return ordered;
+}
+
+export async function resolveGraphNodeToUserId(
+  projectId: string,
+  nodeId?: string,
+  fallbackUserId?: string
+): Promise<string | undefined> {
+  if (isUuid(nodeId)) return nodeId;
+  if (!projectId || !nodeId) return fallbackUserId;
+
+  const members = (await fetchProjectMembers(projectId)).filter((member) => isUuid(member.user_id));
+  if (members.length === 0) return fallbackUserId;
+
+  const nameDir = readNameDir(projectId);
+  const candidates = getCandidateNodeIds(projectId, nodeId)
+    .map((candidateNodeId) => ({
+      nodeId: candidateNodeId,
+      normalizedName: normalizeMatchValue(nameDir[candidateNodeId]?.name || candidateNodeId),
+      orgId: nameDir[candidateNodeId]?.orgId,
+    }))
+    .filter((candidate) => candidate.normalizedName.length > 0);
+
+  const ranked = members
+    .map((member) => {
+      let score = 0;
+      const memberName = normalizeMatchValue(member.user_name);
+      const emailPrefix = normalizeMatchValue(member.user_email?.split('@')[0] || '');
+
+      for (const candidate of candidates) {
+        if (member.graph_node_id && member.graph_node_id === candidate.nodeId) {
+          score = Math.max(score, 400);
+        }
+
+        if (memberName && memberName === candidate.normalizedName) {
+          score = Math.max(score, 300);
+        }
+
+        if (emailPrefix && emailPrefix === candidate.normalizedName.replace(/\s+/g, '.')) {
+          score = Math.max(score, 200);
+        }
+
+        if (candidate.orgId && member.scope && member.scope === candidate.orgId) {
+          score += 10;
+        }
+      }
+
+      if (score === 0) return null;
+
+      return {
+        member,
+        score,
+        rolePriority: ROLE_PRIORITY[member.role || 'Viewer'] ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((entry): entry is { member: WgProjectMember; score: number; rolePriority: number } => Boolean(entry))
+    .sort((left, right) =>
+      right.score - left.score ||
+      left.rolePriority - right.rolePriority ||
+      (left.member.user_name || '').localeCompare(right.member.user_name || '') ||
+      (left.member.user_id || '').localeCompare(right.member.user_id || '')
+    );
+
+  if (ranked.length > 0) {
+    return ranked[0].member.user_id || fallbackUserId;
+  }
+
+  return fallbackUserId;
+}
+
+function buildCreateApprovalKey(approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>): string {
+  return [
+    approval.projectId,
+    approval.subjectType,
+    approval.subjectId,
+    approval.approvalLayer,
+    approval.approverNodeId || '',
+  ].join('::');
+}
+
+async function findExistingPendingApproval(
+  approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<ApprovalRecord | null> {
+  let query = supabase
+    .from('approval_records')
+    .select('*')
+    .eq('project_id', approval.projectId)
+    .eq('subject_type', approval.subjectType)
+    .eq('subject_id', approval.subjectId)
+    .eq('approval_layer', approval.approvalLayer)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (approval.approverNodeId) {
+    query = query.eq('approver_node_id', approval.approverNodeId);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to check existing approval: ${error.message}`);
+  }
+
+  return data ? transformApproval(data) : null;
+}
+
+function transformApproval(dbApproval: any): ApprovalRecord {
+  return {
+    id: dbApproval.id,
+    projectId: dbApproval.project_id,
+    subjectType: dbApproval.subject_type,
+    subjectId: dbApproval.subject_id,
+    approverUserId: dbApproval.approver_user_id,
+    approverName: dbApproval.approver_name,
+    approverNodeId: dbApproval.approver_node_id,
+    approvalLayer: dbApproval.approval_layer,
+    status: dbApproval.status,
+    notes: dbApproval.notes,
+    submittedAt: dbApproval.submitted_at,
+    decidedAt: dbApproval.decided_at,
+    graphVersionId: dbApproval.graph_version_id,
+    createdAt: dbApproval.created_at,
+    updatedAt: dbApproval.updated_at,
+  };
 }
 
 // ============================================================================
 // APPROVAL OPERATIONS
 // ============================================================================
 
-/**
- * Create a new approval record (when timesheet is submitted)
- */
 export async function createApproval(
   approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<ApprovalRecord> {
+  const createKey = buildCreateApprovalKey(approval);
+  const existingPromise = APPROVAL_CREATE_IN_FLIGHT.get(createKey);
+  if (existingPromise) return existingPromise;
+
+  const createPromise = (async () => {
+    try {
+      const existing = await findExistingPendingApproval(approval);
+      if (existing) return existing;
+
+      const explicitApproverUuid = isUuid(approval.approverUserId) ? approval.approverUserId : undefined;
+      const resolvedApproverUserId = await resolveGraphNodeToUserId(
+        approval.projectId,
+        approval.approverUserId || approval.approverNodeId,
+        explicitApproverUuid
+      );
+
+      if (!resolvedApproverUserId) {
+        throw new Error(
+          `Unable to resolve approver UUID for project ${approval.projectId} and node ${approval.approverUserId || approval.approverNodeId || 'unknown'}`
+        );
+      }
+
+      const { data, error } = await supabase
+        .from('approval_records')
+        .insert([{
+          project_id: approval.projectId,
+          subject_type: approval.subjectType,
+          subject_id: approval.subjectId,
+          approver_user_id: resolvedApproverUserId,
+          approver_name: approval.approverName,
+          approver_node_id: approval.approverNodeId,
+          approval_layer: approval.approvalLayer,
+          status: approval.status || 'pending',
+          notes: approval.notes,
+          submitted_at: approval.submittedAt || new Date().toISOString(),
+          graph_version_id: approval.graphVersionId,
+        }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error creating approval:', error);
+        throw new Error(`Failed to create approval: ${error.message}`);
+      }
+
+      return transformApproval(data);
+    } catch (error) {
+      console.error('Error in createApproval:', error);
+      throw error;
+    } finally {
+      APPROVAL_CREATE_IN_FLIGHT.delete(createKey);
+    }
+  })();
+
+  APPROVAL_CREATE_IN_FLIGHT.set(createKey, createPromise);
+  return createPromise;
+}
+
+export async function deleteApproval(approvalId: string): Promise<void> {
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('approval_records')
-      .insert([{
-        project_id: approval.projectId,
-        subject_type: approval.subjectType,
-        subject_id: approval.subjectId,
-        approver_user_id: approval.approverUserId,
-        approver_name: approval.approverName,
-        approver_node_id: approval.approverNodeId,
-        approval_layer: approval.approvalLayer,
-        status: approval.status || 'pending',
-        notes: approval.notes,
-        submitted_at: approval.submittedAt || new Date().toISOString(),
-        graph_version_id: approval.graphVersionId,
-      }])
-      .select()
-      .single();
+      .delete()
+      .eq('id', approvalId);
 
     if (error) {
-      console.error('Error creating approval:', error);
-      throw new Error(`Failed to create approval: ${error.message}`);
+      console.error('Error deleting approval:', error);
+      throw new Error(`Failed to delete approval: ${error.message}`);
     }
-
-    return transformApproval(data);
   } catch (error) {
-    console.error('Error in createApproval:', error);
+    console.error('Error in deleteApproval:', error);
     throw error;
   }
 }
 
-/**
- * Get approval queue for a user
- */
 export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
 ): Promise<ApprovalQueueItem[]> {
   try {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-    // Always query approval_records directly to avoid view schema cache issues
     let query = supabase
       .from('approval_records')
       .select('*');
 
-    // Apply status filter — only restrict when a specific status is requested.
-    // 'all' or undefined = no filter (show everything for the approver).
-    // Default behaviour changed: callers must explicitly pass 'pending' to restrict.
     if (filters.status && filters.status !== 'all') {
       query = query.eq('status', filters.status);
     }
@@ -113,21 +390,30 @@ export async function getApprovalQueue(
       query = query.eq('subject_type', filters.subjectType);
     }
 
-    // Only filter by project_id when it's a valid UUID — seed IDs like
-    // "proj-alpha" would cause a Postgres 22P02 parse error on UUID columns.
-    if (filters.projectId && uuidRegex.test(filters.projectId)) {
+    if (filters.projectId) {
       query = query.eq('project_id', filters.projectId);
     }
 
-    // approver_node_id filter: supports graph-node-based approval routing.
-    // When John views as org-nas, we match approval records that target that node.
     if (filters.approverNodeId) {
-      query = query.eq('approver_node_id', filters.approverNodeId);
+      let resolvedApproverUserId: string | undefined;
+
+      try {
+        resolvedApproverUserId = filters.projectId
+          ? await resolveGraphNodeToUserId(filters.projectId, filters.approverNodeId)
+          : undefined;
+      } catch (error) {
+        console.warn('[approvals] Failed to resolve approver node for queue filter', error);
+      }
+
+      if (resolvedApproverUserId) {
+        query = query.or(`approver_node_id.eq.${filters.approverNodeId},approver_user_id.eq.${resolvedApproverUserId}`);
+      } else {
+        query = query.eq('approver_node_id', filters.approverNodeId);
+      }
     } else if (filters.approverUserId) {
       query = query.eq('approver_user_id', filters.approverUserId);
     }
 
-    // Order by submission date (newest first)
     query = query.order('submitted_at', { ascending: false });
 
     const { data, error } = await query;
@@ -139,26 +425,29 @@ export async function getApprovalQueue(
 
     if (!data || data.length === 0) return [];
 
-    // Manually fetch related data since we're bypassing the view
-    // Filter out non-UUID project IDs to avoid Postgres UUID parse errors
-    const projectIds = [...new Set(data.map(d => d.project_id))].filter(Boolean);
-    const validUuidProjectIds = projectIds.filter(id => uuidRegex.test(id));
+    const projectIds = [...new Set(data.map((entry) => entry.project_id))].filter(Boolean);
+    const validUuidProjectIds = projectIds.filter((id) => isUuid(id));
     let projectMap = new Map<string, string>();
+
     if (validUuidProjectIds.length > 0) {
       const { data: projectsData } = await supabase
         .from('projects')
         .select('id, name')
         .in('id', validUuidProjectIds);
-      projectMap = new Map(projectsData?.map(p => [p.id, p.name]) || []);
+      projectMap = new Map(projectsData?.map((project) => [project.id, project.name]) || []);
     }
-    // Also map non-UUID project IDs using their raw ID as a display name
-    projectIds.filter(id => !uuidRegex.test(id)).forEach(id => {
+
+    projectIds.filter((id) => !isUuid(id)).forEach((id) => {
       projectMap.set(id, id);
     });
 
-    const timesheetIds = data.filter(d => d.subject_type === 'timesheet').map(d => d.subject_id).filter(Boolean);
-    const validUuidTimesheetIds = timesheetIds.filter(id => uuidRegex.test(id));
-    let timesheetMap = new Map();
+    const timesheetIds = data
+      .filter((entry) => entry.subject_type === 'timesheet')
+      .map((entry) => entry.subject_id)
+      .filter(Boolean);
+    const validUuidTimesheetIds = timesheetIds.filter((id) => isUuid(id));
+    let timesheetMap = new Map<string, any>();
+
     if (validUuidTimesheetIds.length > 0) {
       const { data: timesheetData } = await supabase
         .from('timesheet_periods')
@@ -173,7 +462,7 @@ export async function getApprovalQueue(
           )
         `)
         .in('id', validUuidTimesheetIds);
-      timesheetMap = new Map(timesheetData?.map((t: any) => [t.id, t]) || []);
+      timesheetMap = new Map(timesheetData?.map((timesheet: any) => [timesheet.id, timesheet]) || []);
     }
 
     return data.map((dbItem: any) => {
@@ -183,7 +472,6 @@ export async function getApprovalQueue(
       if (dbItem.subject_type === 'timesheet') {
         const ts = timesheetMap.get(dbItem.subject_id);
         if (ts) {
-          // Handle arrays from Supabase relationship depending on exactly how it returns
           const contract = Array.isArray(ts.project_contracts) ? ts.project_contracts[0] : ts.project_contracts;
           (approval as ApprovalQueueItem).timesheetData = {
             weekStart: ts.week_start_date,
@@ -203,9 +491,33 @@ export async function getApprovalQueue(
   }
 }
 
-/**
- * Approve an item
- */
+export async function getLatestPendingApproval(
+  subjectType: ApprovalRecord['subjectType'],
+  subjectId: string
+): Promise<ApprovalRecord | null> {
+  try {
+    const { data, error } = await supabase
+      .from('approval_records')
+      .select('*')
+      .eq('subject_type', subjectType)
+      .eq('subject_id', subjectId)
+      .eq('status', 'pending')
+      .order('approval_layer', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch pending approval: ${error.message}`);
+    }
+
+    return data ? transformApproval(data) : null;
+  } catch (error) {
+    console.error('Error in getLatestPendingApproval:', error);
+    throw error;
+  }
+}
+
 export async function approveItem(
   approvalId: string,
   data?: { approvedBy?: string; notes?: string }
@@ -227,8 +539,6 @@ export async function approveItem(
       throw new Error(`Failed to approve item: ${error.message}`);
     }
 
-    // TODO: Trigger next approval layer or mark as complete
-
     return transformApproval(result);
   } catch (error) {
     console.error('Error in approveItem:', error);
@@ -236,9 +546,6 @@ export async function approveItem(
   }
 }
 
-/**
- * Reject an item
- */
 export async function rejectItem(
   approvalId: string,
   data?: { rejectedBy?: string; reason?: string }
@@ -267,9 +574,6 @@ export async function rejectItem(
   }
 }
 
-/**
- * Request changes for an item
- */
 export async function requestChanges(
   approvalId: string,
   notes: string
@@ -298,9 +602,6 @@ export async function requestChanges(
   }
 }
 
-/**
- * Bulk approve multiple items
- */
 export async function bulkApprove(data: {
   approvedBy?: string;
   itemIds: string[];
@@ -329,9 +630,6 @@ export async function bulkApprove(data: {
   }
 }
 
-/**
- * Bulk reject multiple items
- */
 export async function bulkReject(
   approvalIds: string[],
   notes?: string
@@ -359,9 +657,6 @@ export async function bulkReject(
   }
 }
 
-/**
- * Get approval history for a subject (e.g., a timesheet)
- */
 export async function getApprovalHistory(
   subjectType: string,
   subjectId: string
@@ -386,9 +681,6 @@ export async function getApprovalHistory(
   }
 }
 
-/**
- * Get pending approvals count for a user
- */
 export async function getPendingCount(approverUserId: string): Promise<number> {
   try {
     const { count, error } = await supabase
@@ -407,28 +699,4 @@ export async function getPendingCount(approverUserId: string): Promise<number> {
     console.error('Error in getPendingCount:', error);
     throw error;
   }
-}
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-function transformApproval(dbApproval: any): ApprovalRecord {
-  return {
-    id: dbApproval.id,
-    projectId: dbApproval.project_id,
-    subjectType: dbApproval.subject_type,
-    subjectId: dbApproval.subject_id,
-    approverUserId: dbApproval.approver_user_id,
-    approverName: dbApproval.approver_name,
-    approverNodeId: dbApproval.approver_node_id,
-    approvalLayer: dbApproval.approval_layer,
-    status: dbApproval.status,
-    notes: dbApproval.notes,
-    submittedAt: dbApproval.submitted_at,
-    decidedAt: dbApproval.decided_at,
-    graphVersionId: dbApproval.graph_version_id,
-    createdAt: dbApproval.created_at,
-    updatedAt: dbApproval.updated_at,
-  };
 }

@@ -1,46 +1,49 @@
-// Phase 5 Day 3: Global Approvals Workbench
-// Cross-project approval inbox with filters, bulk actions, and graph overlay
-
-import React, { useState, useEffect } from 'react';
-import { 
-  Loader2, 
-  Filter, 
-  CheckCircle, 
-  XCircle, 
+import { useEffect, useMemo, useState } from "react";
+import {
   AlertTriangle,
-  Eye,
-  Sparkles,
+  CheckCircle,
   Clock,
-  TrendingUp,
-  BarChart3,
-} from 'lucide-react';
-import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { Input } from '../ui/input';
+  Eye,
+  Loader2,
+  RefreshCw,
+  Search,
+  XCircle,
+} from "lucide-react";
+import { toast } from "sonner";
+import { useAuth } from "../../contexts/AuthContext";
+import {
+  approveItem,
+  bulkApprove,
+  getApprovalQueue,
+  rejectItem,
+  type ApprovalQueueFilters,
+} from "../../utils/api/approvals-supabase";
+import { GraphOverlayModal } from "./GraphOverlayModal";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../ui/select';
-import { Checkbox } from '../ui/checkbox';
-import { toast } from 'sonner';
-import {
-  getApprovalQueue,
-  approveItem,
-  rejectItem,
-  bulkApprove,
-  type ApprovalQueueItem,
-  type ApprovalQueueFilters,
-} from '../../utils/api/approvals-supabase';
-import { GraphOverlayModal } from './GraphOverlayModal';
-import { useAuth } from '../../contexts/AuthContext';
+} from "../ui/select";
+import { Textarea } from "../ui/textarea";
+import { cn } from "../ui/utils";
 
-// Helper interface for UI display
 export interface UIApprovalItem {
   id: string;
-  objectType: 'timesheet' | 'expense' | 'invoice' | 'contract' | 'deliverable' | string;
+  objectType: "timesheet" | "expense" | "invoice" | "contract" | "deliverable" | string;
   project: {
     id: string;
     name: string;
@@ -67,20 +70,37 @@ export interface UIApprovalItem {
     breached: boolean;
   };
   submittedAt: string;
-  status: 'pending' | 'approved' | 'rejected' | 'changes_requested';
+  status: "pending" | "approved" | "rejected" | "changes_requested";
 }
 
 interface ApprovalsWorkbenchProps {
-  projectFilter?: string; // Optional: filter to specific project
-  statusFilter?: 'all' | 'pending' | 'approved' | 'rejected';
-  viewerNodeId?: string;  // Graph node ID of the current viewer (e.g. "org-nas") for approval matching
+  projectFilter?: string;
+  statusFilter?: "all" | "pending" | "approved" | "rejected";
+  viewerNodeId?: string;
   embedded?: boolean;
 }
+
+type WorkbenchStatus = "all" | "pending" | "approved" | "rejected";
+type SortOrder = "newest" | "oldest" | "priority";
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 export function ApprovalsWorkbench({
   projectFilter,
   statusFilter: externalStatusFilter,
   viewerNodeId,
+  embedded = false,
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
   const [items, setItems] = useState<UIApprovalItem[]>([]);
@@ -88,59 +108,70 @@ export function ApprovalsWorkbench({
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showGraphModal, setShowGraphModal] = useState(false);
   const [selectedGraphItem, setSelectedGraphItem] = useState<UIApprovalItem | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
-  const [availableFilters, setAvailableFilters] = useState<Record<string, string[]> | null>(null);
+  const [rejectingItem, setRejectingItem] = useState<UIApprovalItem | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<WorkbenchStatus>(externalStatusFilter ?? "pending");
+  const [sortBy, setSortBy] = useState<SortOrder>("newest");
+  const [refreshing, setRefreshing] = useState(false);
+  const [approvingItemId, setApprovingItemId] = useState<string | null>(null);
+  const [bulkApproving, setBulkApproving] = useState(false);
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>(externalStatusFilter || 'all');
-  const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'date' | 'priority'>('date');
+  const effectiveStatusFilter = externalStatusFilter ?? statusFilter;
 
-  // Load data
   useEffect(() => {
-    loadApprovals();
-  }, [user?.id, projectFilter, viewerNodeId]);
+    if (externalStatusFilter) {
+      setStatusFilter(externalStatusFilter);
+    }
+  }, [externalStatusFilter]);
 
-  const loadApprovals = async () => {
+  useEffect(() => {
+    void loadApprovals();
+  }, [user?.id, projectFilter, viewerNodeId, effectiveStatusFilter, typeFilter]);
+
+  async function loadApprovals() {
     setLoading(true);
+    setRefreshing(true);
+
     try {
       const filters: ApprovalQueueFilters = {
-        status: statusFilter === 'all' ? undefined : statusFilter as any,
-        subjectType: typeFilter === 'all' ? undefined : typeFilter as any,
+        status: effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
+        subjectType: typeFilter === "all" ? undefined : (typeFilter as ApprovalQueueFilters["subjectType"]),
         projectId: projectFilter,
-        // Use graph node ID for approval matching when available (pre-UUID-mapping era)
         approverNodeId: viewerNodeId || undefined,
         approverUserId: !viewerNodeId ? user?.id : undefined,
       };
-      
+
       const data = await getApprovalQueue(filters);
-      
-      // Transform to expected format for UI
-      const transformedItems = (data || []).map(item => ({
+
+      const transformedItems = (data || []).map((item) => ({
         id: item.id,
         objectType: item.subjectType,
         project: {
           id: item.projectId,
-          name: item.projectName || 'Unknown Project',
+          name: item.projectName || "Unknown Project",
         },
         stepOrder: item.approvalLayer,
-        totalSteps: item.approvalLayer, // TODO: Calculate from approval chain
+        totalSteps: item.approvalLayer,
         policyVersion: 1,
         partyId: item.approverUserId,
         partyName: item.approverName,
         period: {
-          start: item.timesheetData?.weekStart || '',
-          end: item.timesheetData?.weekEnd || '',
+          start: item.timesheetData?.weekStart || "",
+          end: item.timesheetData?.weekEnd || "",
         },
         person: {
           id: item.approverUserId,
-          name: item.timesheetData?.contractorName || 'Unknown',
-          role: 'Contractor',
+          name: item.timesheetData?.contractorName || "Unknown",
+          role: "Contractor",
         },
         hours: item.timesheetData?.totalHours || 0,
-        amount: item.timesheetData?.hourlyRate && item.timesheetData?.totalHours ? item.timesheetData.totalHours * item.timesheetData.hourlyRate : null,
+        amount:
+          item.timesheetData?.hourlyRate && item.timesheetData?.totalHours
+            ? item.timesheetData.totalHours * item.timesheetData.hourlyRate
+            : null,
         canViewRates: !!item.timesheetData?.hourlyRate,
         gating: {
           blocked: false,
@@ -152,350 +183,613 @@ export function ApprovalsWorkbench({
         submittedAt: item.submittedAt || new Date().toISOString(),
         status: item.status,
       }));
-      
+
       setItems(transformedItems);
-      setTotalCount(transformedItems.length);
     } catch (error) {
-      toast.error('Failed to load approvals');
-      console.error('Load error:', error);
-      setItems([]); // Ensure items is always an array
+      toast.error("Failed to load approvals");
+      console.error("Load error:", error);
+      setItems([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-  
-  // Filter and sort items
-  const filteredItems = items
-    .filter(item => {
-      const searchText = `${item.person.name} ${item.project.name} ${item.objectType}`.toLowerCase();
-      if (searchQuery && !searchText.includes(searchQuery.toLowerCase())) {
-        return false;
-      }
-      if (externalStatusFilter && externalStatusFilter !== 'all' && item.status !== externalStatusFilter) {
-        return false;
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'priority') {
-        // Sort by SLA breach status (breached items first)
-        if (a.sla.breached && !b.sla.breached) return -1;
-        if (!a.sla.breached && b.sla.breached) return 1;
-      }
-      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-    });
-  
-  const handleSelectAll = () => {
-    if (selectedItems.size === filteredItems.length) {
-      setSelectedItems(new Set());
-    } else {
-      setSelectedItems(new Set(filteredItems.map(item => item.id)));
-    }
-  };
-  
-  const handleToggleItem = (id: string) => {
-    const newSelected = new Set(selectedItems);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedItems(newSelected);
-  };
-  
-  const handleApprove = async (itemId: string) => {
-    try {
-      await approveItem(itemId, { approvedBy: user?.id || 'current-user' });
-      toast.success('Approved successfully');
-      loadApprovals();
-    } catch (error) {
-      toast.error('Failed to approve');
-    }
-  };
-  
-  const handleReject = async (itemId: string) => {
-    const reason = prompt('Rejection reason:');
-    if (!reason) return;
-    
-    try {
-      await rejectItem(itemId, { rejectedBy: user?.id || 'current-user', reason });
-      toast.success('Rejected successfully');
-      loadApprovals();
-    } catch (error) {
-      toast.error('Failed to reject');
-    }
-  };
-  
-  const handleBulkApprove = async () => {
-    try {
-      await bulkApprove({ 
-        approvedBy: user?.id || 'current-user',
-        itemIds: Array.from(selectedItems) 
+  }
+
+  const filteredItems = useMemo(() => {
+    return items
+      .filter((item) => {
+        const searchText = `${item.person.name} ${item.project.name} ${item.objectType}`.toLowerCase();
+        if (searchQuery && !searchText.includes(searchQuery.toLowerCase())) return false;
+        if (effectiveStatusFilter !== "all" && item.status !== effectiveStatusFilter) return false;
+        if (typeFilter !== "all" && item.objectType !== typeFilter) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === "priority") {
+          if (a.sla.breached && !b.sla.breached) return -1;
+          if (!a.sla.breached && b.sla.breached) return 1;
+        }
+
+        const aTs = new Date(a.submittedAt).getTime();
+        const bTs = new Date(b.submittedAt).getTime();
+
+        if (sortBy === "oldest") return aTs - bTs;
+        return bTs - aTs;
       });
-      toast.success(`Approved ${selectedItems.size} items`);
+  }, [effectiveStatusFilter, items, searchQuery, sortBy, typeFilter]);
+
+  const stats = useMemo(
+    () => ({
+      total: items.length,
+      pending: items.filter((item) => item.status === "pending").length,
+      approved: items.filter((item) => item.status === "approved").length,
+      rejected: items.filter((item) => item.status === "rejected").length,
+    }),
+    [items],
+  );
+
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 || typeFilter !== "all" || effectiveStatusFilter !== "all" || sortBy !== "newest";
+
+  const selectableItemIds = useMemo(
+    () => filteredItems.filter((item) => item.status === "pending" && !item.gating.blocked).map((item) => item.id),
+    [filteredItems],
+  );
+
+  const selectableItemIdsKey = selectableItemIds.join("|");
+
+  useEffect(() => {
+    setSelectedItems((current) => {
+      const next = new Set(Array.from(current).filter((id) => selectableItemIds.includes(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [selectableItemIds, selectableItemIdsKey]);
+
+  const allSelectableSelected =
+    selectableItemIds.length > 0 && selectableItemIds.every((itemId) => selectedItems.has(itemId));
+
+  const handleSelectAll = () => {
+    if (allSelectableSelected) {
       setSelectedItems(new Set());
-      loadApprovals();
+      return;
+    }
+
+    setSelectedItems(new Set(selectableItemIds));
+  };
+
+  const handleToggleItem = (itemId: string) => {
+    setSelectedItems((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const handleApprove = async (itemId: string) => {
+    setApprovingItemId(itemId);
+
+    try {
+      await approveItem(itemId, { approvedBy: user?.id || "current-user" });
+      toast.success("Approval recorded");
+      await loadApprovals();
     } catch (error) {
-      toast.error('Failed to bulk approve');
+      toast.error("Failed to approve");
+    } finally {
+      setApprovingItemId(null);
     }
   };
-  
+
+  const openRejectDialog = (item: UIApprovalItem) => {
+    setRejectingItem(item);
+    setRejectReason("");
+  };
+
+  const closeRejectDialog = (force = false) => {
+    if (rejectSubmitting && !force) return;
+    setRejectingItem(null);
+    setRejectReason("");
+  };
+
+  const handleReject = async () => {
+    if (!rejectingItem || !rejectReason.trim()) return;
+
+    setRejectSubmitting(true);
+
+    try {
+      await rejectItem(rejectingItem.id, {
+        rejectedBy: user?.id || "current-user",
+        reason: rejectReason.trim(),
+      });
+      toast.success("Rejection recorded");
+      closeRejectDialog(true);
+      await loadApprovals();
+    } catch (error) {
+      toast.error("Failed to reject");
+    } finally {
+      setRejectSubmitting(false);
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedItems.size === 0) return;
+
+    setBulkApproving(true);
+
+    try {
+      await bulkApprove({
+        approvedBy: user?.id || "current-user",
+        itemIds: Array.from(selectedItems),
+      });
+      toast.success(`Approved ${selectedItems.size} item${selectedItems.size === 1 ? "" : "s"}`);
+      setSelectedItems(new Set());
+      await loadApprovals();
+    } catch (error) {
+      toast.error("Failed to bulk approve");
+    } finally {
+      setBulkApproving(false);
+    }
+  };
+
   const handleViewGraph = (item: UIApprovalItem) => {
     setSelectedGraphItem(item);
     setShowGraphModal(true);
   };
-  
-  const stats = {
-    total: items.length,
-    pending: items.filter(i => i.status === 'pending').length,
-    approved: items.filter(i => i.status === 'approved').length,
-    rejected: items.filter(i => i.status === 'rejected').length,
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setTypeFilter("all");
+    setSortBy("newest");
+
+    if (!externalStatusFilter) {
+      setStatusFilter("pending");
+    }
   };
-  
+
+  const formatObjectType = (type: string) => {
+    if (!type) return "Item";
+    const normalized = type.replace(/[_-]/g, " ");
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  };
+
+  const formatDate = (value: string) => {
+    if (!value) return "N/A";
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) return value;
+    return shortDateFormatter.format(parsedDate);
+  };
+
+  const formatPeriod = (start: string, end: string) => {
+    if (!start && !end) return "N/A";
+    if (!start) return formatDate(end);
+    if (!end) return formatDate(start);
+    return `${formatDate(start)} to ${formatDate(end)}`;
+  };
+
+  const getEmptyTitle = () => {
+    if (effectiveStatusFilter === "pending") return "No pending approvals";
+    if (searchQuery.trim()) return "No matches for your search";
+    return "No approvals found";
+  };
+
+  const getEmptyDescription = () => {
+    if (effectiveStatusFilter === "pending") {
+      return "You are caught up for now. New requests will appear here as soon as they are submitted.";
+    }
+
+    if (hasActiveFilters) {
+      return "Try clearing filters or refreshing the workspace to widen the queue.";
+    }
+
+    return "There are no approvals in this view right now.";
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-            {projectFilter ? 'Project Approvals' : 'Approvals Workbench'}
-          </h2>
-          <Badge variant="outline" className="text-violet-600 border-violet-300">
-            <Sparkles className="h-3 w-3 mr-1" />
-            Multi-Party Graph
-          </Badge>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Review and approve timesheets, expenses, and invoices across all projects
-        </p>
-      </div>
-      
-      {/* Stats Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-card border border-border/60 rounded-xl p-4 shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]">
-          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Items</div>
-          <div className="text-2xl font-semibold text-foreground mt-1">{stats.total}</div>
-        </div>
-        <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4">
-          <div className="text-xs font-medium text-amber-600 uppercase tracking-wide">Pending</div>
-          <div className="text-2xl font-semibold text-amber-900 mt-1">{stats.pending}</div>
-        </div>
-        <div className="bg-emerald-50 border border-emerald-200/60 rounded-xl p-4">
-          <div className="text-xs font-medium text-emerald-600 uppercase tracking-wide">Approved</div>
-          <div className="text-2xl font-semibold text-emerald-900 mt-1">{stats.approved}</div>
-        </div>
-        <div className="bg-red-50 border border-red-200/60 rounded-xl p-4">
-          <div className="text-xs font-medium text-red-600 uppercase tracking-wide">Rejected</div>
-          <div className="text-2xl font-semibold text-red-900 mt-1">{stats.rejected}</div>
-        </div>
-      </div>
-      
-      {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <Input
-          placeholder="Search approvals..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-64 h-9 text-sm bg-background border-border/60"
-        />
-        
-        {!externalStatusFilter && (
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-36 h-9 text-sm">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
-        )}
-        
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-36 h-9 text-sm">
-            <SelectValue placeholder="Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="timesheet">Timesheets</SelectItem>
-            <SelectItem value="expense">Expenses</SelectItem>
-            <SelectItem value="invoice">Invoices</SelectItem>
-          </SelectContent>
-        </Select>
-        
-        <Select value={sortBy} onValueChange={(v) => setSortBy(v as 'date' | 'priority')}>
-          <SelectTrigger className="w-36 h-9 text-sm">
-            <SelectValue placeholder="Sort By" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="date">Date</SelectItem>
-            <SelectItem value="priority">Priority</SelectItem>
-          </SelectContent>
-        </Select>
-        
-        <Button variant="outline" size="sm" onClick={loadApprovals} className="h-9 text-sm">
-          Refresh
-        </Button>
-      </div>
-      
-      {/* Bulk Actions */}
-      {selectedItems.size > 0 && (
-        <div className="bg-accent-brand/5 border border-accent-brand/20 rounded-xl p-4 flex items-center justify-between">
-          <div className="text-sm font-medium text-foreground">
-            {selectedItems.size} item{selectedItems.size !== 1 ? 's' : ''} selected
-          </div>
-          <div className="flex gap-2">
-            <Button
-              onClick={handleBulkApprove}
-              size="sm"
-              className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs"
-            >
-              <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
-              Approve All
-            </Button>
-            <Button
-              onClick={() => setSelectedItems(new Set())}
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs"
-            >
-              Clear
-            </Button>
+    <div className={cn("space-y-4", embedded ? "space-y-4" : "space-y-5")}>
+      {!embedded && (
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="m-0 text-2xl font-semibold tracking-tight text-foreground">
+              {projectFilter ? "Project approvals" : "Approvals workbench"}
+            </h2>
+            <p className="mt-1 mb-0 text-sm text-muted-foreground">
+              Review and resolve approval requests with pending work kept at the front of the queue.
+            </p>
           </div>
         </div>
       )}
-      
-      {/* Items List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : filteredItems.length === 0 ? (
-        <div className="text-center py-24 text-muted-foreground text-sm">
-          No approvals found
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {/* Select All */}
-          <div className="flex items-center gap-3 px-4 py-2 bg-muted/40 rounded-lg">
-            <Checkbox
-              checked={selectedItems.size === filteredItems.length}
-              onCheckedChange={handleSelectAll}
-            />
-            <span className="text-xs font-medium text-muted-foreground">Select All</span>
+
+      <section
+        className={cn(
+          "rounded-2xl border border-border/60 bg-muted/10 p-4 sm:p-5",
+          embedded && "border-border/50 bg-background/60",
+        )}
+      >
+        <div className="flex flex-col gap-4 border-b border-border/60 pb-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={effectiveStatusFilter === "pending" ? "default" : "secondary"} className="rounded-full px-3">
+                Pending {stats.pending}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-3">
+                Total {stats.total}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-3">
+                Approved {stats.approved}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-3">
+                Rejected {stats.rejected}
+              </Badge>
+            </div>
+
+            {!externalStatusFilter && (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                <Button
+                  size="sm"
+                  variant={statusFilter === "pending" ? "default" : "outline"}
+                  onClick={() => setStatusFilter("pending")}
+                  className="rounded-full"
+                >
+                  Pending first
+                </Button>
+                <Button
+                  size="sm"
+                  variant={statusFilter === "all" ? "default" : "outline"}
+                  onClick={() => setStatusFilter("all")}
+                  className="rounded-full"
+                >
+                  All statuses
+                </Button>
+              </div>
+            )}
           </div>
-          
-          {/* Items */}
-          {filteredItems.map((item) => (
-            <div
-              key={item.id}
-              className="border border-border/60 rounded-xl p-4 bg-card hover:shadow-md transition-all duration-200 shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]"
-            >
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  checked={selectedItems.has(item.id)}
-                  onCheckedChange={() => handleToggleItem(item.id)}
-                />
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <h3 className="font-medium text-sm text-foreground">
-                      {item.objectType === 'timesheet' ? 'Timesheet' : 'Expense Report'} - {item.person.name}
-                    </h3>
-                    <Badge variant={
-                      item.status === 'approved' ? 'default' :
-                      item.status === 'rejected' ? 'destructive' :
-                      'secondary'
-                    }>
-                      {item.status}
-                    </Badge>
-                    <Badge variant="outline" className="text-[11px]">
-                      {item.objectType}
-                    </Badge>
-                    <Badge variant="outline" className="text-[11px] text-violet-600 border-violet-300">
-                      Step {item.stepOrder} of {item.totalSteps}
-                    </Badge>
-                    {item.sla.breached && (
-                      <Badge variant="destructive" className="text-[11px]">
-                        SLA Breached
-                      </Badge>
-                    )}
-                  </div>
-                  
-                  <div className="text-xs text-muted-foreground space-y-0.5 mt-2">
-                    <div>Submitted by <span className="font-medium text-foreground">{item.person.name}</span> ({item.person.role || 'Freelancer'})</div>
-                    <div>Project: <span className="font-medium text-foreground">{item.project.name}</span></div>
-                    <div>Current Approver: <span className="font-medium text-foreground">{item.partyName}</span></div>
-                    <div className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {new Date(item.submittedAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    <div>Period: {item.period.start} to {item.period.end}</div>
-                    <div className="flex items-center gap-4 mt-1">
-                      <span className="font-medium text-foreground">{item.hours} hours</span>
-                      {item.canViewRates && item.amount && (
-                        <span className="font-medium text-foreground">${item.amount.toLocaleString()}</span>
-                      )}
-                      {!item.canViewRates && (
-                        <span className="text-muted-foreground/60 italic">Rate masked</span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {item.gating.blocked && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-destructive">
-                      <AlertTriangle className="h-3.5 w-3.5" />
-                      <span>Blocked: {item.gating.reasons.join(', ')}</span>
-                    </div>
+
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="relative w-full xl:max-w-xl">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by person, project, or type"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="h-10 pl-9"
+              />
+            </div>
+
+            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+              {!externalStatusFilter && (
+                <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as WorkbenchStatus)}>
+                  <SelectTrigger className="h-10 w-full min-w-0 text-sm xl:min-w-[150px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="h-10 w-full min-w-0 text-sm xl:min-w-[140px]">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="timesheet">Timesheets</SelectItem>
+                  <SelectItem value="expense">Expenses</SelectItem>
+                  <SelectItem value="invoice">Invoices</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortOrder)}>
+                <SelectTrigger className="h-10 w-full min-w-0 text-sm xl:min-w-[140px]">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="oldest">Oldest</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Button
+                variant="outline"
+                onClick={() => void loadApprovals()}
+                className="h-10 w-full gap-1.5"
+                disabled={refreshing}
+              >
+                {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {selectedItems.size > 0 && (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <p className="m-0 text-sm font-medium text-emerald-950">
+                  {selectedItems.size} pending item{selectedItems.size === 1 ? "" : "s"} selected
+                </p>
+                <p className="m-0 text-xs text-emerald-800/80">
+                  Only active, non-blocked approvals are available for bulk approval.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:w-auto">
+                <Button
+                  onClick={handleBulkApprove}
+                  className="h-9 w-full bg-emerald-600 hover:bg-emerald-700 md:min-w-[170px]"
+                  disabled={bulkApproving}
+                >
+                  {bulkApproving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4" />
                   )}
-                </div>
-                
-                <div className="flex gap-2 flex-shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleViewGraph(item)}
-                    className="gap-1.5 h-8 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    Graph
-                  </Button>
-                  
-                  {item.status === 'pending' && (
-                    <>
-                      <Button
-                        size="sm"
-                        onClick={() => handleApprove(item.id)}
-                        className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs"
-                        disabled={item.gating.blocked}
-                      >
-                        <CheckCircle className="h-3.5 w-3.5 mr-1" />
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleReject(item.id)}
-                        className="h-8 text-xs"
-                      >
-                        <XCircle className="h-3.5 w-3.5 mr-1" />
-                        Reject
-                      </Button>
-                    </>
-                  )}
-                </div>
+                  Approve selected
+                </Button>
+                <Button
+                  onClick={() => setSelectedItems(new Set())}
+                  variant="outline"
+                  className="h-9 w-full md:min-w-[120px]"
+                  disabled={bulkApproving}
+                >
+                  Clear selection
+                </Button>
               </div>
             </div>
-          ))}
+          </div>
+        )}
+
+        <div className="mt-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border/70 bg-background/80 px-4 py-12 text-center sm:px-6">
+              <h3 className="m-0 text-base font-semibold">{getEmptyTitle()}</h3>
+              <p className="mx-auto mt-2 mb-0 max-w-xl text-sm text-muted-foreground">{getEmptyDescription()}</p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                {hasActiveFilters && (
+                  <Button size="sm" variant="outline" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => void loadApprovals()} className="gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Refresh queue
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border/60 bg-background/80 px-4 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={allSelectableSelected}
+                      onCheckedChange={() => handleSelectAll()}
+                      disabled={selectableItemIds.length === 0}
+                    />
+                    <div>
+                      <p className="m-0 text-sm font-medium text-foreground">Select all actionable approvals</p>
+                      <p className="m-0 text-xs text-muted-foreground">
+                        {selectableItemIds.length} of {filteredItems.length} item{filteredItems.length === 1 ? "" : "s"} can be bulk approved
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{filteredItems.length} results</span>
+                </div>
+              </div>
+
+              {filteredItems.map((item) => {
+                const isPending = item.status === "pending";
+                const isBlocked = item.gating.blocked;
+                const isSelectable = isPending && !isBlocked;
+                const isApproving = approvingItemId === item.id;
+                const showAmount = item.canViewRates && item.amount !== null;
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-border/60 bg-background/90 p-4 shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]"
+                  >
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <Checkbox
+                          checked={selectedItems.has(item.id)}
+                          onCheckedChange={() => handleToggleItem(item.id)}
+                          disabled={!isSelectable}
+                          className="mt-1"
+                        />
+
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="m-0 text-sm font-semibold text-foreground">
+                              {formatObjectType(item.objectType)} approval
+                            </h3>
+                            <Badge
+                              variant={
+                                item.status === "approved"
+                                  ? "default"
+                                  : item.status === "rejected"
+                                    ? "destructive"
+                                    : "secondary"
+                              }
+                              className="capitalize"
+                            >
+                              {item.status.replace("_", " ")}
+                            </Badge>
+                            <Badge variant="outline" className="text-[11px]">
+                              Step {item.stepOrder} of {item.totalSteps}
+                            </Badge>
+                            {item.sla.breached && (
+                              <Badge variant="destructive" className="text-[11px]">
+                                SLA breached
+                              </Badge>
+                            )}
+                            {isBlocked && (
+                              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                                Action blocked
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="space-y-1">
+                            <p className="m-0 text-sm text-muted-foreground">
+                              <span className="font-medium text-foreground">{item.person.name}</span> in{" "}
+                              <span className="font-medium text-foreground">{item.project.name}</span>
+                            </p>
+                            {item.person.role && (
+                              <p className="m-0 text-xs text-muted-foreground">{item.person.role}</p>
+                            )}
+                          </div>
+
+                          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="rounded-lg bg-muted/40 px-3 py-2">
+                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                                Submitted
+                              </p>
+                              <p className="mt-1 mb-0 flex items-center gap-1.5 text-sm text-foreground">
+                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                {formatDate(item.submittedAt)}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-muted/40 px-3 py-2">
+                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                                Current approver
+                              </p>
+                              <p className="mt-1 mb-0 text-sm text-foreground">{item.partyName || "Unassigned"}</p>
+                            </div>
+
+                            <div className="rounded-lg bg-muted/40 px-3 py-2">
+                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                                Period
+                              </p>
+                              <p className="mt-1 mb-0 text-sm text-foreground">
+                                {formatPeriod(item.period.start, item.period.end)}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-muted/40 px-3 py-2">
+                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                                Summary
+                              </p>
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground">
+                                <span>{item.hours} hours</span>
+                                {showAmount ? (
+                                  <span>{currencyFormatter.format(item.amount)}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">Rate masked</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {isBlocked && item.gating.reasons.length > 0 && (
+                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                              <span>{item.gating.reasons.join(", ")}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex w-full flex-col gap-2 xl:w-[220px] xl:shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewGraph(item)}
+                          className="h-9 w-full justify-center xl:justify-start"
+                        >
+                          <Eye className="h-4 w-4" />
+                          View path
+                        </Button>
+
+                        {isPending ? (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                            <Button
+                              size="sm"
+                              onClick={() => void handleApprove(item.id)}
+                              className="h-9 w-full bg-emerald-600 hover:bg-emerald-700"
+                              disabled={isBlocked || isApproving}
+                            >
+                              {isApproving ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <CheckCircle className="h-4 w-4" />
+                              )}
+                              {isBlocked ? "Blocked" : "Approve"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => openRejectDialog(item)}
+                              className="h-9 w-full"
+                              disabled={isApproving}
+                            >
+                              <XCircle className="h-4 w-4" />
+                              Reject
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                            This request is {item.status.replace("_", " ")}.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
-      
-      {/* Graph Modal */}
+      </section>
+
+      <Dialog open={!!rejectingItem} onOpenChange={(open) => !open && closeRejectDialog()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reject approval request</DialogTitle>
+            <DialogDescription>
+              {rejectingItem
+                ? `Add a reason for rejecting ${rejectingItem.person.name}'s ${formatObjectType(rejectingItem.objectType).toLowerCase()} approval in ${rejectingItem.project.name}.`
+                : "Add a reason for the rejection."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <label htmlFor="approval-reject-reason" className="text-sm font-medium text-foreground">
+              Rejection reason
+            </label>
+            <Textarea
+              id="approval-reject-reason"
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              placeholder="Explain what needs to change before this can be approved."
+              className="min-h-28"
+              disabled={rejectSubmitting}
+            />
+            <p className="m-0 text-xs text-muted-foreground">A reason is required before the request can be rejected.</p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRejectDialog} disabled={rejectSubmitting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleReject()} disabled={!rejectReason.trim() || rejectSubmitting}>
+              {rejectSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+              Reject request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {showGraphModal && selectedGraphItem && (
         <GraphOverlayModal
           item={selectedGraphItem}
@@ -505,7 +799,7 @@ export function ApprovalsWorkbench({
             setSelectedGraphItem(null);
           }}
           onApprovalComplete={() => {
-            loadApprovals();
+            void loadApprovals();
           }}
         />
       )}

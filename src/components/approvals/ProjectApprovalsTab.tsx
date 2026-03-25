@@ -1,250 +1,111 @@
 import { useState } from "react";
-import { CheckCircle2, Clock, AlertCircle, Filter, Download, Network } from "lucide-react";
-import { Card } from "../ui/card";
-import { Button } from "../ui/button";
+import { User } from "lucide-react";
 import { Badge } from "../ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { Button } from "../ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ApprovalsWorkbench } from "./ApprovalsWorkbench";
-import { Skeleton } from "../ui/skeleton";
 
 interface ProjectApprovalsTabProps {
   projectId: string;
   projectName: string;
   viewerName?: string;
-  viewerNodeId?: string; // graph node ID of current viewer (e.g. "org-nas", "person-john")
+  viewerNodeId?: string;
 }
 
-export function ProjectApprovalsTab({ projectId, projectName, viewerName, viewerNodeId }: ProjectApprovalsTabProps) {
+type QueueStatus = "all" | "pending" | "approved" | "rejected";
+
+const queueFilters: Array<{ value: QueueStatus; label: string }> = [
+  { value: "pending", label: "Pending first" },
+  { value: "all", label: "All" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+];
+
+export function ProjectApprovalsTab({
+  projectId,
+  projectName,
+  viewerName,
+  viewerNodeId,
+}: ProjectApprovalsTabProps) {
   const [viewMode, setViewMode] = useState<"queue" | "analytics">("queue");
-  const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
-  
-  // Stats are driven by ApprovalsWorkbench via real approval_records query
-  // These will be populated once the workbench loads (see embedded component below)
-  const stats = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-    totalWeek: 0,
-    totalThisWeek: 0,
-    avgApprovalTime: "—",
-  };
+  const [filterStatus, setFilterStatus] = useState<QueueStatus>("pending");
 
   return (
-    <div className="space-y-6">
-      {/* Project Approvals Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl m-0 mb-2">Approvals for {projectName}</h2>
-          <p className="text-sm text-muted-foreground m-0">
-            Review and approve timesheets and expenses for this project
-          </p>
-          {viewerName && (
-            <p className="text-xs text-muted-foreground m-0 mt-1">Viewing as: {viewerName}</p>
-          )}
-        </div>
-        
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="gap-2">
-            <Network className="w-4 h-4" />
-            View Graph
-          </Button>
-          <Button variant="outline" size="sm" className="gap-2">
-            <Download className="w-4 h-4" />
-            Export
-          </Button>
-        </div>
-      </div>
-
-      {/* Quick Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground m-0">Pending</p>
-              <p className="text-2xl m-0 mt-1">{stats.pending}</p>
-            </div>
-            <Clock className="w-8 h-8 text-amber-500" />
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground m-0">Approved</p>
-              <p className="text-2xl m-0 mt-1">{stats.approved}</p>
-            </div>
-            <CheckCircle2 className="w-8 h-8 text-green-500" />
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground m-0">Rejected</p>
-              <p className="text-2xl m-0 mt-1">{stats.rejected}</p>
-            </div>
-            <AlertCircle className="w-8 h-8 text-red-500" />
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground m-0">Avg Approval Time</p>
-              <p className="text-2xl m-0 mt-1">{stats.avgApprovalTime}</p>
-            </div>
-            <Clock className="w-8 h-8 text-blue-500" />
-          </div>
-        </Card>
-      </div>
-
-      {/* View Mode Toggle */}
-      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "queue" | "analytics")}>
-        <div className="flex items-center justify-between">
-          <TabsList>
-            <TabsTrigger value="queue" className="gap-2">
-              <Clock className="w-4 h-4" />
-              Approval Queue
-              {stats.pending > 0 && (
-                <Badge variant="secondary" className="ml-2">
-                  {stats.pending}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-2">
-              Analytics
-              <Badge variant="outline" className="ml-2">New</Badge>
-            </TabsTrigger>
-          </TabsList>
-
-          {viewMode === "queue" && (
-            <div className="flex gap-2 items-center">
-              <span className="text-sm text-muted-foreground">Filter:</span>
-              <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as any)}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="approved">Approved</SelectItem>
-                  <SelectItem value="rejected">Rejected</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
-
-        {/* Queue View */}
-        <TabsContent value="queue" className="mt-6">
-          <Card className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="m-0 mb-1">Approval Queue</h3>
-                <p className="text-sm text-muted-foreground m-0">
-                  {filterStatus === "all" 
-                    ? "Showing all approvals for this project"
-                    : `Showing ${filterStatus} approvals`
-                  }
-                </p>
-              </div>
-              
-              <Button variant="outline" size="sm" className="gap-2">
-                <Filter className="w-4 h-4" />
-                More Filters
-              </Button>
+    <Tabs
+      value={viewMode}
+      onValueChange={(value) => setViewMode(value as "queue" | "analytics")}
+      className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-[0_1px_3px_0_rgb(0_0_0/0.05)]"
+    >
+      <div className="border-b border-border/60 px-4 py-4 sm:px-6 sm:py-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="uppercase tracking-[0.14em] text-[11px]">
+                Approvals
+              </Badge>
+              <Badge variant="secondary" className="gap-1.5">
+                <User className="h-3.5 w-3.5" />
+                {viewerName ? `Signed in as ${viewerName}` : "Using current account permissions"}
+              </Badge>
             </div>
 
-            {/* Embedded ApprovalsWorkbench (filtered to this project + viewer's graph node) */}
-            <ApprovalsWorkbench
-              projectFilter={projectId}
-              statusFilter={filterStatus}
-              viewerNodeId={viewerNodeId}
-            />
-          </Card>
-        </TabsContent>
-
-        {/* Analytics View */}
-        <TabsContent value="analytics" className="mt-6">
-          <Card className="p-6">
-            <div className="space-y-6">
-              <div>
-                <h3 className="m-0 mb-4">Approval Analytics</h3>
-                <p className="text-sm text-muted-foreground m-0 mb-6">
-                  Track approval performance and identify bottlenecks
-                </p>
-              </div>
-
-              {/* Approval Trends Chart Placeholder */}
-              <div className="border border-dashed border-border rounded-lg p-12 text-center">
-                <div className="space-y-2">
-                  <div className="text-muted-foreground">📊 Approval Trends</div>
-                  <p className="text-sm text-muted-foreground m-0">
-                    Chart showing approval volume over time
-                  </p>
-                  <Badge variant="outline" className="mt-2">Coming in Phase 8</Badge>
-                </div>
-              </div>
-
-              {/* Approval Time by Person */}
-              <div className="border border-dashed border-border rounded-lg p-12 text-center">
-                <div className="space-y-2">
-                  <div className="text-muted-foreground">⏱️ Approval Time by Person</div>
-                  <p className="text-sm text-muted-foreground m-0">
-                    Identify who approves fastest/slowest
-                  </p>
-                  <Badge variant="outline" className="mt-2">Coming in Phase 8</Badge>
-                </div>
-              </div>
-
-              {/* SLA Compliance */}
-              <div className="border border-dashed border-border rounded-lg p-12 text-center">
-                <div className="space-y-2">
-                  <div className="text-muted-foreground">✅ SLA Compliance</div>
-                  <p className="text-sm text-muted-foreground m-0">
-                    Track on-time vs late approvals
-                  </p>
-                  <Badge variant="outline" className="mt-2">Coming in Phase 8</Badge>
-                </div>
-              </div>
-            </div>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Mini Graph Panel (Right Sidebar) */}
-      <Card className="p-4 border-2 border-dashed border-border">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="m-0 text-sm">Quick Graph View</h4>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-              <Network className="w-3 h-3" />
-              Expand
-            </Button>
-          </div>
-          
-          <div className="bg-muted rounded-lg p-8 text-center">
-            <div className="space-y-2">
-              <Network className="w-8 h-8 mx-auto text-muted-foreground" />
-              <p className="text-sm text-muted-foreground m-0">
-                Mini graph showing approval path
+            <div className="space-y-1">
+              <h2 className="m-0 text-2xl font-semibold tracking-tight text-foreground">
+                Approval workspace
+              </h2>
+              <p className="m-0 max-w-3xl text-sm text-muted-foreground">
+                Manage approval requests for {projectName} with pending items kept at the front of the queue.
               </p>
-              <Badge variant="outline" className="mt-2">Phase 5 Day 6</Badge>
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground m-0">
-            Click items in the queue to see their approval path here
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between xl:justify-end">
+            <TabsList className="w-full sm:w-auto">
+              <TabsTrigger value="queue" className="min-w-[120px]">
+                Queue
+              </TabsTrigger>
+              <TabsTrigger value="analytics" className="min-w-[120px]">
+                Analytics
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
+
+        {viewMode === "queue" && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {queueFilters.map((filter) => (
+              <Button
+                key={filter.value}
+                size="sm"
+                variant={filterStatus === filter.value ? "default" : "outline"}
+                onClick={() => setFilterStatus(filter.value)}
+                className="rounded-full px-4"
+              >
+                {filter.label}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <TabsContent value="queue" className="m-0 p-4 sm:p-6">
+        <ApprovalsWorkbench
+          projectFilter={projectId}
+          statusFilter={filterStatus}
+          viewerNodeId={viewerNodeId}
+          embedded
+        />
+      </TabsContent>
+
+      <TabsContent value="analytics" className="m-0 p-4 sm:p-6">
+        <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-center sm:px-6">
+          <h3 className="m-0 text-lg font-semibold text-foreground">Analytics is staged for a later pass</h3>
+          <p className="mx-auto mt-2 mb-0 max-w-2xl text-sm text-muted-foreground">
+            This workspace is intentionally focused on queue throughput for now. Use the queue filters and workbench
+            controls to keep approvals moving.
           </p>
         </div>
-      </Card>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

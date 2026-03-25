@@ -4,6 +4,14 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Download, Send, Printer, CheckCircle2 } from 'lucide-react';
 import type { InvoiceDraft } from './InvoicesWorkspace';
 
+function formatMoney(amount: number, currency: string): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+  }).format(amount);
+}
+
 export function InvoiceDetailPrintView({
   invoice,
   onBack,
@@ -11,9 +19,12 @@ export function InvoiceDetailPrintView({
   invoice: InvoiceDraft;
   onBack: () => void;
 }) {
+  const currency = invoice.currency || 'USD';
+  const lineDescription = invoice.lineItemTemplateDescription?.trim()
+    || `Approved timesheet - ${invoice.weekLabel} (${invoice.personName})`;
   const lineItems = [
     {
-      desc: `Approved timesheet • ${invoice.weekLabel} (${invoice.personName})`,
+      desc: lineDescription,
       hours: invoice.hours,
       rate: invoice.rate,
       amount: invoice.amount,
@@ -26,10 +37,14 @@ export function InvoiceDetailPrintView({
 
   const StatusBadge = ({ status }: { status: InvoiceDraft['status'] }) => {
     switch (status) {
-      case 'paid': return <Badge variant="default" className="bg-emerald-500/10 text-emerald-600 border-none px-3 py-1 text-sm"><CheckCircle2 className="w-4 h-4 mr-1.5" /> PAID</Badge>;
-      case 'sent': return <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-600 border-none px-3 py-1 text-sm">AWAITING PAYMENT</Badge>;
-      case 'overdue': return <Badge variant="destructive" className="bg-rose-500/10 text-rose-600 border-none px-3 py-1 text-sm">OVERDUE</Badge>;
-      default: return <Badge variant="outline" className="text-slate-500 border-slate-200 px-3 py-1 text-sm">DRAFT</Badge>;
+      case 'paid':
+        return <Badge variant="default" className="bg-emerald-500/10 text-emerald-600 border-none px-3 py-1 text-sm"><CheckCircle2 className="w-4 h-4 mr-1.5" /> PAID</Badge>;
+      case 'sent':
+        return <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-600 border-none px-3 py-1 text-sm">AWAITING PAYMENT</Badge>;
+      case 'overdue':
+        return <Badge variant="destructive" className="bg-rose-500/10 text-rose-600 border-none px-3 py-1 text-sm">OVERDUE</Badge>;
+      default:
+        return <Badge variant="outline" className="text-slate-500 border-slate-200 px-3 py-1 text-sm">DRAFT</Badge>;
     }
   };
 
@@ -109,9 +124,9 @@ export function InvoiceDetailPrintView({
                   <tr key={idx}>
                     <td className="py-4 text-sm text-slate-800 font-medium">{item.desc}</td>
                     <td className="py-4 text-sm text-slate-600 text-right font-mono">{item.hours.toFixed(2)}</td>
-                    <td className="py-4 text-sm text-slate-600 text-right font-mono">${item.rate.toFixed(2)}</td>
+                    <td className="py-4 text-sm text-slate-600 text-right font-mono">{formatMoney(item.rate, currency)}</td>
                     <td className="py-4 text-sm text-slate-900 text-right font-mono font-semibold">
-                      ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      {formatMoney(item.amount, currency)}
                     </td>
                   </tr>
                 ))}
@@ -124,16 +139,16 @@ export function InvoiceDetailPrintView({
               <div className="space-y-4">
                 <div className="flex justify-between text-sm text-slate-600">
                   <span>Subtotal</span>
-                  <span className="font-mono">${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                  <span className="font-mono">{formatMoney(subtotal, currency)}</span>
                 </div>
                 <div className="flex justify-between text-sm text-slate-600">
                   <span>Tax (0%)</span>
-                  <span className="font-mono">${tax.toFixed(2)}</span>
+                  <span className="font-mono">{formatMoney(tax, currency)}</span>
                 </div>
                 <div className="pt-4 border-t border-slate-200 flex justify-between items-center">
                   <span className="text-base font-bold text-slate-900 uppercase tracking-wide">Total Due</span>
                   <span className="text-2xl font-bold text-indigo-600 font-mono">
-                    ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {formatMoney(total, currency)}
                   </span>
                 </div>
               </div>
@@ -143,6 +158,7 @@ export function InvoiceDetailPrintView({
           <div className="border-t border-slate-200 pt-8 mt-auto text-sm text-slate-500">
             <h4 className="font-semibold text-slate-700 mb-2">Payment Terms</h4>
             <p>Generated from approved timesheets. Standard payment terms: Net 30.</p>
+            {invoice.notes?.trim() ? <p className="mt-2">{invoice.notes.trim()}</p> : null}
             <p className="mt-4 italic">Thank you for your business.</p>
           </div>
         </div>
@@ -150,4 +166,3 @@ export function InvoiceDetailPrintView({
     </div>
   );
 }
-

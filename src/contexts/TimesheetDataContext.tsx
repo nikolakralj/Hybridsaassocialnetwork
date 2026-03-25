@@ -11,12 +11,20 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useAuth } from './AuthContext';
 import {
   listTimesheets,
   saveTimesheetWeek,
   updateTimesheetStatus,
 } from '../utils/api/timesheets-api';
+import {
+  approveItem,
+  createApproval,
+  deleteApproval,
+  getLatestPendingApproval,
+  rejectItem,
+} from '../utils/api/approvals-supabase';
 import type { SubmissionEnvelope, TimeEntry } from '../types/timesheets';
 import {
   normalizeStoredDay,
@@ -25,6 +33,7 @@ import {
   sumWeekBillableHours,
   validateTimesheetWeek,
 } from '../types/timesheets';
+import { getApprovalStepsForParty, type ApprovalParty } from '../utils/graph/approval-fallback';
 
 // ============================================================================
 // Types
@@ -84,7 +93,7 @@ export interface TimesheetStoreAPI {
   setWeekStatus: (personId: string, weekStart: string, status: WeekStatus, meta?: {
     note?: string;
     by?: string;
-  }) => void;
+  }) => Promise<void>;
   /** Batch approve all submitted weeks for a person in a month */
   batchApproveMonth: (personId: string, month: string, approverName: string) => number;
   /** Ensure a person has draft week rows for all Mondays in the given month (YYYY-MM) */
@@ -105,6 +114,14 @@ export interface TimesheetStoreAPI {
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
 const DEFAULT_PROJECT_ID = 'project-main';
+type NameDirEntry = { name?: string; type?: string; orgId?: string };
+
+interface ApprovalRoute {
+  approvalLayer: number;
+  approverName: string;
+  approverNodeId: string;
+  approverUserRef: string;
+}
 
 function mkDays(hours: number[]): StoredDay[] {
   return DAY_LABELS.map((day, i) => normalizeStoredDay({ day, hours: hours[i] ?? 0 }));
@@ -154,6 +171,64 @@ function getMondaysForMonth(monthKey: string): string[] {
   }
 
   return mondays;
+}
+
+function readSessionJson<T>(key: string): T | null {
+  if (typeof sessionStorage === 'undefined') return null;
+
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function activeProjectId(): string {
+  if (typeof sessionStorage === 'undefined') return DEFAULT_PROJECT_ID;
+  return sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID;
+}
+
+function readNameDir(projectId: string): Record<string, NameDirEntry> {
+  if (!projectId) return {};
+  return readSessionJson<Record<string, NameDirEntry>>(`workgraph-name-dir:${projectId}`) || {};
+}
+
+function readApprovalParties(projectId: string): ApprovalParty[] {
+  if (!projectId) return [];
+  const parsed = readSessionJson<{ parties?: ApprovalParty[] }>(`workgraph-approval-dir:${projectId}`);
+  return Array.isArray(parsed?.parties) ? parsed.parties : [];
+}
+
+function getApprovalRouteForSubmitter(projectId: string, personId: string): ApprovalRoute | null {
+  const parties = readApprovalParties(projectId);
+  if (parties.length === 0) return null;
+
+  const submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
+  if (!submitterParty) return null;
+
+  const firstStep = getApprovalStepsForParty(submitterParty.id, parties)[0];
+  if (!firstStep) return null;
+
+  const approverUserRef = [...firstStep.approverIds].sort()[0] || firstStep.partyId;
+  const partyName = parties.find((party) => party.id === firstStep.partyId)?.name;
+  const approverName = partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
+
+  return {
+    approvalLayer: firstStep.step,
+    approverName,
+    approverNodeId: firstStep.partyId,
+    approverUserRef,
+  };
+}
+
+function buildTimesheetSubjectId(personId: string, weekStart: string): string {
+  return `${personId}:${weekStart}`;
+}
+
+function formatActionError(action: string, error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return `Failed to ${action} timesheet`;
 }
 
 // ============================================================================
@@ -260,21 +335,75 @@ function apiWeekToStored(apiWeek: any): StoredWeek {
 
 const TimesheetStoreContext = createContext<TimesheetStoreAPI | null>(null);
 
+// --- localStorage fallback persistence ---
+const LS_KEY = 'workgraph-timesheet-weeks';
+const isDemoPersonId = (personId: string) => personId.startsWith('user-');
+
+function loadFromLocalStorage(): StoredWeek[] | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      const realWeeks = parsed.filter((week): week is StoredWeek => {
+        return Boolean(week && typeof week === 'object' && typeof week.personId === 'string' && !isDemoPersonId(week.personId));
+      });
+      return realWeeks.length > 0 ? realWeeks : null;
+    }
+    return null;
+  } catch { return null; }
+}
+
+function saveToLocalStorage(weeks: StoredWeek[]) {
+  try {
+    // Only save non-demo weeks (skip user- prefixed demo IDs)
+    const realWeeks = weeks.filter(w => !isDemoPersonId(w.personId));
+    localStorage.setItem(LS_KEY, JSON.stringify(realWeeks));
+  } catch { /* ignore quota errors */ }
+}
+
 export function TimesheetStoreProvider({ children }: { children: React.ReactNode }) {
   const { user, accessToken } = useAuth();
-  const [weeks, setWeeks] = useState<StoredWeek[]>(createSeedData);
+  // Initialize from localStorage if available, otherwise seed data
+  const [weeks, setWeeks] = useState<StoredWeek[]>(() => {
+    const fromLS = loadFromLocalStorage();
+    if (fromLS && fromLS.length > 0) {
+      // Merge: localStorage real data + seed demo data (for non-auth fallback)
+      const seed = createSeedData();
+      return [...fromLS, ...seed];
+    }
+    return createSeedData();
+  });
   const [submissionEnvelopes, setSubmissionEnvelopes] = useState<SubmissionEnvelope[]>([]);
   const [version, setVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
+  const authLoadKeyRef = useRef<string | null>(null);
   const pendingSyncs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const bump = useCallback(() => setVersion(v => v + 1), []);
 
+  // Persist to localStorage on every change (debounced)
+  const lsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (lsSaveTimer.current) clearTimeout(lsSaveTimer.current);
+    lsSaveTimer.current = setTimeout(() => saveToLocalStorage(weeks), 300);
+    return () => { if (lsSaveTimer.current) clearTimeout(lsSaveTimer.current); };
+  }, [weeks]);
+
   // When authenticated, strip demo seed rows so project views only show real data.
   useEffect(() => {
     if (!user?.id || !accessToken) return;
-    setWeeks(prev => prev.filter(w => !w.personId.startsWith('user-')));
+    setWeeks(prev => prev.filter(w => !isDemoPersonId(w.personId)));
+  }, [user?.id, accessToken]);
+
+  // If auth identity changes, force an API reload for the new session.
+  useEffect(() => {
+    const authKey = user?.id && accessToken ? `${user.id}:${accessToken.slice(0, 12)}` : null;
+    if (authLoadKeyRef.current !== authKey) {
+      hasLoadedRef.current = false;
+      authLoadKeyRef.current = authKey;
+    }
   }, [user?.id, accessToken]);
 
   // --- Load from API on auth ---
@@ -296,9 +425,16 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
           setWeeks(converted);
           console.log(`[TimesheetStore] Loaded ${converted.length} weeks from API`);
         } else {
-          // Authenticated mode: keep clean state if backend has no rows yet.
-          setWeeks([]);
-          console.log('[TimesheetStore] No API timesheets found, using empty authenticated state');
+          // Keep local non-demo rows if API is empty (prevents refresh-loss while edge sync catches up).
+          setWeeks(prev => {
+            const localRealWeeks = prev.filter(w => !isDemoPersonId(w.personId));
+            if (localRealWeeks.length > 0) {
+              console.log(`[TimesheetStore] API returned 0 rows, keeping ${localRealWeeks.length} local persisted weeks`);
+              return localRealWeeks;
+            }
+            console.log('[TimesheetStore] No API timesheets found and no local rows, using empty authenticated state');
+            return [];
+          });
         }
 
         hasLoadedRef.current = true;
@@ -316,8 +452,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   // --- Debounced API persist ---
   const persistWeek = useCallback((personId: string, weekStart: string, weekData: StoredWeek) => {
-    // Only persist if this is the authenticated user's data (UUID format)
-    if (!accessToken || !personId.match(/^[0-9a-f-]{36}$/)) return;
+    // Skip demo identities and persist all real authenticated data.
+    if (!accessToken || isDemoPersonId(personId)) return;
 
     const key = `${personId}:${weekStart}`;
     // Cancel any pending sync for this week
@@ -350,7 +486,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     status: WeekStatus,
     meta?: { note?: string; by?: string }
   ) => {
-    if (!accessToken || !personId.match(/^[0-9a-f-]{36}$/)) return;
+    if (!accessToken || isDemoPersonId(personId)) return;
 
     try {
       await updateTimesheetStatus(weekStart, status, {
@@ -361,8 +497,52 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       console.log(`[TimesheetStore] Status updated: ${weekStart} -> ${status}`);
     } catch (err) {
       console.error(`[TimesheetStore] Failed to update status for ${weekStart}:`, err);
+      throw err instanceof Error ? err : new Error(`Failed to update status for ${weekStart}`);
     }
   }, [accessToken]);
+
+  const applyWeekStatusLocally = useCallback((
+    personId: string,
+    weekStart: string,
+    status: WeekStatus,
+    meta?: { note?: string; by?: string },
+    submittedAt?: string
+  ) => {
+    setWeeks(prev => prev.map(w => {
+      if (w.personId !== personId || w.weekStart !== weekStart) return w;
+      const normalizedWeek = normalizeStoredWeek(w);
+      const updated: StoredWeek = { ...normalizedWeek, status };
+
+      if (status === 'submitted') {
+        updated.submittedAt = submittedAt || new Date().toISOString();
+        updated.approvedBy = undefined;
+        updated.rejectedBy = undefined;
+        updated.rejectionNote = undefined;
+      }
+
+      if (status === 'approved') {
+        updated.approvedBy = meta?.by;
+        updated.rejectedBy = undefined;
+        updated.rejectionNote = undefined;
+      }
+
+      if (status === 'rejected') {
+        updated.rejectedBy = meta?.by;
+        updated.rejectionNote = meta?.note;
+        updated.approvedBy = undefined;
+      }
+
+      if (status === 'draft') {
+        updated.submittedAt = undefined;
+        updated.approvedBy = undefined;
+        updated.rejectedBy = undefined;
+        updated.rejectionNote = undefined;
+      }
+
+      return updated;
+    }));
+    bump();
+  }, [bump]);
 
   // --- Read ---
 
@@ -427,20 +607,114 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     bump();
   }, [bump, persistWeek]);
 
-  const setWeekStatus = useCallback((
+  const setWeekStatus = useCallback(async (
     personId: string,
     weekStart: string,
     status: WeekStatus,
     meta?: { note?: string; by?: string }
   ) => {
-    let submissionBlocked = false;
+    const targetWeek = weeks.find(w => w.personId === personId && w.weekStart === weekStart);
+    if (!targetWeek) {
+      const error = new Error(`Timesheet week ${weekStart} was not found for ${personId}`);
+      console.error('[TimesheetStore] setWeekStatus failed:', error);
+      toast.error('Timesheet update failed', { description: error.message });
+      throw error;
+    }
+
+    const normalizedWeek = normalizeStoredWeek(targetWeek);
+    if (status === 'submitted') {
+      const validation = validateTimesheetWeek(normalizedWeek);
+      if (validation.errors.length > 0) {
+        const message = validation.errors[0]?.message || 'Timesheet validation failed';
+        console.warn('[TimesheetStore] Submission blocked by validation', validation.errors);
+        toast.error('Cannot submit timesheet', { description: message });
+        throw new Error(message);
+      }
+    }
+
+    const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId));
+    if (!isRemoteWorkflow) {
+      applyWeekStatusLocally(personId, weekStart, status, meta);
+      return;
+    }
+
+    try {
+      const projectId = activeProjectId();
+      const subjectId = buildTimesheetSubjectId(personId, weekStart);
+
+      if (status === 'submitted') {
+        const approvalRoute = getApprovalRouteForSubmitter(projectId, personId);
+        if (!approvalRoute) {
+          throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
+        }
+
+        const submittedAt = new Date().toISOString();
+        const approval = await createApproval({
+          projectId,
+          subjectType: 'timesheet',
+          subjectId,
+          approverUserId: approvalRoute.approverUserRef,
+          approverName: approvalRoute.approverName,
+          approverNodeId: approvalRoute.approverNodeId,
+          approvalLayer: approvalRoute.approvalLayer,
+          status: 'pending',
+          submittedAt,
+        });
+
+        try {
+          await persistStatus(personId, weekStart, 'submitted', meta);
+        } catch (statusError) {
+          if (approval.submittedAt === submittedAt) {
+            try {
+              await deleteApproval(approval.id);
+            } catch (rollbackError) {
+              console.error(`[TimesheetStore] Failed to rollback approval ${approval.id} after submit failure:`, rollbackError);
+            }
+          }
+          throw statusError;
+        }
+        applyWeekStatusLocally(personId, weekStart, 'submitted', meta, submittedAt);
+        return;
+      }
+
+      if (status === 'approved' || status === 'rejected') {
+        const pendingApproval = await getLatestPendingApproval('timesheet', subjectId);
+        if (!pendingApproval) {
+          throw new Error(`No pending approval record was found for ${subjectId}`);
+        }
+
+        if (status === 'approved') {
+          await approveItem(pendingApproval.id, {
+            approvedBy: meta?.by,
+            notes: meta?.note,
+          });
+        } else {
+          await rejectItem(pendingApproval.id, {
+            rejectedBy: meta?.by,
+            reason: meta?.note,
+          });
+        }
+
+        applyWeekStatusLocally(personId, weekStart, status, meta);
+        return;
+      }
+
+      await persistStatus(personId, weekStart, status, meta);
+      applyWeekStatusLocally(personId, weekStart, status, meta);
+      return;
+    } catch (error) {
+      const description = formatActionError(status === 'submitted' ? 'submit' : status, error);
+      console.error(`[TimesheetStore] Failed to ${status} week ${weekStart}:`, error);
+      toast.error('Timesheet update failed', { description });
+      throw error instanceof Error ? error : new Error(description);
+    }
+
     setWeeks(prev => prev.map(w => {
       if (w.personId !== personId || w.weekStart !== weekStart) return w;
       const normalizedWeek = normalizeStoredWeek(w);
       if (status === 'submitted') {
         const validation = validateTimesheetWeek(normalizedWeek);
         if (validation.errors.length > 0) {
-          submissionBlocked = true;
           console.warn('[TimesheetStore] Submission blocked by validation', validation.errors);
           return normalizedWeek;
         }
@@ -461,11 +735,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       }
       return updated;
     }));
-    if (submissionBlocked) return;
     // Persist status change to API
     persistStatus(personId, weekStart, status, meta);
     bump();
-  }, [bump, persistStatus]);
+  }, [accessToken, applyWeekStatusLocally, bump, persistStatus, weeks]);
 
   const batchApproveMonth = useCallback((personId: string, month: string, approverName: string): number => {
     let count = 0;
@@ -482,7 +755,9 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     // Persist each approval to API
     weekStartsToApprove.forEach(ws => {
-      persistStatus(personId, ws, 'approved', { by: approverName });
+      void persistStatus(personId, ws, 'approved', { by: approverName }).catch(err => {
+        console.error(`[TimesheetStore] Failed to batch-approve ${ws}:`, err);
+      });
     });
 
     bump();
@@ -564,7 +839,9 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     }));
 
     submitCandidates.forEach(week => {
-      persistStatus(personId, week.weekStart, 'submitted');
+      void persistStatus(personId, week.weekStart, 'submitted').catch(err => {
+        console.error(`[TimesheetStore] Failed to submit ${week.weekStart}:`, err);
+      });
     });
 
     setSubmissionEnvelopes(prev => {

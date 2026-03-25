@@ -27,6 +27,7 @@ import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawe
 import { InvoicesWorkspace } from "./invoices/InvoicesWorkspace";
 import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
+import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
 import type { ViewerIdentity } from "./workgraph/graph-visibility";
 
@@ -63,17 +64,51 @@ export function ProjectWorkspace({
   projectId: propProjectId,
   projectName: propProjectName,
 }: ProjectWorkspaceProps) {
-  const { accessToken } = useAuth();
-  // Read from sessionStorage if not passed as prop (set by ProjectsListView on navigate)
-  const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
-  const [projectName, setProjectName] = useState(propProjectName || sessionStorage.getItem('currentProjectName') || 'Project');
+  const { user, accessToken } = useAuth();
+  const storedProjectId = sessionStorage.getItem('currentProjectId');
+  const storedProjectName = sessionStorage.getItem('currentProjectName');
+
+  // Never fall back to demo project IDs (e.g. proj-alpha), otherwise real workspaces
+  // get silently blended with seed graph/timesheet data.
+  const buildFallbackProjectId = () => {
+    const fromName = propProjectName || storedProjectName;
+    if (!fromName) return '';
+    const slug = fromName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return slug ? `proj-${slug}` : '';
+  };
+
+  const fallbackProjectId = buildFallbackProjectId();
+  const shouldReplaceDemoProjectId =
+    storedProjectId === 'proj-alpha' &&
+    !!fallbackProjectId &&
+    (propProjectName || storedProjectName) !== 'Mobile App Redesign';
+
+  const resolvedProjectId =
+    propProjectId ||
+    (shouldReplaceDemoProjectId ? fallbackProjectId : storedProjectId) ||
+    fallbackProjectId;
+
+  const projectId = resolvedProjectId || '';
+  const [projectName, setProjectName] = useState(
+    propProjectName || sessionStorage.getItem('currentProjectName') || 'Project'
+  );
+
+  useEffect(() => {
+    if (!projectId) return;
+    const stored = sessionStorage.getItem('currentProjectId');
+    if (!stored || shouldReplaceDemoProjectId) {
+      sessionStorage.setItem('currentProjectId', projectId);
+    }
+  }, [projectId, shouldReplaceDemoProjectId]);
   
   // Load project name from API if not provided
   useEffect(() => {
     if (propProjectName) return;
     const stored = sessionStorage.getItem('currentProjectName');
     if (stored) { setProjectName(stored); return; }
-    setProjectName(projectId === 'proj-alpha' ? 'Mobile App Redesign' : `Project ${projectId.slice(0, 8)}`);
+    if (projectId) {
+      setProjectName(`Project ${projectId.slice(0, 8)}`);
+    }
   }, [projectId, propProjectName]);
 
   // Get hash params for deep linking (works in Figma Make iframe)
@@ -481,18 +516,9 @@ export function ProjectWorkspace({
             <TabsContent value="timesheets" className="space-y-6">
               <ProjectTimesheetsView
                 projectId={projectId}
-                ownerId="demo-owner-id"
-                ownerName="Demo Project Owner"
-                contractors={[
-                  { id: "sarah-chen-id", name: "Sarah Chen", initials: "SC" },
-                  { id: "mike-johnson-id", name: "Mike Johnson", initials: "MJ" },
-                  { id: "emma-davis-id", name: "Emma Davis", initials: "ED" },
-                  { id: "tom-martinez-id", name: "Tom Martinez", initials: "TM", company: "Acme Corp" },
-                  { id: "lisa-park-id", name: "Lisa Park", initials: "LP", company: "Acme Corp" },
-                  { id: "james-wilson-id", name: "James Wilson", initials: "JW", company: "Acme Corp" },
-                  { id: "alex-kim-id", name: "Alex Kim", initials: "AK", company: "TechStaff Inc" },
-                  { id: "jordan-lee-id", name: "Jordan Lee", initials: "JL", company: "TechStaff Inc" },
-                ]}
+                ownerId={user?.id || "current-user"}
+                ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
+                contractors={[]}
                 hourlyRate={95}
                 viewerOverride={effectiveViewer ? {
                   id: effectiveViewer.nodeId,
@@ -574,79 +600,75 @@ export function ProjectWorkspace({
 // Module Components (placeholders for now)
 
 function OverviewModule({ projectName }: { projectName: string }) {
-  const handleDeepLink = (scope: string, focus?: string) => {
-    const params = new URLSearchParams();
-    params.set('scope', scope);
-    if (focus) params.set('focus', focus);
-    
-    // Use hash-based routing (works in Figma Make iframe)
-    window.location.hash = params.toString();
-    
-    // Add visual toast for confirmation
-    toast.success(`Opening Project Graph: ${scope} view`, {
-      duration: 2000,
-    });
-    
-    // Trigger tab change to project-graph
-    const event = new CustomEvent('changeTab', { detail: 'project-graph' });
+  const store = useTimesheetStore();
+
+  // Derive real stats from timesheet store
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const allWeeks = store.getAllWeeksForMonth(currentMonthKey);
+  const totalHours = allWeeks.reduce((s, w) => s + w.days.reduce((a, d) => a + (d.hours || 0), 0), 0);
+  const approvedHours = allWeeks.filter(w => w.status === 'approved').reduce((s, w) => s + w.days.reduce((a, d) => a + (d.hours || 0), 0), 0);
+  const pendingCount = allWeeks.filter(w => w.status === 'submitted').length;
+  const rejectedCount = allWeeks.filter(w => w.status === 'rejected').length;
+  const draftCount = allWeeks.filter(w => w.status === 'draft').length;
+  const uniquePeople = new Set(allWeeks.map(w => w.personId)).size;
+
+  const handleDeepLink = (tab: string) => {
+    const event = new CustomEvent('changeTab', { detail: tab });
     window.dispatchEvent(event);
   };
 
   return (
     <div className="grid md:grid-cols-3 gap-6">
-      <Card className="p-6 relative group">
-        <div className="flex items-start justify-between mb-2">
-          <p className="text-sm text-muted-foreground">Budget Progress</p>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDeepLink('money')}>
-                <Network className="w-4 h-4 mr-2" />
-                Show money flow in graph
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <p className="text-3xl font-semibold mb-1">$12,500</p>
-        <p className="text-sm text-muted-foreground">of $20,000 (62%)</p>
+      <Card className="p-6 cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleDeepLink('timesheets')}>
+        <p className="text-sm text-muted-foreground mb-2">Hours This Month</p>
+        <p className="text-3xl font-semibold mb-1">{totalHours}h</p>
+        <p className="text-sm text-muted-foreground">
+          {approvedHours}h approved · {uniquePeople} {uniquePeople === 1 ? 'person' : 'people'}
+        </p>
       </Card>
-      
-      <Card className="p-6">
-        <p className="text-sm text-muted-foreground mb-2">Hours This Week</p>
-        <p className="text-3xl font-semibold mb-1">45</p>
-        <p className="text-sm text-success">+12% from last week</p>
+
+      <Card className="p-6 cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleDeepLink('approvals')}>
+        <p className="text-sm text-muted-foreground mb-2">Pending Approvals</p>
+        <p className="text-3xl font-semibold mb-1">{pendingCount}</p>
+        <p className="text-sm text-amber-600">
+          {pendingCount > 0 ? 'Timesheets need review' : 'All caught up'}
+        </p>
       </Card>
-      
-      <Card className="p-6 relative group">
-        <div className="flex items-start justify-between mb-2">
-          <p className="text-sm text-muted-foreground">Pending Approvals</p>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={() => handleDeepLink('approvals')}
-          >
-            View on graph →
-          </Button>
+
+      <Card className="p-6 cursor-pointer hover:shadow-md transition-shadow" onClick={() => handleDeepLink('project-graph')}>
+        <p className="text-sm text-muted-foreground mb-2">Week Status</p>
+        <div className="flex items-baseline gap-3">
+          <span className="text-3xl font-semibold">{allWeeks.length}</span>
+          <span className="text-sm text-muted-foreground">weeks</span>
         </div>
-        <p className="text-3xl font-semibold mb-1">3</p>
-        <p className="text-sm text-warning">Timesheets need review</p>
+        <div className="flex gap-2 mt-2 text-xs">
+          {draftCount > 0 && <Badge variant="outline">{draftCount} draft</Badge>}
+          {pendingCount > 0 && <Badge className="bg-amber-100 text-amber-700 border-amber-200">{pendingCount} pending</Badge>}
+          {rejectedCount > 0 && <Badge className="bg-red-100 text-red-700 border-red-200">{rejectedCount} rejected</Badge>}
+        </div>
       </Card>
 
       <Card className="md:col-span-3 p-6">
-        <h3 className="mb-4">Project Status</h3>
-        <p className="text-muted-foreground">
-          {projectName} is progressing well. 3 contractors actively working, 
-          on track for Jan 31 deadline. Next milestone: Design Review (Jan 15).
-        </p>
+        <h3 className="mb-3 font-semibold">{projectName}</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <p className="text-muted-foreground">Total Hours</p>
+            <p className="font-semibold text-lg">{totalHours}h</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Approved</p>
+            <p className="font-semibold text-lg text-emerald-600">{approvedHours}h</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Pending Review</p>
+            <p className="font-semibold text-lg text-amber-600">{pendingCount} weeks</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Team Size</p>
+            <p className="font-semibold text-lg">{uniquePeople}</p>
+          </div>
+        </div>
       </Card>
     </div>
   );

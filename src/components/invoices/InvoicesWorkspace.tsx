@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { FileText, Plus, Search, Calendar, DollarSign, CheckCircle2, Clock } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { InvoiceDetailPrintView } from './InvoiceDetailPrintView';
+import { InvoiceImportPanel, readProjectInvoiceTemplate, type ProjectInvoiceTemplate } from './InvoiceImportPanel';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { sumWeekHours } from '../../types/timesheets';
@@ -25,6 +26,9 @@ export type InvoiceDraft = {
   hours: number;
   rate: number;
   amount: number;
+  currency?: string;
+  notes?: string;
+  lineItemTemplateDescription?: string;
   status: 'draft' | 'sent' | 'paid' | 'overdue';
 };
 
@@ -60,6 +64,23 @@ function readClientName(projectId: string): string {
   }
 }
 
+function applyTemplateToDraft(invoice: InvoiceDraft, template: ProjectInvoiceTemplate): InvoiceDraft {
+  const dueDateOffset = Number.isFinite(template.dueDateOffsetDays) ? template.dueDateOffsetDays : 30;
+  const lineDefault = template.lineDefaults[0];
+  const amount = invoice.hours * invoice.rate;
+
+  return {
+    ...invoice,
+    // Template reuse should preserve source invoice business data.
+    // We apply only reusable format/settings fields.
+    dueDate: addDays(invoice.date, dueDateOffset),
+    amount,
+    currency: template.currency || invoice.currency || 'USD',
+    notes: template.notes || invoice.notes,
+    lineItemTemplateDescription: lineDefault?.description || invoice.lineItemTemplateDescription,
+  };
+}
+
 export function InvoicesWorkspace({
   projectId,
   projectName,
@@ -73,6 +94,13 @@ export function InvoicesWorkspace({
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDraft | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [generatedInvoices, setGeneratedInvoices] = useState<InvoiceDraft[]>([]);
+  const defaultVendorName = projectName || sessionStorage.getItem('currentProjectName') || 'Project';
+  const defaultClientName = useMemo(() => readClientName(projectId), [projectId]);
+  const [projectTemplate, setProjectTemplate] = useState<ProjectInvoiceTemplate | null>(() => readProjectInvoiceTemplate(projectId));
+
+  useEffect(() => {
+    setProjectTemplate(readProjectInvoiceTemplate(projectId));
+  }, [projectId]);
 
   const currentMonth = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
   const monthKey = monthKeyFromDate(currentMonth);
@@ -92,7 +120,7 @@ export function InvoicesWorkspace({
     const todayIso = new Date().toISOString().slice(0, 10);
     const defaultRate = 95;
 
-    const nextDrafts: InvoiceDraft[] = approvedWeeks.map((week, index) => {
+    const generatedFromApproved: InvoiceDraft[] = approvedWeeks.map((week, index) => {
       const personName = nameDir[week.personId]?.name || week.personId;
       const hours = sumWeekHours(week);
       const amount = hours * defaultRate;
@@ -117,13 +145,33 @@ export function InvoicesWorkspace({
       };
     });
 
+    const nextDrafts = projectTemplate
+      ? generatedFromApproved.map(draft => applyTemplateToDraft(draft, projectTemplate))
+      : generatedFromApproved;
+
     setGeneratedInvoices(prev => {
       const byId = new Map(prev.map(inv => [inv.id, inv]));
       nextDrafts.forEach(inv => byId.set(inv.id, inv));
       return Array.from(byId.values()).sort((a, b) => b.weekStart.localeCompare(a.weekStart));
     });
 
-    toast.success(`Generated ${nextDrafts.length} invoice draft${nextDrafts.length === 1 ? '' : 's'} from approved timesheets.`);
+    const templateMsg = projectTemplate ? ' Project template settings applied.' : '';
+    toast.success(`Generated ${nextDrafts.length} invoice draft${nextDrafts.length === 1 ? '' : 's'} from approved timesheets.${templateMsg}`);
+  };
+
+  const applyTemplateToGeneratedDrafts = () => {
+    if (!projectTemplate) {
+      toast.info('No saved project template found yet. Save one from an imported invoice first.');
+      return;
+    }
+
+    if (generatedInvoices.length === 0) {
+      toast.info('No generated drafts yet. Generate from approved timesheets first.');
+      return;
+    }
+
+    setGeneratedInvoices(prev => prev.map(invoice => applyTemplateToDraft(invoice, projectTemplate)));
+    toast.success('Applied project template settings to generated invoice drafts.');
   };
 
   if (selectedInvoice) {
@@ -150,7 +198,7 @@ export function InvoicesWorkspace({
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Invoices</h2>
           <p className="text-sm text-slate-500">
-            Generate invoice drafts directly from approved timesheets.
+            Generate invoice drafts directly from approved timesheets and reuse saved template settings.
           </p>
         </div>
         <div className="flex items-center space-x-3">
@@ -161,15 +209,26 @@ export function InvoicesWorkspace({
               placeholder="Search invoices..."
               className="pl-9 w-[250px] shadow-sm"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
           <Button variant="default" className="shadow-sm bg-indigo-600 hover:bg-indigo-700" onClick={generateDrafts}>
             <Plus className="w-4 h-4 mr-2" />
             Generate from Approved
           </Button>
+          <Button variant="outline" className="shadow-sm" onClick={applyTemplateToGeneratedDrafts} disabled={!projectTemplate}>
+            Apply Project Template
+          </Button>
         </div>
       </div>
+
+      <InvoiceImportPanel
+        projectId={projectId}
+        defaultVendor={defaultVendorName}
+        defaultClient={defaultClientName}
+        projectTemplate={projectTemplate}
+        onTemplateSaved={setProjectTemplate}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="border-slate-200/60 shadow-sm">
@@ -245,17 +304,17 @@ export function InvoicesWorkspace({
                     </div>
                     <div>
                       <h4 className="text-sm font-semibold text-slate-900">{inv.number}</h4>
-                      <p className="text-sm text-slate-500">{inv.personName} • {inv.clientName}</p>
+                      <p className="text-sm text-slate-500">{inv.personName} - {inv.clientName}</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-8">
                     <div className="text-right hidden sm:block">
                       <h4 className="text-sm font-medium text-slate-900">
-                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(inv.amount)}
+                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: inv.currency || 'USD' }).format(inv.amount)}
                       </h4>
                       <p className="text-xs text-slate-500 flex items-center mt-0.5">
                         <Calendar className="w-3 h-3 mr-1" />
-                        {inv.weekLabel} • Due {inv.dueDate}
+                        {inv.weekLabel} - Due {inv.dueDate}
                       </p>
                     </div>
                     <div className="w-24 text-right">
@@ -264,7 +323,7 @@ export function InvoicesWorkspace({
                       </Badge>
                     </div>
                     <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      View →
+                      View
                     </Button>
                   </div>
                 </div>
@@ -276,4 +335,3 @@ export function InvoicesWorkspace({
     </div>
   );
 }
-

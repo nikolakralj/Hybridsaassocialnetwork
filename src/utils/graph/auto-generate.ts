@@ -252,8 +252,10 @@ export function generateGraphFromWizard(
     });
   });
 
-  // 4. Approval edges with fallback policy:
-  // same-company approver -> nearest upstream approver -> client approver
+  // 4. Approval edges with deterministic fallback policy:
+  // same-company approver -> nearest upstream billTo approver -> project owner
+  // The shared helper resolves a single route tier at a time, so the graph
+  // stays backward-compatible while the fallback chain remains deterministic.
   parties.forEach((submitterParty) => {
     const steps = getApprovalStepsForParty(submitterParty.id, parties);
 
@@ -326,7 +328,7 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
     if (party.people.length === 0) return;
     const steps = getApprovalStepsForParty(party.id, parties);
     if (steps.length === 0) {
-      errors.push(`"${party.name || party.partyType}" has no approver path (same-company, upstream, or client)`);
+      errors.push(`"${party.name || party.partyType}" has no approver path (same-company, upstream, or project owner)`);
     }
   });
 
