@@ -508,6 +508,7 @@ export function ProjectWorkspace({
                 projectId={projectId}
                 projectName={projectName}
                 viewerName={effectiveViewer?.name}
+                viewerNodeId={effectiveViewer?.nodeId}
               />
             </TabsContent>
 

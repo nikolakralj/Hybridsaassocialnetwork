@@ -18,9 +18,10 @@ interface ProjectApprovalsTabProps {
   projectId: string;
   projectName: string;
   viewerName?: string;
+  viewerNodeId?: string; // graph node ID of current viewer (e.g. "org-nas", "person-john")
 }
 
-export function ProjectApprovalsTab({ projectId, projectName, viewerName }: ProjectApprovalsTabProps) {
+export function ProjectApprovalsTab({ projectId, projectName, viewerName, viewerNodeId }: ProjectApprovalsTabProps) {
   const [viewMode, setViewMode] = useState<"queue" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
   
@@ -161,11 +162,11 @@ export function ProjectApprovalsTab({ projectId, projectName, viewerName }: Proj
               </Button>
             </div>
 
-            {/* Embedded ApprovalsWorkbench (filtered to this project) */}
-            <ApprovalsWorkbench 
+            {/* Embedded ApprovalsWorkbench (filtered to this project + viewer's graph node) */}
+            <ApprovalsWorkbench
               projectFilter={projectId}
               statusFilter={filterStatus}
-              embedded={true}
+              viewerNodeId={viewerNodeId}
             />
           </Card>
         </TabsContent>
