@@ -7,3 +7,4 @@ build/
 .claude/
 vite-dev.log
 vite-dev.err
+supabase/.temp/

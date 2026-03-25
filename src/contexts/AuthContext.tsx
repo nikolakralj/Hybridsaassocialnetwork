@@ -13,6 +13,8 @@ export interface UserProfile {
   location?: string;
   website?: string;
   skills?: string[];
+  organization_id?: string;
+  role?: string;
   created_at?: string;
 }
 
@@ -54,6 +56,8 @@ function buildProfile(user: any): UserProfile {
     location: user.user_metadata?.location || '',
     website: user.user_metadata?.website || '',
     skills: user.user_metadata?.skills || [],
+    organization_id: user.user_metadata?.organization_id || undefined,
+    role: user.user_metadata?.role || undefined,
     created_at: user.created_at,
   };
 }

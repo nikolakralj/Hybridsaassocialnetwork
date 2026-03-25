@@ -17,8 +17,7 @@ import type {
 } from '../../types/timesheets';
 import { useMemo } from 'react';
 
-// ✅ TEST MODE: Import persona context
-import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
+import { useAuth } from '../../contexts/AuthContext';
 
 // ============================================================================
 // QUERY KEYS (for cache management)
@@ -414,14 +413,14 @@ export interface OrganizationWithData extends Organization {
  * 
  * This is the main hook for the approval table view
  * 
- * ✅ TEST MODE: Filters by persona (will be removed in Phase 9)
+ * Auth-aware filtering:
+ * - freelancers/contractors see only their own contracts
+ * - company/agency users see org-level data
  */
 export function useApprovalsData() {
   const { data: organizations, isLoading: orgsLoading, error: orgsError } = useOrganizations();
   const { data: contracts, isLoading: contractsLoading, error: contractsError } = useAllContracts();
-  
-  // ✅ TEST MODE: Get current persona
-  const { currentPersona } = usePersona();
+  const { user } = useAuth();
   
   // Fetch periods for all contracts in parallel
   const contractIds = contracts?.map(c => c.id) || [];
@@ -500,70 +499,33 @@ export function useApprovalsData() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizations, contracts, periodResultsKey]);
 
-  // ✅ TEST MODE: Filter by persona
+  // Auth-aware filter
   const filteredData = useMemo(() => {
-    if (!currentPersona) {
-      console.log('[TEST MODE] No persona selected - returning empty array');
+    if (!user) {
       return [];
     }
 
-    console.log(`[TEST MODE] Filtering ${data.length} orgs for persona: ${currentPersona.name} (${currentPersona.role})`);
-    console.log('[TEST MODE] Current persona details:', {
-      id: currentPersona.id,
-      name: currentPersona.name,
-      role: currentPersona.role,
-    });
-    
-    // 🔍 DEBUG: Log all contracts before filtering
-    const allContracts = data.flatMap(org => org.contracts);
-    console.log(`[TEST MODE] Total contracts before filtering: ${allContracts.length}`);
-    allContracts.forEach((contract, index) => {
-      console.log(`[TEST MODE] Contract ${index + 1}:`, {
-        id: contract.id,
-        userId: contract.userId,
-        userName: contract.userName,
-        matchesId: contract.userId === currentPersona.id,
-        matchesName: contract.userName === currentPersona.name,
-        matchesNameLower: contract.userName.toLowerCase() === currentPersona.name.toLowerCase(),
-      });
-    });
+    const authRole = user.persona_type === 'company' || user.persona_type === 'agency'
+      ? 'manager'
+      : 'contractor';
 
-    // Filter based on role
-    switch (currentPersona.role) {
-      case 'contractor':
-        // Contractors only see their own timesheets
-        const contractorFiltered = data.map(org => ({
+    if (authRole === 'contractor') {
+      return data
+        .map(org => ({
           ...org,
           contracts: org.contracts.filter(contract => {
-            const matches = contract.userId === currentPersona.id || 
-              contract.userName === currentPersona.name ||
-              contract.userName.toLowerCase() === currentPersona.name.toLowerCase();
-            
-            console.log(`[TEST MODE] Filtering contract ${contract.id} for contractor:`, {
-              contractUserId: contract.userId,
-              personaId: currentPersona.id,
-              contractUserName: contract.userName,
-              personaName: currentPersona.name,
-              matches,
-            });
-            
-            return matches;
+            const matchesUserId = contract.userId === user.id;
+            const matchesUserName = user.name
+              ? contract.userName.toLowerCase() === user.name.toLowerCase()
+              : false;
+            return matchesUserId || matchesUserName;
           }),
-        })).filter(org => org.contracts.length > 0);
-        
-        console.log(`[TEST MODE] Contractor filtered: ${contractorFiltered.flatMap(o => o.contracts).length} contracts`);
-        return contractorFiltered;
-
-      case 'manager':
-      case 'client':
-        // Managers and clients see all timesheets
-        console.log(`[TEST MODE] ${currentPersona.role} view - showing all ${data.flatMap(o => o.contracts).length} contracts`);
-        return data;
-
-      default:
-        return data;
+        }))
+        .filter(org => org.contracts.length > 0);
     }
-  }, [data, currentPersona]);
+
+    return data;
+  }, [data, user]);
 
   return {
     data: filteredData,

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { 
-  LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, 
+  LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt, 
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
 } from "lucide-react";
 import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
@@ -24,13 +24,14 @@ import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
+import { InvoicesWorkspace } from "./invoices/InvoicesWorkspace";
 import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
 import type { ViewerIdentity } from "./workgraph/graph-visibility";
 
 // Module definitions
-type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
+type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "invoices" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
 
 interface Module {
   id: ModuleId;
@@ -119,6 +120,14 @@ export function ProjectWorkspace({
       name: "Approvals",
       icon: CheckSquare,
       description: "Manage pending approvals and tasks",
+      category: "core",
+      isEnabled: true,
+    },
+    {
+      id: "invoices",
+      name: "Invoices",
+      icon: Receipt,
+      description: "Generate and manage invoices from approved timesheets",
       category: "core",
       isEnabled: true,
     },
@@ -338,15 +347,9 @@ export function ProjectWorkspace({
               <div className="flex items-center gap-3 mb-1">
                 <h1 className="m-0">{projectName}</h1>
                 <Badge variant="secondary">Active</Badge>
-                {/* Debug: Show current scope */}
-                {scope !== 'approvals' && (
-                  <Badge variant="outline" className="text-xs">
-                    Scope: {scope}
-                  </Badge>
-                )}
               </div>
               <p className="text-sm text-muted-foreground m-0">
-                Client: Acme Corp · Due: Jan 31, 2024
+                Project workspace
               </p>
             </div>
             <div className="flex gap-2">
@@ -505,6 +508,13 @@ export function ProjectWorkspace({
                 projectId={projectId}
                 projectName={projectName}
                 viewerName={effectiveViewer?.name}
+              />
+            </TabsContent>
+
+            <TabsContent value="invoices" className="space-y-6">
+              <InvoicesWorkspace
+                projectId={projectId}
+                projectName={projectName}
               />
             </TabsContent>
 

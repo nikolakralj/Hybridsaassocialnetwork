@@ -1,7 +1,6 @@
 import React from 'react';
 import { RouterProvider } from 'react-router';
 import { router } from './routes';
-import { PersonaProvider } from './contexts/PersonaContext';
 import { WorkGraphProvider } from './contexts/WorkGraphContext';
 import { TimesheetStoreProvider } from './contexts/TimesheetDataContext';
 import { NotificationProvider } from './contexts/NotificationContext';
@@ -19,15 +18,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <PersonaProvider>
-          <WorkGraphProvider>
-            <TimesheetStoreProvider>
-              <NotificationProvider>
-                <RouterProvider router={router} />
-              </NotificationProvider>
-            </TimesheetStoreProvider>
-          </WorkGraphProvider>
-        </PersonaProvider>
+        <WorkGraphProvider>
+          <TimesheetStoreProvider>
+            <NotificationProvider>
+              <RouterProvider router={router} />
+            </NotificationProvider>
+          </TimesheetStoreProvider>
+        </WorkGraphProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

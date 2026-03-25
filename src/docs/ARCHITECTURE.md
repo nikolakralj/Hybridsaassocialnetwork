@@ -109,8 +109,9 @@ permission model**. Your position in the supply chain determines what you see an
    declares `billsTo: string[]` — who they bill/report to. This supports any topology
    (linear, parallel, skip-tier, diamond, N-tier).
 
-4. **Persona-based testing**: A `PersonaContext` allows switching between different user
+4. **Persona-based testing [DEPRECATED]**: A `PersonaContext` allowed switching between different user
    perspectives without re-authenticating, enabling rapid testing of visibility rules.
+   *Note: As of Phase 4 (March 2026), `PersonaContext` is actively being ripped out in favor of real Supabase Auth sessions to enable actual invoicing.*
 
 ---
 

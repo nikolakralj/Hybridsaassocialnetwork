@@ -8,7 +8,6 @@
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import type { WeekStatus } from './TimesheetDataContext';
-import { TEST_PERSONAS } from './PersonaContext';
 
 // ============================================================================
 // Types
@@ -111,37 +110,90 @@ export interface NotificationStoreAPI {
 // Demo approval chains (multi-party)
 // ============================================================================
 
-const APPROVAL_CHAIN_TEMPLATES: Record<string, { partyId: string; partyName: string; partyType: 'company' | 'agency' | 'client' }[]> = {
-  // Acme Dev Studio employees go through: Acme → Client
-  'org-acme': [
-    { partyId: 'org-acme', partyName: 'Acme Dev Studio', partyType: 'agency' },
-    { partyId: 'client-techcorp', partyName: 'TechCorp (Client)', partyType: 'client' },
-  ],
-  // BrightWorks employees go through: BrightWorks → Client
-  'org-brightworks': [
-    { partyId: 'org-brightworks', partyName: 'BrightWorks Design', partyType: 'agency' },
-    { partyId: 'client-techcorp', partyName: 'TechCorp (Client)', partyType: 'client' },
-  ],
-  // Freelancers go direct to client
-  '__freelancers__': [
-    { partyId: 'client-techcorp', partyName: 'TechCorp (Client)', partyType: 'client' },
-  ],
+type NameDirEntry = { name?: string; type?: string; orgId?: string };
+type ApprovalPerson = { id: string; name: string; canApprove?: boolean };
+type ApprovalDirParty = {
+  id: string;
+  name: string;
+  partyType?: 'company' | 'agency' | 'client' | 'freelancer' | string;
+  billsTo?: string[];
+  people?: ApprovalPerson[];
 };
 
+function activeProjectId(): string {
+  return sessionStorage.getItem('currentProjectId') || '';
+}
+
+function readNameDir(projectId: string): Record<string, NameDirEntry> {
+  if (!projectId) return {};
+  try {
+    const raw = sessionStorage.getItem(`workgraph-name-dir:${projectId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function readApprovalParties(projectId: string): ApprovalDirParty[] {
+  if (!projectId) return [];
+  try {
+    const raw = sessionStorage.getItem(`workgraph-approval-dir:${projectId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.parties) ? parsed.parties : [];
+  } catch {
+    return [];
+  }
+}
+
 function personName(id: string): string {
-  return TEST_PERSONAS.find(t => t.id === id)?.name ?? id;
+  const dir = readNameDir(activeProjectId());
+  const name = dir[id]?.name;
+  if (name) return name;
+  return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 24);
 }
 
-function personOrgId(id: string): string {
-  const p = TEST_PERSONAS.find(t => t.id === id);
-  if (p?.graphOrgId) return p.graphOrgId;
-  if (p?.graphViewerType === 'freelancer') return '__freelancers__';
-  return '__other__';
-}
+function getChainTemplate(personId: string): { partyId: string; partyName: string; partyType: 'company' | 'agency' | 'client' }[] {
+  const parties = readApprovalParties(activeProjectId());
+  if (parties.length === 0) {
+    return [{ partyId: '__client__', partyName: 'Client', partyType: 'client' }];
+  }
 
-function getChainTemplate(personId: string) {
-  const orgId = personOrgId(personId);
-  return APPROVAL_CHAIN_TEMPLATES[orgId] || APPROVAL_CHAIN_TEMPLATES['__freelancers__'];
+  const partyById = new Map(parties.map(p => [p.id, p]));
+  const submitterParty = parties.find(p => p.people?.some(person => person.id === personId));
+  if (!submitterParty) {
+    return [{ partyId: '__client__', partyName: 'Client', partyType: 'client' }];
+  }
+
+  const steps: { partyId: string; partyName: string; partyType: 'company' | 'agency' | 'client' }[] = [];
+  const visited = new Set<string>();
+  let current: ApprovalDirParty | undefined = submitterParty;
+  let depth = 0;
+
+  while (current && depth < 8) {
+    if (visited.has(current.id)) break;
+    visited.add(current.id);
+
+    const normalizedType: 'company' | 'agency' | 'client' =
+      current.partyType === 'client'
+        ? 'client'
+        : current.partyType === 'agency'
+          ? 'agency'
+          : 'company';
+
+    steps.push({
+      partyId: current.id,
+      partyName: current.name || current.id,
+      partyType: normalizedType,
+    });
+
+    const nextPartyId = current.billsTo?.[0];
+    if (!nextPartyId) break;
+    current = partyById.get(nextPartyId);
+    depth += 1;
+  }
+
+  return steps.length > 0 ? steps : [{ partyId: '__client__', partyName: 'Client', partyType: 'client' }];
 }
 
 // ============================================================================

@@ -375,5 +375,62 @@ Status: DONE — see handoff note below
 - **Deploy edge functions:** Run `npm run edge:deploy` or push via Supabase CLI so the new SQL-backed functions go live
 - Kill the PersonaContext / real Auth integration (separate task above)
 - Phase 4 invoicing scaffold: approved timesheet → invoice draft
-- Rename `supabase/migrations/001_timesheet_approval_tables.sql.tsx` → `.sql` (wrong extension, never applied)
+
+**Also completed — 2026-03-25:**
+- Renamed `supabase/migrations/001_timesheet_approval_tables.sql.tsx` → `001_timesheet_approval_tables.sql` (wrong extension fixed ✅)
+- Removed debug `Scope: {scope}` badge from `ProjectWorkspace.tsx` header (was leaking internal state to UI ✅)
+- Removed hardcoded `Client: Acme Corp · Due: Jan 31, 2024` from project header subtitle (was static placeholder ✅)
+- `npm run build` verified clean: **3297 modules, zero TypeScript errors** ✅
+
+**Codex is currently working on (2026-03-25):**
+1. Audit edge deploy / PersonaContext usage / invoicing readiness
+2. Kill Persona — replace `PersonaContext` demo mode with real `useUser()` Supabase Auth
+3. Phase 4 invoice draft scaffold (approved timesheet → invoice)
+4. Edge deploy + build verification + worklog update
+
+**Do NOT touch while Codex is running:**
+- `src/context/PersonaContext.tsx`
+- `src/components/timesheets/ProjectTimesheetsView.tsx` auth wiring
+- Any new invoice-related files
+
+---
+
+### ✅ CODEX UPDATE — 2026-03-25 (C: workspace only)
+
+Execution context:
+- All active work performed in `C:\Users\NK\Projects\HybridSocialApp-run`.
+- No further development performed in `G:\...` workspace.
+
+Completed:
+1. **Edge functions deploy (deploy-only, no DB push)**
+   - Command: `npx supabase functions deploy server --project-ref gcdtimasyknakdojiufl --workdir .`
+   - Result: **success** (`server` function deployed)
+   - Important: respected migration safety rule; did **not** run `supabase db push`.
+
+2. **Kill Persona integration (runtime path)**
+   - Removed `PersonaProvider` wrapping from `src/App.tsx`.
+   - Runtime consumers switched to `useAuth` in:
+     - `src/components/workgraph/WorkGraphBuilder.tsx`
+     - `src/components/timesheets/ProjectTimesheetsView.tsx`
+     - `src/components/approvals/ApprovalsWorkbench.tsx`
+     - `src/utils/api/timesheets-approval-hooks.ts`
+   - `src/contexts/NotificationContext.tsx` now resolves name/approval context from sessionStorage graph directories instead of hardcoded persona fixtures.
+   - Auth profile now carries metadata fields required for role/org-aware behavior:
+     - `organization_id`
+     - `role`
+
+3. **Phase 4 invoicing scaffold integrated**
+   - Added:
+     - `src/components/invoices/InvoicesWorkspace.tsx`
+     - `src/components/invoices/InvoiceDetailPrintView.tsx`
+   - Wired `Invoices` as a core module/tab in `src/components/ProjectWorkspace.tsx`.
+   - Behavior: generate invoice drafts from approved weeks for the selected month.
+
+4. **Build verification**
+   - `npm run build` passed cleanly in C workspace (3297 modules).
+
+Notes:
+- Supabase deploy expected `supabase/functions/server/index.ts`; added minimal entrypoint shim:
+  - `supabase/functions/server/index.ts` -> `import "./index.tsx";`
+- Migration history in CLI may lag manual SQL editor execution; deploy path intentionally limited to functions only.
 

@@ -35,7 +35,7 @@ import {
   type ApprovalQueueFilters,
 } from '../../utils/api/approvals-supabase';
 import { GraphOverlayModal } from './GraphOverlayModal';
-import { usePersona } from '../../contexts/PersonaContext'; // ✅ TEST MODE
+import { useAuth } from '../../contexts/AuthContext';
 
 // Helper interface for UI display
 export interface UIApprovalItem {
@@ -79,7 +79,7 @@ export function ApprovalsWorkbench({
   projectFilter,
   statusFilter: externalStatusFilter 
 }: ApprovalsWorkbenchProps = {}) {
-  const { currentPersona } = usePersona();
+  const { user } = useAuth();
   const [items, setItems] = useState<UIApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -98,7 +98,7 @@ export function ApprovalsWorkbench({
   // Load data
   useEffect(() => {
     loadApprovals();
-  }, [currentPersona, projectFilter]);
+  }, [user?.id, projectFilter]);
   
   const loadApprovals = async () => {
     setLoading(true);
@@ -199,7 +199,7 @@ export function ApprovalsWorkbench({
   
   const handleApprove = async (itemId: string) => {
     try {
-      await approveItem(itemId, { approvedBy: currentPersona?.id || 'current-user' });
+      await approveItem(itemId, { approvedBy: user?.id || 'current-user' });
       toast.success('Approved successfully');
       loadApprovals();
     } catch (error) {
@@ -212,7 +212,7 @@ export function ApprovalsWorkbench({
     if (!reason) return;
     
     try {
-      await rejectItem(itemId, { rejectedBy: currentPersona?.id || 'current-user', reason });
+      await rejectItem(itemId, { rejectedBy: user?.id || 'current-user', reason });
       toast.success('Rejected successfully');
       loadApprovals();
     } catch (error) {
@@ -223,7 +223,7 @@ export function ApprovalsWorkbench({
   const handleBulkApprove = async () => {
     try {
       await bulkApprove({ 
-        approvedBy: currentPersona?.id || 'current-user',
+        approvedBy: user?.id || 'current-user',
         itemIds: Array.from(selectedItems) 
       });
       toast.success(`Approved ${selectedItems.size} items`);

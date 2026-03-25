@@ -31,7 +31,7 @@ import { toast } from 'sonner';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask, TimeEntry, TimeCategory } from '../../contexts/TimesheetDataContext';
-import { usePersona, TEST_PERSONAS } from '../../contexts/PersonaContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
@@ -79,18 +79,22 @@ function getApprovalParties(projectId: string): ApprovalParty[] {
 function personName(id: string): string {
   const entry = getNameDir()[id];
   if (entry?.name) return entry.name;
-  const persona = TEST_PERSONAS.find(t => t.id === id);
-  if (persona?.name) return persona.name;
   return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 24);
 }
 function personInitials(id: string): string {
   return personName(id).split(' ').map(n => n[0]).join('');
 }
 function personOrgId(id: string): string | undefined {
-  return getNameDir()[id]?.orgId ?? TEST_PERSONAS.find(t => t.id === id)?.graphOrgId;
+  const fromDir = getNameDir()[id]?.orgId;
+  if (fromDir) return fromDir;
+  if (id.startsWith('org-')) return id;
+  return undefined;
 }
 function personViewerType(id: string): string | undefined {
-  return TEST_PERSONAS.find(t => t.id === id)?.graphViewerType;
+  const fromDir = getNameDir()[id]?.type;
+  if (fromDir && fromDir !== 'party') return fromDir;
+  if (id.startsWith('org-')) return 'company';
+  return undefined;
 }
 
 interface OrgInfo { id: string; name: string; color: string; bgColor: string; }
@@ -116,10 +120,6 @@ function getOrgMap(): Record<string, OrgInfo> {
     }
   });
 
-  if (Object.keys(map).length === 0) {
-    map['org-acme'] = { id: 'org-acme', name: 'Acme Dev Studio', color: 'text-blue-700', bgColor: 'bg-blue-100' };
-    map['org-brightworks'] = { id: 'org-brightworks', name: 'BrightWorks Design', color: 'text-purple-700', bgColor: 'bg-purple-100' };
-  }
   map['__freelancers__'] = { id: '__freelancers__', name: 'Independent Freelancers', color: 'text-emerald-700', bgColor: 'bg-emerald-100' };
   map['__other__'] = { id: '__other__', name: 'Other', color: 'text-slate-700', bgColor: 'bg-slate-100' };
   
@@ -196,11 +196,10 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     activeProjectId = projectId;
     cachedNameDir = null;
     cachedOrgMap = null;
-    cachedApprovalParties = null;
   }
 
   const store = useTimesheetStore();
-  const { currentPersona } = usePersona();
+  const { user } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
 
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
@@ -266,11 +265,17 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || currentPersona?.id;
-  const viewerType = viewerOverride?.type || storedViewerMeta?.type || currentPersona?.graphViewerType;
+  const authViewerType =
+    user?.persona_type === 'company'
+      ? 'company'
+      : user?.persona_type === 'agency'
+        ? 'agency'
+        : 'freelancer';
+  const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || user?.id;
+  const viewerType = viewerOverride?.type || storedViewerMeta?.type || authViewerType;
   const viewerOrgId = viewerOverride?.orgId || storedViewerMeta?.orgId;
   const isPersonViewer = Boolean(viewerOrgId);
-  const isAdmin = viewerType === 'admin' || currentPersona?.role === 'admin';
+  const isAdmin = viewerType === 'admin';
   const isMultiPersonViewer =
     !isPersonViewer && (
       isAdmin ||
@@ -334,7 +339,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     : isAdmin ? 'All people (Admin)'
       : viewerId?.startsWith('org-') ? `${personName(viewerId)} employees`
       : viewerId?.startsWith('client-') ? 'All people (Client)'
-      : currentPersona?.name ?? 'Unknown';
+      : user?.name ?? 'Unknown';
 
   const drawerWeekData = useMemo(() => {
     if (!drawerWeek) return null;
@@ -861,8 +866,8 @@ function DayEditPopup({
         {/* Header */}
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800/50 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-none">{format(date, 'EEEE')}</h3>
-            <p className="text-[10px] font-medium text-slate-500 mt-1">{format(date, 'MMM d, yyyy')}</p>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-none">{day.day}</h3>
+            <p className="text-[10px] font-medium text-slate-500 mt-1">{week.weekLabel}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors">
             <X className="h-4 w-4" />
@@ -968,7 +973,7 @@ function DayEditPopup({
           
           <button onClick={handleSave}
             className="w-full flex items-center justify-center gap-1.5 h-10 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md transition-all active:scale-[0.98]">
-            <Save className="h-4 w-4" /> Save {format(date, 'EEEE')} 
+            <Save className="h-4 w-4" /> Save {day.day}
           </button>
         </div>
       </div>

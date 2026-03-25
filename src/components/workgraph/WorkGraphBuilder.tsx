@@ -54,7 +54,6 @@ import type {
   BaseEdge,
   CompiledProjectConfig,
 } from '../../types/workgraph';
-import { usePersona } from '../../contexts/PersonaContext';
 import { getProject, updateProject } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
@@ -1283,7 +1282,7 @@ export function WorkGraphBuilder({
   initialConfig,
 }: WorkGraphBuilderProps) {
   const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || 'proj-alpha';
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
 
   const defaultTemplate = TEMPLATES[0];
   const [allNodes, setAllNodes] = useState<BaseNode[]>(
@@ -1377,30 +1376,26 @@ export function WorkGraphBuilder({
     sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, JSON.stringify({ parties }));
   }, [viewerOptions, allNodes, allEdges, projectId]);
 
-  // ── Sync with PersonaContext ──
-  const { setPersonaByNodeId, currentPersona } = usePersona();
-
-  // When viewer changes in the graph, push it to PersonaContext
+  // When viewer changes in the graph, persist the identity for other tabs.
   const handleViewerChange = useCallback((viewer: ViewerIdentity) => {
     setCurrentViewer(viewer);
-    setPersonaByNodeId(viewer.nodeId);
     sessionStorage.setItem(viewerStorageKey, viewer.nodeId);
     sessionStorage.setItem(viewerMetaStorageKey, JSON.stringify(viewer));
     window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
       detail: { projectId, viewer }
     }));
-  }, [setPersonaByNodeId, viewerStorageKey, viewerMetaStorageKey, projectId]);
+  }, [viewerStorageKey, viewerMetaStorageKey, projectId]);
 
   // Keep selected viewer valid after graph/viewer changes.
   useEffect(() => {
     if (viewerOptions.length === 0) return;
     const exists = viewerOptions.some(v => v.nodeId === currentViewer.nodeId);
     if (exists) return;
-    const personaMatch = currentPersona?.id
-      ? viewerOptions.find(v => v.nodeId === currentPersona.id)
+    const authViewerMatch = user?.id
+      ? viewerOptions.find(v => v.nodeId === user.id)
       : undefined;
-    setCurrentViewer(personaMatch || viewerOptions[0]);
-  }, [viewerOptions, currentViewer.nodeId, currentPersona?.id]);
+    setCurrentViewer(authViewerMatch || viewerOptions[0]);
+  }, [viewerOptions, currentViewer.nodeId, user?.id]);
 
   // Restore previously selected viewer once per project key.
   useEffect(() => {
@@ -1414,14 +1409,13 @@ export function WorkGraphBuilder({
     if (savedViewer && savedViewer.nodeId !== currentViewer.nodeId) {
       skipNextViewerPersistRef.current = true;
       setCurrentViewer(savedViewer);
-      setPersonaByNodeId(savedViewer.nodeId);
       sessionStorage.setItem(viewerMetaStorageKey, JSON.stringify(savedViewer));
       window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
         detail: { projectId, viewer: savedViewer }
       }));
     }
     hasRestoredViewerRef.current = true;
-  }, [viewerOptions, viewerStorageKey, viewerMetaStorageKey, currentViewer.nodeId, setPersonaByNodeId, projectId]);
+  }, [viewerOptions, viewerStorageKey, viewerMetaStorageKey, currentViewer.nodeId, projectId]);
 
   // Persist selected viewer per project.
   useEffect(() => {
