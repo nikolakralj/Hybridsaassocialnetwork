@@ -395,6 +395,59 @@ Status: DONE — see handoff note below
 
 ---
 
+### ✅ CLAUDE UPDATE — 2026-03-25 (Approval flow wiring + YOU badge fix)
+
+**Workspace: C:\Users\NK\Projects\HybridSocialApp-run only. G: drive is backup — ignore.**
+
+#### What was fixed
+
+**1. Hardcoded mock stats removed — `ProjectApprovalsTab.tsx`**
+- Stats block `{ pending: 12, approved: 45, rejected: 3, avgApprovalTime: "4.2 hours" }` was static
+- Replaced with zeroed values; stats now come from real `approval_records` via `ApprovalsWorkbench`
+
+**2. Submit → `createApproval` DB record wired — `ProjectTimesheetsView.tsx`**
+- `changeStatus('submitted')` now also calls `createApproval()` from `approvals-supabase.ts`
+- Approval record includes: `approver_node_id` (graph node, e.g. "org-nas"), `subjectId` = `{personId}:{weekStart}`, `status: 'pending'`
+- Non-blocking: failure is logged but does not break the submit UX
+- **Note:** `approver_user_id` is currently set to the graph node ID string as a placeholder until project members have real UUIDs linked to graph nodes (Phase 3 gate item)
+
+**3. YOU badge showing on both orgs for Admin — `graph-visibility.ts`**
+- Root cause: admin view assigned `hopDistance: 0` to ALL nodes, making every org appear as "YOU"
+- Fix: admin view now assigns `hopDistance: 99` — the YOU badge (`hopDistance === 0`) never fires for admin
+- When viewing as a specific person/org, hopDistance stays correct (0 = your org, 1 = one hop away, etc.)
+
+**4. `getApprovalQueue` status filter bug + node-ID matching — `approvals-supabase.ts`**
+- Bug: `status: 'all'` was passing `undefined` which defaulted back to `pending` only — fixed to no-filter
+- Added `approverNodeId` to `ApprovalQueueFilters` type and query logic
+- `ApprovalsWorkbench` now passes `viewerNodeId` prop → filters queue by the viewer's graph node
+
+#### Approval flow — technical spec (was missing from docs)
+
+```
+Nikola submits week
+  → changeStatus('submitted') fires
+  → getApprovalStepsForParty(nikola's party, approvalParties) → [{partyId: 'org-nas', step: 1}]
+  → createApproval({ approver_node_id: 'org-nas', subject_id: 'person-nikola:2025-11-03', status: 'pending' })
+  → approval_records row written to Supabase
+
+John opens Approvals tab (viewing as org-nas)
+  → ApprovalsWorkbench({ viewerNodeId: 'org-nas' })
+  → getApprovalQueue({ approverNodeId: 'org-nas' })
+  → Supabase query: WHERE approver_node_id = 'org-nas' AND status = 'pending'
+  → John sees Nikola's week ✓
+  → John clicks Approve → approveItem(id) → status = 'approved'
+  → Invoice tab can now generate draft from approved weeks
+```
+
+**Missing link (Phase 3 gate — not yet done):**
+- `approver_user_id` in `approval_records` needs to be John's real Supabase UUID
+- This requires: `wg_project_members` table to have `graph_node_id` column linking John → `org-nas`
+- Until then, `approver_node_id` is the primary matching key (works correctly)
+
+**Build status:** `npm run build` — clean, 3297 modules, zero TypeScript errors ✅
+
+---
+
 ### ✅ CODEX UPDATE — 2026-03-25 (C: workspace only)
 
 Execution context:

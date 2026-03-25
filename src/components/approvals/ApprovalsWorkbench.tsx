@@ -73,11 +73,14 @@ export interface UIApprovalItem {
 interface ApprovalsWorkbenchProps {
   projectFilter?: string; // Optional: filter to specific project
   statusFilter?: 'all' | 'pending' | 'approved' | 'rejected';
+  viewerNodeId?: string;  // Graph node ID of the current viewer (e.g. "org-nas") for approval matching
+  embedded?: boolean;
 }
 
-export function ApprovalsWorkbench({ 
+export function ApprovalsWorkbench({
   projectFilter,
-  statusFilter: externalStatusFilter 
+  statusFilter: externalStatusFilter,
+  viewerNodeId,
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
   const [items, setItems] = useState<UIApprovalItem[]>([]);
@@ -87,19 +90,19 @@ export function ApprovalsWorkbench({
   const [selectedGraphItem, setSelectedGraphItem] = useState<UIApprovalItem | null>(null);
   const [totalCount, setTotalCount] = useState(0);
   const [availableFilters, setAvailableFilters] = useState<Record<string, string[]> | null>(null);
-  
+
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>(externalStatusFilter || 'all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'priority'>('date');
-  
+
   // Load data
   useEffect(() => {
     loadApprovals();
-  }, [user?.id, projectFilter]);
-  
+  }, [user?.id, projectFilter, viewerNodeId]);
+
   const loadApprovals = async () => {
     setLoading(true);
     try {
@@ -107,6 +110,9 @@ export function ApprovalsWorkbench({
         status: statusFilter === 'all' ? undefined : statusFilter as any,
         subjectType: typeFilter === 'all' ? undefined : typeFilter as any,
         projectId: projectFilter,
+        // Use graph node ID for approval matching when available (pre-UUID-mapping era)
+        approverNodeId: viewerNodeId || undefined,
+        approverUserId: !viewerNodeId ? user?.id : undefined,
       };
       
       const data = await getApprovalQueue(filters);

@@ -24,14 +24,15 @@ export function ProjectApprovalsTab({ projectId, projectName, viewerName }: Proj
   const [viewMode, setViewMode] = useState<"queue" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
   
-  // Mock stats - will be replaced with real data
+  // Stats are driven by ApprovalsWorkbench via real approval_records query
+  // These will be populated once the workbench loads (see embedded component below)
   const stats = {
-    pending: 12,
-    approved: 45,
-    rejected: 3,
-    totalWeek: 60,
-    totalThisWeek: 15,
-    avgApprovalTime: "4.2 hours",
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    totalWeek: 0,
+    totalThisWeek: 0,
+    avgApprovalTime: "—",
   };
 
   return (

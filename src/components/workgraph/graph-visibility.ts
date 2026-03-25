@@ -264,6 +264,8 @@ export function computeScopedView(
   maxHops: number = 3
 ): ScopedGraphView {
   // Admin sees everything
+  // hopDistance is set to 99 for admin view so that isSelf (hopDistance===0)
+  // does NOT trigger the "YOU" badge on every org node — admin has no single "home" org.
   if (viewer.type === 'admin') {
     return {
       viewer,
@@ -271,7 +273,7 @@ export function computeScopedView(
         ...n,
         visibility: 'full' as const,
         maskedFields: [],
-        hopDistance: 0,
+        hopDistance: 99,
       })),
       edges: allEdges.map(e => ({
         ...e,

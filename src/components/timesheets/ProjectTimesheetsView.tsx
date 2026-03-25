@@ -35,7 +35,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
-import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
+import { canViewerApproveSubmitter, getApprovalStepsForParty, type ApprovalParty } from '../../utils/graph/approval-fallback';
+import { createApproval } from '../../utils/api/approvals-supabase';
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -1016,10 +1017,37 @@ function WeekDetailDrawer({
   const prevWeek = weekIdx > 0 ? allWeeks[weekIdx - 1] : null;
   const nextWeek = weekIdx < allWeeks.length - 1 ? allWeeks[weekIdx + 1] : null;
 
-  // Wrapper: set status + fire notification
+  // Wrapper: set status + fire notification + create approval_record on submit
   const changeStatus = useCallback((newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
     store.setWeekStatus(personId, week.weekStart, newStatus, meta);
     notifStore.onTimesheetStatusChange(personId, week.weekStart, week.weekLabel, newStatus, weekTotal, meta);
+
+    // When submitted: write a pending approval_record to the DB.
+    // approver_node_id stores the graph node that must approve (e.g. "org-nas").
+    // This is later matched in getApprovalQueue by the viewer's current graph node.
+    if (newStatus === 'submitted') {
+      const parties = getApprovalParties(activeProjectId);
+      const submitterEntry = Object.values(getNameDir()).find((e) => e.type === 'person');
+      // Find which party this person belongs to
+      const personParty = parties.find((p) => p.people.some((m) => m.id === personId));
+      if (personParty) {
+        const steps = getApprovalStepsForParty(personParty.id, parties);
+        const firstStep = steps[0];
+        if (firstStep) {
+          createApproval({
+            projectId: activeProjectId,
+            subjectType: 'timesheet',
+            subjectId: `${personId}:${week.weekStart}`,
+            approverUserId: firstStep.partyId, // graph node ID used as approver ref until UUID mapping exists
+            approverName: parties.find((p) => p.id === firstStep.partyId)?.name ?? firstStep.partyId,
+            approverNodeId: firstStep.partyId,
+            approvalLayer: firstStep.step,
+            status: 'pending',
+            submittedAt: new Date().toISOString(),
+          }).catch((err) => console.warn('approval_record write failed (non-blocking):', err));
+        }
+      }
+    }
   }, [store, notifStore, personId, week.weekStart, week.weekLabel, weekTotal]);
 
   // Get approval chain for this week

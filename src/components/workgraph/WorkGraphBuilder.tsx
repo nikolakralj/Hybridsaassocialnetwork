@@ -511,6 +511,8 @@ function OrgNodeCard({
   const colors = ORG_COLORS[ptype] || ORG_COLORS.company;
   const Icon = ptype === 'agency' ? Users : Building2;
   const isPartial = node.visibility === 'partial';
+  // hopDistance===0 means this org is the viewer's own. Admin gets hopDistance=99
+  // so the YOU badge never fires on all orgs when viewing as Admin.
   const isSelf = node.hopDistance === 0;
 
   return (

@@ -44,6 +44,7 @@ export interface ApprovalQueueFilters {
   subjectType?: 'all' | 'timesheet' | 'expense' | 'invoice' | 'contract';
   projectId?: string;
   approverUserId?: string;
+  approverNodeId?: string; // Graph node ID (e.g. "org-nas") — used when UUID mapping is unavailable
 }
 
 // ============================================================================
@@ -101,10 +102,10 @@ export async function getApprovalQueue(
       .from('approval_records')
       .select('*');
 
-    // Apply status filter (default to pending if not specified)
-    if (!filters.status || filters.status === 'pending') {
-      query = query.eq('status', 'pending');
-    } else if (filters.status !== 'all') {
+    // Apply status filter — only restrict when a specific status is requested.
+    // 'all' or undefined = no filter (show everything for the approver).
+    // Default behaviour changed: callers must explicitly pass 'pending' to restrict.
+    if (filters.status && filters.status !== 'all') {
       query = query.eq('status', filters.status);
     }
 
@@ -118,7 +119,11 @@ export async function getApprovalQueue(
       query = query.eq('project_id', filters.projectId);
     }
 
-    if (filters.approverUserId) {
+    // approver_node_id filter: supports graph-node-based approval routing.
+    // When John views as org-nas, we match approval records that target that node.
+    if (filters.approverNodeId) {
+      query = query.eq('approver_node_id', filters.approverNodeId);
+    } else if (filters.approverUserId) {
       query = query.eq('approver_user_id', filters.approverUserId);
     }
 
