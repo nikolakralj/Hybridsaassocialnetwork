@@ -62,6 +62,7 @@ export interface ApprovalRecord {
   submittedAt?: string;
   decidedAt?: string;
   graphVersionId?: string;
+  submitterUserId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -168,6 +169,36 @@ function getCandidateNodeIds(projectId: string, nodeId: string): string[] {
   return ordered;
 }
 
+function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const push = (value?: string | null) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    ordered.push(value);
+  };
+
+  push(viewerNodeId);
+
+  const parties = readApprovalParties(projectId);
+  for (const party of parties) {
+    if (party.id === viewerNodeId) {
+      push(party.id);
+      (party.people || []).forEach((person) => push(person.id));
+      continue;
+    }
+
+    const viewerMembership = (party.people || []).find((person) => person.id === viewerNodeId);
+    if (viewerMembership?.canApprove) {
+      // Queue records are often stored against party-level approver nodes.
+      // Include the party ID so person-viewers can see their party's queue.
+      push(party.id);
+    }
+  }
+
+  return ordered;
+}
+
 export async function resolveGraphNodeToUserId(
   projectId: string,
   nodeId?: string,
@@ -175,6 +206,10 @@ export async function resolveGraphNodeToUserId(
 ): Promise<string | undefined> {
   if (isUuid(nodeId)) return nodeId;
   if (!projectId || !nodeId) return fallbackUserId;
+
+  // wg_project_members.project_id is UUID — skip DB lookup for non-UUID project IDs
+  // (projects created locally before being persisted to DB use a text format ID)
+  if (!isUuid(projectId)) return fallbackUserId;
 
   const members = (await fetchProjectMembers(projectId)).filter((member) => isUuid(member.user_id));
   if (members.length === 0) return fallbackUserId;
@@ -316,9 +351,39 @@ export async function createApproval(
       );
 
       if (!resolvedApproverUserId) {
-        throw new Error(
-          `Unable to resolve approver UUID for project ${approval.projectId} and node ${approval.approverUserId || approval.approverNodeId || 'unknown'}`
+        // For local projects (non-UUID IDs), approver UUID cannot be looked up from DB.
+        // Use the submitter's own UUID as a temporary placeholder so the record is created.
+        // The approval will be queryable by approver_node_id (party ID) for the queue.
+        const submitterUuid = isUuid(approval.submitterUserId) ? approval.submitterUserId : undefined;
+        if (!submitterUuid) {
+          throw new Error(
+            `Unable to resolve approver UUID for project ${approval.projectId} and node ${approval.approverUserId || approval.approverNodeId || 'unknown'}`
+          );
+        }
+        console.warn(
+          `[Approvals] Could not resolve approver UUID for node ${approval.approverUserId || approval.approverNodeId}. ` +
+          `Using submitter UUID as placeholder — project must be saved to DB for multi-user approval.`
         );
+        // Use submitter UUID but keep approver_node_id pointing to the correct party
+        const { data, error } = await supabase
+          .from('approval_records')
+          .insert([{
+            project_id: approval.projectId,
+            subject_type: approval.subjectType,
+            subject_id: approval.subjectId,
+            approver_user_id: submitterUuid,
+            approver_name: approval.approverName,
+            approver_node_id: approval.approverNodeId,
+            approval_layer: approval.approvalLayer,
+            status: approval.status || 'pending',
+            notes: approval.notes,
+            submitted_at: approval.submittedAt || new Date().toISOString(),
+            graph_version_id: approval.graphVersionId,
+          }])
+          .select()
+          .single();
+        if (error) throw new Error(`Failed to create approval: ${error.message}`);
+        return transformApproval(data);
       }
 
       const { data, error } = await supabase
@@ -396,17 +461,24 @@ export async function getApprovalQueue(
 
     if (filters.approverNodeId) {
       let resolvedApproverUserId: string | undefined;
+      let approverNodeCandidates: string[] = [filters.approverNodeId];
 
       try {
-        resolvedApproverUserId = filters.projectId
-          ? await resolveGraphNodeToUserId(filters.projectId, filters.approverNodeId)
-          : undefined;
+        if (filters.projectId) {
+          resolvedApproverUserId = await resolveGraphNodeToUserId(filters.projectId, filters.approverNodeId);
+          approverNodeCandidates = getApproverScopeNodeIds(filters.projectId, filters.approverNodeId);
+        }
       } catch (error) {
         console.warn('[approvals] Failed to resolve approver node for queue filter', error);
       }
 
+      const conditions = approverNodeCandidates.map((candidate) => `approver_node_id.eq.${candidate}`);
       if (resolvedApproverUserId) {
-        query = query.or(`approver_node_id.eq.${filters.approverNodeId},approver_user_id.eq.${resolvedApproverUserId}`);
+        conditions.push(`approver_user_id.eq.${resolvedApproverUserId}`);
+      }
+
+      if (conditions.length > 0) {
+        query = query.or(conditions.join(','));
       } else {
         query = query.eq('approver_node_id', filters.approverNodeId);
       }
