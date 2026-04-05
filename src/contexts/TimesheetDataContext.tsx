@@ -314,7 +314,33 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   const parties = await loadApprovalParties(projectId, accessToken);
   if (parties.length === 0) return null;
 
-  const submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
+  let submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
+
+  // Fallback 1: submitter not in any party's people list (floating node).
+  // Use the name directory's orgId to find the submitter's party.
+  if (!submitterParty) {
+    const nameDir = readNameDir(projectId);
+    const orgId = nameDir[personId]?.orgId;
+    if (orgId) {
+      submitterParty = parties.find((p) => p.id === orgId);
+    }
+  }
+
+  // Fallback 2: try the viewer meta (the identity the user is currently "viewing as")
+  if (!submitterParty) {
+    const viewerRaw = readSessionJson<{ nodeId?: string; orgId?: string }>(`workgraph-viewer-meta:${projectId}`);
+    if (viewerRaw?.orgId) {
+      submitterParty = parties.find((p) => p.id === viewerRaw.orgId);
+    }
+  }
+
+  // Fallback 3: if the submitter is the project owner, they belong to the first
+  // non-client party that bills upstream (the "Your Organization" party).
+  if (!submitterParty) {
+    submitterParty = parties.find((p) => p.billsTo.length > 0 && p.partyType !== 'client');
+    if (!submitterParty) submitterParty = parties[0]; // absolute last resort
+  }
+
   if (!submitterParty) return null;
 
   // Walk approval steps — skip any step where the only approver is the submitter themselves
