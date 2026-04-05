@@ -248,6 +248,17 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     setSelectedMonth(d);
   }, [selectedMonth, setSelectedMonth]);
 
+  const goToToday = useCallback(() => {
+    const now = new Date();
+    setSelectedMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+  }, [setSelectedMonth]);
+
+  const isCurrentMonth = useMemo(() => {
+    const now = new Date();
+    const d = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }, [selectedMonth]);
+
   // Read viewer meta from sessionStorage and stay in sync with graph-tab changes.
   // useMemo([projectId]) would go stale when WorkGraphBuilder updates sessionStorage
   // without changing projectId — so we use a state that re-reads on every
@@ -523,6 +534,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
           <span className="text-sm font-semibold px-2 min-w-[130px] text-center">{monthLabel}</span>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => goMonth(1)}><ChevronRight className="h-4 w-4" /></Button>
         </div>
+        {!isCurrentMonth && (
+          <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground hover:text-foreground" onClick={goToToday}>
+            Today
+          </Button>
+        )}
         <div className="flex items-center bg-muted/50 rounded-lg p-0.5">
           {([['calendar', CalendarDays, 'Calendar'], ['list', LayoutList, 'List']] as const).map(([m, Icon, label]) => (
             <button key={m} onClick={() => setViewMode(m)}
