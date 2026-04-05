@@ -94,19 +94,43 @@ export function ProjectsListView() {
   const handleCreateProject = () => {
     setIsWizardOpen(true);
   };
+
+  const syncCurrentProjectSession = (project: { id: string; name?: string; startDate?: string | null }) => {
+    sessionStorage.setItem('currentProjectId', project.id);
+    if (project.name) {
+      sessionStorage.setItem('currentProjectName', project.name);
+    }
+    if (project.startDate) {
+      sessionStorage.setItem('currentProjectStartDate', project.startDate);
+    } else {
+      sessionStorage.removeItem('currentProjectStartDate');
+    }
+    if (typeof window !== 'undefined') {
+      const detail = {
+        projectId: project.id,
+        projectName: project.name || null,
+        projectStartDate: project.startDate || null,
+      };
+      window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
+      window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
+    }
+  };
   
-  const handleProjectCreated = (projectId: string) => {
-    sessionStorage.setItem('currentProjectId', projectId);
+  const handleProjectCreated = (projectId: string, projectStartDate?: string | null) => {
+    syncCurrentProjectSession({ id: projectId, startDate: projectStartDate || null });
     // Store project name too (will be fetched from API in workspace)
     navigate('/app/project-workspace');
     loadProjects(); // Refresh list
   };
   
   const handleOpenProject = (projectId: string) => {
-    sessionStorage.setItem('currentProjectId', projectId);
     // Store name for workspace header
     const proj = projects.find(p => p.id === projectId);
-    if (proj?.name) sessionStorage.setItem('currentProjectName', proj.name);
+    syncCurrentProjectSession({
+      id: projectId,
+      name: proj?.name,
+      startDate: proj?.startDate || proj?.start_date || null,
+    });
     navigate('/app/project-workspace');
   };
 

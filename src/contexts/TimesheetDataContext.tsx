@@ -18,12 +18,14 @@ import {
   saveTimesheetWeek,
   updateTimesheetStatus,
 } from '../utils/api/timesheets-api';
+import { getProject } from '../utils/api/projects-api';
 import {
   approveItem,
   createApproval,
   deleteApproval,
   getLatestPendingApproval,
   rejectItem,
+  type ApprovalSubjectSnapshot,
 } from '../utils/api/approvals-supabase';
 import type { SubmissionEnvelope, TimeEntry } from '../types/timesheets';
 import {
@@ -154,6 +156,39 @@ function formatISODateLocal(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function normalizeIsoDate(value?: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return formatISODateLocal(parsed);
+}
+
+function weekEndIso(weekStart: string): string {
+  const end = new Date(`${weekStart}T00:00:00`);
+  if (Number.isNaN(end.getTime())) return weekStart;
+  end.setDate(end.getDate() + 4);
+  return formatISODateLocal(end);
+}
+
+function dayIsoFromWeek(weekStart: string, dayIndex: number): string {
+  const date = new Date(`${weekStart}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return weekStart;
+  date.setDate(date.getDate() + dayIndex);
+  return formatISODateLocal(date);
+}
+
+function weekIsFullyBeforeProjectStart(weekStart: string, projectStartDate: string): boolean {
+  return weekEndIso(weekStart) < projectStartDate;
+}
+
+function weekHasHoursBeforeProjectStart(week: StoredWeek, projectStartDate: string): boolean {
+  return week.days.some((day, index) => {
+    const hours = typeof day.totalHours === 'number' ? day.totalHours : day.hours || 0;
+    if (hours <= 0) return false;
+    return dayIsoFromWeek(week.weekStart, index) < projectStartDate;
+  });
+}
+
 /** Return Monday dates that fall inside a month key (YYYY-MM). */
 function getMondaysForMonth(monthKey: string): string[] {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
@@ -200,17 +235,45 @@ function readApprovalParties(projectId: string): ApprovalParty[] {
   return Array.isArray(parsed?.parties) ? parsed.parties : [];
 }
 
-function getApprovalRouteForSubmitter(projectId: string, personId: string): ApprovalRoute | null {
-  const parties = readApprovalParties(projectId);
+async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
+  const sessionParties = readApprovalParties(projectId);
+  if (sessionParties.length > 0) return sessionParties;
+
+  try {
+    const data = await getProject(projectId, accessToken);
+    const projectParties = data?.project?.parties;
+
+    if (Array.isArray(projectParties)) {
+      return projectParties as ApprovalParty[];
+    }
+
+    const nestedParties = (projectParties as { parties?: ApprovalParty[] })?.parties;
+    return Array.isArray(nestedParties) ? nestedParties : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getApprovalRouteForSubmitter(projectId: string, personId: string, accessToken?: string | null): Promise<ApprovalRoute | null> {
+  const parties = await loadApprovalParties(projectId, accessToken);
   if (parties.length === 0) return null;
 
   const submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
   if (!submitterParty) return null;
 
-  const firstStep = getApprovalStepsForParty(submitterParty.id, parties)[0];
+  // Walk approval steps — skip any step where the only approver is the submitter themselves
+  // (self-approval). If Nikola is the approver in their own party, route upstream to next DAG node.
+  const steps = getApprovalStepsForParty(submitterParty.id, parties);
+  const firstStep = steps.find((step) => {
+    if (step.approverIds.length === 0) return true; // upstream party — fine
+    // Skip this step if every approver ID resolves to the submitter
+    return !step.approverIds.every((id) => id === personId);
+  });
   if (!firstStep) return null;
 
-  const approverUserRef = [...firstStep.approverIds].sort()[0] || firstStep.partyId;
+  // Filter out the submitter from the approver list
+  const eligibleApprovers = firstStep.approverIds.filter((id) => id !== personId);
+  const approverUserRef = [...eligibleApprovers].sort()[0] || firstStep.partyId;
   const partyName = parties.find((party) => party.id === firstStep.partyId)?.name;
   const approverName = partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
 
@@ -377,6 +440,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   const [submissionEnvelopes, setSubmissionEnvelopes] = useState<SubmissionEnvelope[]>([]);
   const [version, setVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [projectStartDate, setProjectStartDate] = useState<string | null>(() => {
+    if (typeof sessionStorage === 'undefined') return null;
+    return normalizeIsoDate(sessionStorage.getItem('currentProjectStartDate'));
+  });
   const hasLoadedRef = useRef(false);
   const authLoadKeyRef = useRef<string | null>(null);
   const pendingSyncs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -405,6 +472,105 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       authLoadKeyRef.current = authKey;
     }
   }, [user?.id, accessToken]);
+
+  const refreshProjectStartDate = useCallback(async (projectIdOverride?: string) => {
+    const projectId = projectIdOverride || activeProjectId();
+    if (!projectId) {
+      setProjectStartDate(null);
+      return;
+    }
+
+    const cached = typeof sessionStorage !== 'undefined'
+      ? normalizeIsoDate(sessionStorage.getItem('currentProjectStartDate'))
+      : null;
+
+    if (cached) {
+      setProjectStartDate(cached);
+    }
+
+    try {
+      const payload = await getProject(projectId, accessToken);
+      const fetched = normalizeIsoDate(payload?.project?.startDate || payload?.project?.start_date || payload?.startDate || payload?.start_date || null);
+      if (fetched) {
+        setProjectStartDate(fetched);
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem('currentProjectStartDate', fetched);
+        }
+      }
+    } catch (error) {
+      if (!cached) {
+        console.warn('[TimesheetStore] Failed to resolve project start date for validation:', error);
+      }
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void refreshProjectStartDate();
+  }, [refreshProjectStartDate, user?.id, accessToken]);
+
+  const reloadWeeksFromApi = useCallback(async () => {
+    if (!user?.id || !accessToken) return;
+    try {
+      const apiWeeks = await listTimesheets(undefined, accessToken);
+      if (apiWeeks && apiWeeks.length > 0) {
+        setWeeks(apiWeeks.map(apiWeekToStored));
+      }
+    } catch (error) {
+      console.warn('[TimesheetStore] Could not refresh weeks from API after approval update:', error);
+    }
+  }, [accessToken, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncActiveProject = () => {
+      void refreshProjectStartDate();
+    };
+    syncActiveProject();
+    window.addEventListener('workgraph-project-selected', syncActiveProject as EventListener);
+    window.addEventListener('workgraph-project-changed', syncActiveProject as EventListener);
+    window.addEventListener('focus', syncActiveProject);
+    return () => {
+      window.removeEventListener('workgraph-project-selected', syncActiveProject as EventListener);
+      window.removeEventListener('workgraph-project-changed', syncActiveProject as EventListener);
+      window.removeEventListener('focus', syncActiveProject);
+    };
+  }, [refreshProjectStartDate]);
+
+  useEffect(() => {
+    if (!user?.id || !accessToken || typeof window === 'undefined') return;
+
+    const refreshWeeks = () => {
+      void reloadWeeksFromApi();
+    };
+
+    const onApprovalsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string | null }>).detail;
+      const currentProjectId = activeProjectId();
+      if (!detail?.projectId || detail.projectId === currentProjectId) {
+        refreshWeeks();
+      }
+    };
+
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        refreshWeeks();
+      }
+    };
+
+    window.addEventListener('workgraph-approvals-updated', onApprovalsUpdated as EventListener);
+    window.addEventListener('focus', refreshWeeks);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+
+    return () => {
+      window.removeEventListener('workgraph-approvals-updated', onApprovalsUpdated as EventListener);
+      window.removeEventListener('focus', refreshWeeks);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [accessToken, reloadWeeksFromApi, user?.id]);
 
   // --- Load from API on auth ---
   useEffect(() => {
@@ -623,6 +789,18 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     const normalizedWeek = normalizeStoredWeek(targetWeek);
     if (status === 'submitted') {
+      if (projectStartDate) {
+        if (weekIsFullyBeforeProjectStart(weekStart, projectStartDate)) {
+          const message = `Cannot submit a week before project start (${projectStartDate}).`;
+          toast.error('Cannot submit timesheet', { description: message });
+          throw new Error(message);
+        }
+        if (weekHasHoursBeforeProjectStart(normalizedWeek, projectStartDate)) {
+          const message = `Hours before project start (${projectStartDate}) must be removed before submission.`;
+          toast.error('Cannot submit timesheet', { description: message });
+          throw new Error(message);
+        }
+      }
       const validation = validateTimesheetWeek(normalizedWeek);
       if (validation.errors.length > 0) {
         const message = validation.errors[0]?.message || 'Timesheet validation failed';
@@ -643,22 +821,59 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       const subjectId = buildTimesheetSubjectId(personId, weekStart);
 
       if (status === 'submitted') {
-        const approvalRoute = getApprovalRouteForSubmitter(projectId, personId);
+  const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
         if (!approvalRoute) {
           throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
         }
 
         const submittedAt = new Date().toISOString();
+        const nameDir = readNameDir(projectId);
+        const approvalParties = readApprovalParties(projectId);
+        const submitterName = nameDir[personId]?.name || normalizedWeek.personId || user?.user_metadata?.full_name || 'Submitted timesheet';
+        const submitterOrgId = nameDir[personId]?.orgId;
+        const submitterOrg = submitterOrgId
+          ? approvalParties.find((party) => party.id === submitterOrgId)?.name || nameDir[submitterOrgId]?.name || submitterOrgId
+          : undefined;
+        const daySummary = normalizedWeek.days.map((day) => ({
+          day: day.day,
+          hours: typeof day.totalHours === 'number' ? day.totalHours : day.hours || 0,
+          notes: day.notes,
+        }));
+        const approvalSnapshot: ApprovalSubjectSnapshot = {
+          kind: 'timesheet',
+          title: `${submitterName} · ${normalizedWeek.weekLabel}`,
+          summary: `${submitterOrg || 'Unknown organization'} · ${normalizedWeek.weekLabel} · ${sumWeekHours(normalizedWeek)}h`,
+          submitterId: personId,
+          submitterName,
+          submitterOrg,
+          periodStart: normalizedWeek.weekStart,
+          periodEnd: (() => {
+            const end = new Date(`${normalizedWeek.weekStart}T00:00:00`);
+            end.setDate(end.getDate() + 4);
+            return formatISODateLocal(end);
+          })(),
+          weekLabel: normalizedWeek.weekLabel,
+          hours: sumWeekHours(normalizedWeek),
+          billableHours: sumWeekBillableHours(normalizedWeek),
+          currentApproverName: approvalRoute.approverName,
+          currentApproverNodeId: approvalRoute.approverNodeId,
+          currentApproverUserRef: approvalRoute.approverUserRef,
+          approvalLayer: approvalRoute.approvalLayer,
+          daySummary,
+        };
+
         const approval = await createApproval({
           projectId,
           subjectType: 'timesheet',
           subjectId,
+          subjectSnapshot: approvalSnapshot,
           approverUserId: approvalRoute.approverUserRef,
           approverName: approvalRoute.approverName,
           approverNodeId: approvalRoute.approverNodeId,
           approvalLayer: approvalRoute.approvalLayer,
           status: 'pending',
           submittedAt,
+          submitterUserId: user?.id,
         });
 
         try {
@@ -684,18 +899,19 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         }
 
         if (status === 'approved') {
-          await approveItem(pendingApproval.id, {
+          const approvalResult = await approveItem(pendingApproval.id, {
             approvedBy: meta?.by,
             notes: meta?.note,
           });
+          const nextStatus: WeekStatus = approvalResult.spawnedNextLayer ? 'submitted' : 'approved';
+          applyWeekStatusLocally(personId, weekStart, nextStatus, meta, normalizedWeek.submittedAt);
         } else {
           await rejectItem(pendingApproval.id, {
             rejectedBy: meta?.by,
             reason: meta?.note,
           });
+          applyWeekStatusLocally(personId, weekStart, status, meta);
         }
-
-        applyWeekStatusLocally(personId, weekStart, status, meta);
         return;
       }
 
@@ -709,36 +925,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       throw error instanceof Error ? error : new Error(description);
     }
 
-    setWeeks(prev => prev.map(w => {
-      if (w.personId !== personId || w.weekStart !== weekStart) return w;
-      const normalizedWeek = normalizeStoredWeek(w);
-      if (status === 'submitted') {
-        const validation = validateTimesheetWeek(normalizedWeek);
-        if (validation.errors.length > 0) {
-          console.warn('[TimesheetStore] Submission blocked by validation', validation.errors);
-          return normalizedWeek;
-        }
-      }
-      const updated: StoredWeek = { ...normalizedWeek, status };
-      if (status === 'submitted') updated.submittedAt = new Date().toISOString();
-      if (status === 'approved' && meta?.by) updated.approvedBy = meta.by;
-      if (status === 'rejected') {
-        updated.rejectedBy = meta?.by;
-        updated.rejectionNote = meta?.note;
-      }
-      if (status === 'draft') {
-        // Recall — clear workflow metadata
-        updated.submittedAt = undefined;
-        updated.approvedBy = undefined;
-        updated.rejectedBy = undefined;
-        updated.rejectionNote = undefined;
-      }
-      return updated;
-    }));
-    // Persist status change to API
-    persistStatus(personId, weekStart, status, meta);
-    bump();
-  }, [accessToken, applyWeekStatusLocally, bump, persistStatus, weeks]);
+  }, [accessToken, applyWeekStatusLocally, persistStatus, projectStartDate, user?.id, weeks]);
 
   const batchApproveMonth = useCallback((personId: string, month: string, approverName: string): number => {
     let count = 0;
@@ -774,7 +961,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         .map(w => `${w.personId}:${w.weekStart}`)
     );
 
-    const created = mondays
+    const eligibleMondays = projectStartDate
+      ? mondays.filter(weekStart => !weekIsFullyBeforeProjectStart(weekStart, projectStartDate))
+      : mondays;
+
+    const created = eligibleMondays
       .filter(weekStart => !existingKeys.has(`${personId}:${weekStart}`))
       .map<StoredWeek>(weekStart => ({
         personId,
@@ -793,7 +984,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     bump();
 
     return created.length;
-  }, [bump, persistWeek, weeks]);
+  }, [bump, persistWeek, projectStartDate, weeks]);
 
   const submitMonthForPerson = useCallback((personId: string, month: string, projectId?: string): SubmissionEnvelope | null => {
     const personWeeks = weeks
@@ -804,6 +995,19 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     const submitCandidates = personWeeks.filter(w => w.status === 'draft' || w.status === 'rejected');
     if (submitCandidates.length === 0) return null;
+
+    if (projectStartDate) {
+      const blockedWeek = submitCandidates.find((week) =>
+        weekIsFullyBeforeProjectStart(week.weekStart, projectStartDate) ||
+        weekHasHoursBeforeProjectStart(week, projectStartDate)
+      );
+      if (blockedWeek) {
+        toast.error('Cannot submit month', {
+          description: `Week ${blockedWeek.weekLabel} contains dates before project start (${projectStartDate}).`,
+        });
+        return null;
+      }
+    }
 
     const periodStart = submitCandidates
       .map(w => w.weekStart)
@@ -853,7 +1057,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     bump();
     return envelope;
-  }, [weeks, persistStatus, bump]);
+  }, [weeks, persistStatus, bump, projectStartDate]);
 
   const getSubmissionEnvelopes = useCallback((personId?: string, month?: string): SubmissionEnvelope[] => {
     return submissionEnvelopes.filter(envelope => {

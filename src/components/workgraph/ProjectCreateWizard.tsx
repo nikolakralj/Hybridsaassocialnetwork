@@ -29,6 +29,7 @@ import {
   ChevronLeft, User, ArrowRight, Shield, Eye, Network, Sparkles,
   AlertTriangle, Info, Link2, Unlink, EyeOff,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { Project, ProjectMember, ProjectRole, WorkWeek } from '../../types/collaboration';
 import type { PartyType } from '../../types/workgraph';
@@ -49,55 +50,138 @@ export interface ProjectCreateWizardProps {
   open: boolean;
   onClose: () => void;
   onCreate?: (project: Partial<Project>, members: Partial<ProjectMember>[]) => Promise<void>;
-  onSuccess?: (projectId: string) => void;
+  onEditSave?: (payload: {
+    parties: PartyEntry[];
+    nodes: ReturnType<typeof generateGraphFromWizard>['nodes'];
+    edges: ReturnType<typeof generateGraphFromWizard>['edges'];
+  }) => Promise<void>;
+  onSuccess?: (projectId: string, projectStartDate?: string | null) => void;
+  editMode?: boolean;
+  initialParties?: PartyEntry[];
+  initialProjectName?: string;
 }
 
 type Step = 'basic' | 'supply-chain' | 'people' | 'review';
+const EMPTY_PARTIES: PartyEntry[] = [];
 
-const PARTY_TYPE_OPTIONS: { value: PartyType; label: string; desc: string; emoji: string; color: string }[] = [
-  { value: 'freelancer', emoji: '👤', label: 'Freelancer', desc: 'Independent worker', color: '#8b5cf6' },
-  { value: 'contractor', emoji: '🔧', label: 'Contractor', desc: 'Contracting company', color: '#6366f1' },
-  { value: 'company', emoji: '🏢', label: 'Company', desc: 'Employer / Staffing co', color: '#3b82f6' },
-  { value: 'agency', emoji: '🚀', label: 'Agency', desc: 'Recruiter / MSP', color: '#f59e0b' },
-  { value: 'client', emoji: '🌐', label: 'Client', desc: 'End client', color: '#10b981' },
+const PARTY_TYPE_OPTIONS: { value: PartyType; label: string; desc: string; color: string }[] = [
+  { value: 'freelancer', label: 'Freelancer', desc: 'Independent worker', color: '#8b5cf6' },
+  { value: 'contractor', label: 'Contractor', desc: 'Contracting company', color: '#6366f1' },
+  { value: 'company', label: 'Company', desc: 'Employer / Staffing co', color: '#3b82f6' },
+  { value: 'agency', label: 'Agency', desc: 'Recruiter / MSP', color: '#f59e0b' },
+  { value: 'client', label: 'Client', desc: 'End client', color: '#10b981' },
 ];
 
 function getPartyOption(type: PartyType) {
   return PARTY_TYPE_OPTIONS.find(o => o.value === type)!;
 }
 
+function getPartyIcon(type: PartyType): LucideIcon {
+  switch (type) {
+    case 'freelancer':
+      return User;
+    case 'contractor':
+      return Shield;
+    case 'company':
+      return Building2;
+    case 'agency':
+      return Network;
+    case 'client':
+      return Eye;
+    default:
+      return Building2;
+  }
+}
+
+function getDefaultWorkWeek(): WorkWeek {
+  return {
+    monday: true,
+    tuesday: true,
+    wednesday: true,
+    thursday: true,
+    friday: true,
+    saturday: false,
+    sunday: false,
+  };
+}
+
+function cloneParties(parties: PartyEntry[]): PartyEntry[] {
+  return parties.map((party) => ({
+    ...party,
+    billsTo: [...party.billsTo],
+    people: party.people.map((person) => ({ ...person })),
+  }));
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: ProjectCreateWizardProps) {
-  const [step, setStep] = useState<Step>('basic');
+export function ProjectCreateWizard({
+  open,
+  onClose,
+  onCreate,
+  onEditSave,
+  onSuccess,
+  editMode = false,
+  initialParties,
+  initialProjectName,
+}: ProjectCreateWizardProps) {
+  const safeInitialParties = useMemo(() => initialParties ?? EMPTY_PARTIES, [initialParties]);
+  const safeInitialProjectName = initialProjectName ?? '';
+  const steps: Step[] = editMode ? ['supply-chain', 'people'] : ['basic', 'supply-chain', 'people', 'review'];
+  const [step, setStep] = useState<Step>(editMode ? 'supply-chain' : 'basic');
   const [loading, setLoading] = useState(false);
   const { user, accessToken } = useAuth();
 
   // Step 1 state
   const [name, setName] = useState('');
-  const [region, setRegion] = useState<'US' | 'EU' | 'UK'>('US');
-  const [currency, setCurrency] = useState<'USD' | 'EUR' | 'GBP'>('USD');
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
-  const [workWeek, setWorkWeek] = useState<WorkWeek>({
-    monday: true, tuesday: true, wednesday: true, thursday: true,
-    friday: true, saturday: false, sunday: false,
-  });
+  const [workWeek, setWorkWeek] = useState<WorkWeek>(getDefaultWorkWeek);
 
   // Step 2 state
   const [parties, setParties] = useState<PartyEntry[]>([]);
   const [showCompanySearch, setShowCompanySearch] = useState(false);
   const [searchTargetPartyId, setSearchTargetPartyId] = useState<string | null>(null);
 
-  const steps: Step[] = ['basic', 'supply-chain', 'people', 'review'];
   const currentStepIndex = steps.indexOf(step);
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
 
   const handleNext = () => { if (currentStepIndex < steps.length - 1) setStep(steps[currentStepIndex + 1]); };
   const handleBack = () => { if (currentStepIndex > 0) setStep(steps[currentStepIndex - 1]); };
   const toggleWorkDay = (day: keyof WorkWeek) => setWorkWeek(prev => ({ ...prev, [day]: !prev[day] }));
+
+  const resetWizardState = useCallback(() => {
+    setStep(editMode ? 'supply-chain' : 'basic');
+    setName(editMode ? safeInitialProjectName : '');
+    setStartDate(undefined);
+    setEndDate(undefined);
+    setWorkWeek(getDefaultWorkWeek());
+    
+    if (editMode) {
+      setParties(cloneParties(safeInitialParties));
+    } else {
+      setParties([
+        {
+          id: 'your-org',
+          name: user?.user_metadata?.org_name || 'Your Organization',
+          partyType: (user?.user_metadata?.org_type as PartyType) || 'agency',
+          billsTo: [],
+          organizationId: user?.id,
+          people: [{ id: user?.id || 'me', name: user?.user_metadata?.full_name || 'Me', email: user?.email || '', canApprove: false }],
+          isCreator: true,
+        }
+      ]);
+    }
+    setShowCompanySearch(false);
+    setSearchTargetPartyId(null);
+  }, [editMode, safeInitialParties, safeInitialProjectName, user]);
+
+  useEffect(() => {
+    if (!open) return;
+    resetWizardState();
+  }, [open, resetWizardState]);
 
   // ---- Party management ----
   const addParty = useCallback((partyType: PartyType, orgData?: any) => {
@@ -109,11 +193,11 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
       organizationId: orgData?.id,
       logo: orgData?.logo,
       people: [],
-      isCreator: parties.length === 0,
+      isCreator: false,
     };
     setParties(prev => [...prev, newParty]);
     return newParty.id;
-  }, [parties.length]);
+  }, []);
 
   const updateParty = useCallback((id: string, updates: Partial<PartyEntry>) => {
     setParties(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
@@ -165,19 +249,36 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
   async function handleCreate() {
     setLoading(true);
     try {
+      if (editMode) {
+        if (!onEditSave) {
+          throw new Error('Edit supply chain handler is not configured.');
+        }
+
+        await onEditSave({
+          parties: cloneParties(parties),
+          nodes: generatedGraph.nodes,
+          edges: generatedGraph.edges,
+        });
+        onClose();
+        resetWizardState();
+        return;
+      }
+
       const allMembers = parties.flatMap(party =>
         party.people.map(person => ({
+          id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          userId: person.id && person.id.match(/^[0-9a-f-]{36}$/) ? person.id : undefined,
           userName: person.name,
           userEmail: person.email,
           role: (person.canApprove ? 'Editor' : 'Contributor') as ProjectRole,
+          scope: party.id,
+          graphNodeId: person.id,
         }))
       );
 
       if (onCreate) {
         await onCreate({
           name,
-          region,
-          currency,
           startDate: startDate?.toISOString(),
           endDate: endDate?.toISOString(),
           workWeek,
@@ -186,12 +287,24 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
         }, allMembers);
       } else {
         const result = await createProject({
-          name, description: '', region, currency,
+          name, description: '', region: 'EU',
           startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
-          ownerName: user?.name || 'Project Owner', ownerEmail: user?.email || '',
+          ownerName: user?.user_metadata?.full_name || user?.email || 'Project Owner',
+          ownerEmail: user?.email || '',
+          ownerId: user?.id,
+          parties: parties.map(p => ({
+            id: p.id, name: p.name, partyType: p.partyType,
+            billsTo: p.billsTo,
+            people: p.people.map(person => ({
+              id: person.id,
+              name: person.name,
+              email: person.email,
+              canApprove: person.canApprove,
+            })),
+          })),
           status: isDraftProject ? 'draft' : 'active',
           supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
-          members: allMembers.map(m => ({ userName: m.userName, userEmail: m.userEmail, role: m.role })),
+          members: allMembers,
         }, accessToken);
 
         const graph = generateGraphFromWizard(parties, name);
@@ -205,20 +318,55 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
           }, accessToken);
         } catch (e) { console.error('Failed to save graph:', e); }
 
+        // Write approval-dir to sessionStorage immediately so Timesheets tab
+        // can resolve approval routes without requiring the Graph tab to load first.
+        const approvalParties = parties.map(p => ({
+          id: p.id,
+          name: p.name,
+          partyType: p.partyType,
+          billsTo: p.billsTo,
+          people: p.people.map(person => ({
+            id: person.id,
+            name: person.name,
+            email: person.email,
+            canApprove: person.canApprove,
+          })),
+        }));
+        sessionStorage.setItem(
+          `workgraph-approval-dir:${result.project.id}`,
+          JSON.stringify({ parties: approvalParties })
+        );
+
         sessionStorage.setItem('currentProjectName', name);
+        if (startDate) {
+          sessionStorage.setItem('currentProjectStartDate', startDate.toISOString());
+        } else {
+          sessionStorage.removeItem('currentProjectStartDate');
+        }
+        if (typeof window !== 'undefined') {
+          const detail = {
+            projectId: result.project.id,
+            projectName: name,
+            projectStartDate: startDate ? startDate.toISOString() : null,
+          };
+          window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
+          window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
+        }
         toast.success(isDraftProject ? 'Draft project created!' : 'Project created!', {
           description: isDraftProject
             ? 'You can add more parties and connect the chain later from the workspace.'
             : `${graph.nodes.length} graph nodes generated.`,
         });
-        if (onSuccess) onSuccess(result.project.id);
+        if (onSuccess) onSuccess(result.project.id, startDate ? startDate.toISOString() : null);
       }
 
       onClose();
-      setTimeout(() => { setStep('basic'); setName(''); setStartDate(undefined); setEndDate(undefined); setParties([]); }, 500);
+      setTimeout(() => { resetWizardState(); }, 500);
     } catch (error) {
-      console.error('Failed to create project:', error);
-      toast.error('Failed to create project', { description: error instanceof Error ? error.message : 'Please try again' });
+      console.error(`Failed to ${editMode ? 'update supply chain' : 'create project'}:`, error);
+      toast.error(editMode ? 'Failed to update supply chain' : 'Failed to create project', {
+        description: error instanceof Error ? error.message : 'Please try again',
+      });
     } finally {
       setLoading(false);
     }
@@ -234,23 +382,25 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="!max-w-[95vw] lg:!max-w-6xl !max-h-[90vh] !grid !grid-rows-[auto_auto_auto_1fr_auto] overflow-hidden !w-[95vw] lg:!w-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Network className="w-5 h-5 text-accent-brand" />
-              Create New Project
+        <DialogContent className="!max-w-[96vw] lg:!max-w-6xl !max-h-[92vh] !grid !grid-rows-[auto_auto_auto_1fr_auto] overflow-hidden !w-[96vw] lg:!w-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-b from-white to-slate-50/70 dark:from-slate-950 dark:to-slate-950 shadow-2xl">
+          <DialogHeader className="pb-1">
+            <DialogTitle className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+              <Network className="w-5 h-5 text-blue-600" />
+              {editMode ? 'Edit Supply Chain' : 'Create New Project'}
             </DialogTitle>
-            <DialogDescription className="text-xs">
-              Define your supply chain, assign people, and auto-generate the WorkGraph
+            <DialogDescription className="text-sm text-slate-600 dark:text-slate-400">
+              {editMode
+                ? 'Update parties and people, then merge the new supply chain into the current WorkGraph'
+                : 'Define your supply chain, assign people, and auto-generate the WorkGraph'}
             </DialogDescription>
           </DialogHeader>
 
           {/* Progress */}
-          <div className="space-y-1.5">
-            <Progress value={progress} className="h-1.5" />
-            <div className="flex justify-between text-[10px] text-muted-foreground">
-              {['Basics', 'Supply Chain', 'People', 'Review'].map((s, i) => (
-                <span key={s} className={currentStepIndex === i ? 'font-semibold text-foreground' : ''}>{s}</span>
+          <div className="space-y-2">
+            <Progress value={progress} className="h-2 bg-slate-200/70 dark:bg-slate-800" />
+            <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              {(editMode ? ['Supply Chain', 'People'] : ['Basics', 'Supply Chain', 'People', 'Review']).map((s, i) => (
+                <span key={s} className={currentStepIndex === i ? 'font-semibold text-slate-900 dark:text-slate-100' : 'font-medium'}>{s}</span>
               ))}
             </div>
           </div>
@@ -260,11 +410,11 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
           {/* Content — side by side */}
           <div className="min-h-0 flex gap-4 overflow-hidden">
             {/* Left: controls */}
-            <div className="flex-[3] min-w-0 overflow-y-auto pr-2">
+            <div className="flex-[3] min-w-0 overflow-y-auto pr-2 rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/80 dark:bg-slate-950/50 p-4">
               {step === 'basic' && (
                 <BasicInfoStep
-                  name={name} setName={setName} region={region} setRegion={setRegion}
-                  currency={currency} setCurrency={setCurrency} startDate={startDate}
+                  name={name} setName={setName}
+                  startDate={startDate}
                   setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate}
                   workWeek={workWeek} toggleWorkDay={toggleWorkDay}
                 />
@@ -282,7 +432,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
                   updateParty={updateParty} />
               )}
               {step === 'review' && (
-                <ReviewStep name={name} region={region} currency={currency}
+                <ReviewStep name={name} 
                   startDate={startDate} endDate={endDate} workWeek={workWeek}
                   parties={parties} generatedGraph={generatedGraph}
                   validationErrors={validationErrors} isDraftProject={isDraftProject} />
@@ -290,12 +440,12 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
             </div>
 
             {/* Right: always-visible live graph */}
-            <div className="flex-[2] min-w-[240px] max-w-[320px] flex-shrink-0 flex flex-col min-h-0">
+            <div className="flex-[2] min-w-[250px] max-w-[340px] flex-shrink-0 flex flex-col min-h-0">
               <SideGraphPreview parties={parties} step={step} generatedGraph={generatedGraph} />
             </div>
           </div>
 
-          <DialogFooter className="gap-2 pt-2 border-t border-border">
+          <DialogFooter className="gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             {currentStepIndex > 0 && (
               <Button variant="outline" size="sm" onClick={handleBack}>
                 <ChevronLeft className="w-4 h-4 mr-1" /> Back
@@ -303,15 +453,18 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
             )}
             <div className="flex-1" />
             {currentStepIndex < steps.length - 1 ? (
-              <Button size="sm" onClick={handleNext} disabled={!canProceed[step]}>
+              <Button size="sm" className="px-4" onClick={handleNext} disabled={!canProceed[step]}>
                 Next <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : (
-              <Button size="sm" onClick={handleCreate} disabled={loading}>
+              <Button size="sm" className="px-4 shadow-sm" onClick={handleCreate} disabled={loading}>
                 {loading ? (
-                  <><div className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full mr-2" />Creating...</>
+                  <><div className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full mr-2" />{editMode ? 'Saving...' : 'Creating...'}</>
                 ) : (
-                  <><Sparkles className="w-4 h-4 mr-2" />{isDraftProject ? 'Create Draft Project' : 'Create Project &amp; Generate Graph'}</>
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {editMode ? 'Save Supply Chain' : (isDraftProject ? 'Create Draft Project' : 'Create Project &amp; Generate Graph')}
+                  </>
                 )}
               </Button>
             )}
@@ -338,7 +491,7 @@ export function ProjectCreateWizard({ open, onClose, onCreate, onSuccess }: Proj
 // Step 1: Basic Info
 // ============================================================================
 
-function BasicInfoStep({ name, setName, region, setRegion, currency, setCurrency,
+function BasicInfoStep({ name, setName,
   startDate, setStartDate, endDate, setEndDate, workWeek, toggleWorkDay }: any) {
   return (
     <div className="space-y-5">
@@ -347,30 +500,7 @@ function BasicInfoStep({ name, setName, region, setRegion, currency, setCurrency
         <Input id="name" value={name} onChange={(e: any) => setName(e.target.value)}
           placeholder="e.g., Website Redesign Q1 2026" autoFocus className="h-9" />
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Region</Label>
-          <Select value={region} onValueChange={setRegion}>
-            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="US">United States</SelectItem>
-              <SelectItem value="EU">European Union</SelectItem>
-              <SelectItem value="UK">United Kingdom</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Currency</Label>
-          <Select value={currency} onValueChange={setCurrency}>
-            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="USD">USD ($)</SelectItem>
-              <SelectItem value="EUR">EUR (€)</SelectItem>
-              <SelectItem value="GBP">GBP (£)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <Label className="text-xs">Start Date *</Label>
@@ -405,7 +535,7 @@ function BasicInfoStep({ name, setName, region, setRegion, currency, setCurrency
         <Label className="text-xs">Work Week</Label>
         <div className="flex gap-1.5">
           {(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const).map(day => (
-            <button key={day} onClick={() => toggleWorkDay(day)}
+            <button type="button" key={day} onClick={() => toggleWorkDay(day)}
               className={`flex-1 py-1.5 px-1 rounded text-[10px] font-semibold border-2 transition-all ${
                 workWeek[day] ? 'border-blue-500 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-200'
                   : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-400'}`}>
@@ -433,12 +563,11 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
   return (
     <div className="space-y-5">
       {/* Info */}
-      <div className="p-2.5 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+      <div className="p-3 bg-blue-50/80 dark:bg-blue-950/30 rounded-xl border border-blue-200/80 dark:border-blue-800/70">
         <div className="flex gap-2 items-start">
           <Info className="w-3.5 h-3.5 text-blue-600 mt-0.5 flex-shrink-0" />
-          <p className="text-[11px] text-blue-700 dark:text-blue-300">
-            Add each organization, then connect them with <strong>"bills to"</strong> relationships.
-            Any structure works — linear chains, parallel agencies, direct freelancer→client, diamonds, etc.
+          <p className="text-xs leading-relaxed text-blue-800 dark:text-blue-300">
+            You're sketching the billing structure of this project. <strong>First party = your organization.</strong> Add the other organizations in the chain — agencies, clients, contractors. Real people join their respective party via invitation after the project is created.
           </p>
         </div>
       </div>
@@ -462,16 +591,24 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
 
       {/* Add party */}
       <div className="space-y-3">
-        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add party</Label>
+        <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-[0.12em]">Invite other parties</Label>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-          {PARTY_TYPE_OPTIONS.map(opt => (
-            <button key={opt.value} onClick={() => addParty(opt.value)}
-              className="flex flex-col items-center justify-center p-3 rounded-xl border border-border/60 bg-card hover:bg-white dark:hover:bg-slate-900 shadow-sm hover:shadow-md hover:border-blue-400/50 hover:-translate-y-0.5 transition-all group text-center gap-1.5 relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-10 transition-opacity duration-300" style={{ backgroundImage: `linear-gradient(to bottom right, transparent, ${opt.color})` }} />
-              <span className="text-2xl drop-shadow-sm group-hover:scale-110 transition-transform duration-300">{opt.emoji}</span>
-              <span className="text-[11px] font-bold text-foreground group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">{opt.label}</span>
-            </button>
-          ))}
+          {PARTY_TYPE_OPTIONS.map(opt => {
+            const Icon = getPartyIcon(opt.value);
+            return (
+              <button type="button" key={opt.value} onClick={() => addParty(opt.value)}
+                className="flex flex-col items-start justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all group text-left gap-2 relative overflow-hidden min-h-[104px]">
+                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: `linear-gradient(135deg, ${opt.color}14, transparent 55%)` }} />
+                <div className="h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+                  <Icon className="w-4 h-4" style={{ color: opt.color }} />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">{opt.label}</div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">{opt.desc}</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -498,7 +635,12 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
       <div className="absolute left-0 top-0 bottom-0 w-1 opacity-70 transition-all duration-300 group-hover:w-1.5" style={{ backgroundColor: opt.color }} />
       {/* Header row */}
       <div className="flex items-center gap-2 px-3 py-2">
-        <span className="text-base flex-shrink-0">{opt.emoji}</span>
+        <div className="h-7 w-7 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center flex-shrink-0">
+          {(() => {
+            const Icon = getPartyIcon(party.partyType);
+            return <Icon className="w-3.5 h-3.5" style={{ color: opt.color }} />;
+          })()}
+        </div>
         <Input value={party.name} onChange={(e: any) => onUpdate({ name: e.target.value })}
           placeholder={`${opt.label} name...`} className="h-8 text-sm font-semibold flex-1 border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none placeholder:font-normal" />
         <Select value={party.partyType} onValueChange={(v: string) => onUpdate({ partyType: v as PartyType })}>
@@ -508,7 +650,13 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
           <SelectContent>
             {PARTY_TYPE_OPTIONS.map(o => (
               <SelectItem key={o.value} value={o.value}>
-                <span className="flex items-center gap-1.5"><span>{o.emoji}</span><span>{o.label}</span></span>
+                <span className="flex items-center gap-1.5">
+                  {(() => {
+                    const Icon = getPartyIcon(o.value);
+                    return <Icon className="w-3.5 h-3.5" />;
+                  })()}
+                  <span>{o.label}</span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
@@ -537,7 +685,10 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
                       : 'bg-muted/30 border-transparent text-muted-foreground hover:border-emerald-200 hover:bg-emerald-50/50 dark:hover:bg-emerald-900/20'
                   }`}>
                   {connected ? <Link2 className="w-3 h-3 text-emerald-600" /> : <Unlink className="w-3 h-3 opacity-40" />}
-                  <span>{tOpt.emoji}</span>
+                  {(() => {
+                    const Icon = getPartyIcon(target.partyType);
+                    return <Icon className="w-3 h-3" />;
+                  })()}
                   <span className="max-w-[80px] truncate">{target.name || tOpt.label}</span>
                 </button>
               );
@@ -550,7 +701,7 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
       <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] text-muted-foreground border-t border-border/50">
         <Users className="w-3 h-3" />
         <span>{party.people.length} people</span>
-        {party.isCreator && <Badge variant="secondary" className="text-[9px] h-4 ml-auto">Your org</Badge>}
+        {party.isCreator && <Badge className="text-[9px] h-4 ml-auto bg-blue-100 text-blue-700 border-blue-200">You</Badge>}
       </div>
     </div>
   );
@@ -655,7 +806,7 @@ function MiniGraphPreview({ parties }: { parties: PartyEntry[] }) {
                   fill="white" stroke={opt.color} strokeWidth="1.5" />
                 <text x={pos.x + 8} y={pos.y + nodeH / 2 + 1} fontSize="10"
                   dominantBaseline="middle" fill="#374151" fontWeight="500">
-                  {opt.emoji} {(p.name || opt.label).slice(0, 12)}{(p.name || opt.label).length > 12 ? '…' : ''}
+                  {(p.name || opt.label).slice(0, 14)}{(p.name || opt.label).length > 14 ? '...' : ''}
                 </text>
                 {/* People count badge */}
                 {p.people.length > 0 && (
@@ -741,7 +892,10 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
       <div className="px-3 py-2 bg-muted/30 border-b flex items-center gap-2">
-        <span>{opt.emoji}</span>
+        {(() => {
+          const Icon = getPartyIcon(party.partyType);
+          return <Icon className="w-3.5 h-3.5" style={{ color: opt.color }} />;
+        })()}
         <span className="text-xs font-semibold">{party.name || opt.label}</span>
         <div className="ml-auto flex items-center gap-2">
           <TooltipProvider>
@@ -842,9 +996,9 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
 // Step 4: Review with mini-graph
 // ============================================================================
 
-function ReviewStep({ name, region, currency, startDate, endDate, workWeek,
+function ReviewStep({ name, region, startDate, endDate, workWeek,
   parties, generatedGraph, validationErrors, isDraftProject }: {
-  name: string; region: string; currency: string;
+  name: string; region: string;
   startDate?: Date; endDate?: Date; workWeek: WorkWeek;
   parties: PartyEntry[]; generatedGraph: { nodes: any[]; edges: any[] };
   validationErrors: string[];
@@ -886,7 +1040,7 @@ function ReviewStep({ name, region, currency, startDate, endDate, workWeek,
         <div className="p-3 bg-muted/30 rounded-lg space-y-1.5">
           <h4 className="text-xs font-semibold">Project</h4>
           <Row label="Name" value={name} />
-          <Row label="Region / Currency" value={`${region} / ${currency}`} />
+          <Row label="Region" value={region} />
           <Row label="Start" value={startDate ? format(startDate, 'PP') : '—'} />
           {endDate && <Row label="End" value={format(endDate, 'PP')} />}
           <Row label="Work days" value={workDays.join(' ')} />
@@ -1066,7 +1220,7 @@ function SideGraphPreview({ parties, step, generatedGraph }: { parties: PartyEnt
                     fill="white" stroke={opt.color} strokeWidth="1.5" filter="url(#node-shadow)" className="dark:fill-slate-900" />
                   <text x={pos.x + 8} y={pos.y + nodeH / 2 + 1} fontSize="10"
                     dominantBaseline="middle" fill="#1e293b" className="dark:fill-slate-200" fontWeight="600">
-                    {opt.emoji} {label.slice(0, maxChars)}{label.length > maxChars ? '…' : ''}
+                    {label.slice(0, maxChars)}{label.length > maxChars ? '...' : ''}
                   </text>
                   {p.people.length > 0 && (
                     <g>

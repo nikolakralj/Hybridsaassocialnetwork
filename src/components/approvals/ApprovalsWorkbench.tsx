@@ -32,6 +32,13 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "../ui/sheet";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -40,10 +47,12 @@ import {
 } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../ui/utils";
+import type { ApprovalSubjectSnapshot } from "../../utils/api/approvals-supabase";
 
 export interface UIApprovalItem {
   id: string;
   objectType: "timesheet" | "expense" | "invoice" | "contract" | "deliverable" | string;
+  notes?: string | null;
   project: {
     id: string;
     name: string;
@@ -62,6 +71,16 @@ export interface UIApprovalItem {
   hours: number;
   amount: number | null;
   canViewRates: boolean;
+  currentApproverName?: string;
+  submitterOrg?: string;
+  routeLabel?: string;
+  approvalTrail?: Array<{
+    approvalLayer: number;
+    approverName: string;
+    status: "pending" | "approved" | "rejected" | "changes_requested";
+    submittedAt?: string;
+    decidedAt?: string;
+  }>;
   gating: {
     blocked: boolean;
     reasons: string[];
@@ -71,17 +90,22 @@ export interface UIApprovalItem {
   };
   submittedAt: string;
   status: "pending" | "approved" | "rejected" | "changes_requested";
+  subjectSnapshot?: ApprovalSubjectSnapshot | null;
 }
 
 interface ApprovalsWorkbenchProps {
   projectFilter?: string;
   statusFilter?: "all" | "pending" | "approved" | "rejected";
   viewerNodeId?: string;
+  viewerName?: string;
+  viewScope?: "inbox" | "submitted" | "all";
   embedded?: boolean;
 }
 
 type WorkbenchStatus = "all" | "pending" | "approved" | "rejected";
 type SortOrder = "newest" | "oldest" | "priority";
+type NameDirEntry = { name?: string; type?: string; orgId?: string };
+type ApprovalDirParty = { id: string; name?: string };
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -96,10 +120,31 @@ const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 });
 
+function readSessionJson<T>(key: string): T | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSubmitterOrgName(projectId: string | undefined, submitterId: string | undefined): string | undefined {
+  if (!projectId || !submitterId) return undefined;
+  const nameDir = readSessionJson<Record<string, NameDirEntry>>(`workgraph-name-dir:${projectId}`) || {};
+  const approvalDir = readSessionJson<{ parties?: ApprovalDirParty[] }>(`workgraph-approval-dir:${projectId}`);
+  const orgId = nameDir[submitterId]?.orgId;
+  if (!orgId) return undefined;
+  return (approvalDir?.parties || []).find((party) => party.id === orgId)?.name || nameDir[orgId]?.name || orgId;
+}
+
 export function ApprovalsWorkbench({
   projectFilter,
   statusFilter: externalStatusFilter,
   viewerNodeId,
+  viewerName,
+  viewScope = "inbox",
   embedded = false,
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
@@ -108,16 +153,27 @@ export function ApprovalsWorkbench({
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showGraphModal, setShowGraphModal] = useState(false);
   const [selectedGraphItem, setSelectedGraphItem] = useState<UIApprovalItem | null>(null);
+  const [selectedDetailItem, setSelectedDetailItem] = useState<UIApprovalItem | null>(null);
   const [rejectingItem, setRejectingItem] = useState<UIApprovalItem | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<WorkbenchStatus>(externalStatusFilter ?? "pending");
+  const [statusFilter, setStatusFilter] = useState<WorkbenchStatus>(externalStatusFilter ?? "all");
   const [sortBy, setSortBy] = useState<SortOrder>("newest");
   const [refreshing, setRefreshing] = useState(false);
   const [approvingItemId, setApprovingItemId] = useState<string | null>(null);
   const [bulkApproving, setBulkApproving] = useState(false);
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
+
+  const notifyApprovalMutation = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent("workgraph-approvals-updated", {
+      detail: {
+        projectId: projectFilter || null,
+        at: new Date().toISOString(),
+      },
+    }));
+  };
 
   const effectiveStatusFilter = externalStatusFilter ?? statusFilter;
 
@@ -140,39 +196,76 @@ export function ApprovalsWorkbench({
         status: effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
         subjectType: typeFilter === "all" ? undefined : (typeFilter as ApprovalQueueFilters["subjectType"]),
         projectId: projectFilter,
-        approverNodeId: viewerNodeId || undefined,
-        approverUserId: !viewerNodeId ? user?.id : undefined,
+        approverNodeId: viewScope === "inbox" ? (viewerNodeId || undefined) : undefined,
+        approverUserId: viewScope === "inbox" && !viewerNodeId ? user?.id : undefined,
+        submitterUserId: viewScope === "submitted" ? user?.id : undefined,
       };
 
       const data = await getApprovalQueue(filters);
 
-      const transformedItems = (data || []).map((item) => ({
+      const transformedItems = (data || []).map((item) => {
+        const subjectSnapshot = item.subjectSnapshot || null;
+        const snapshotStart = subjectSnapshot?.periodStart || "";
+        const snapshotEnd = subjectSnapshot?.periodEnd || "";
+        const snapshotHours = typeof subjectSnapshot?.hours === "number" ? subjectSnapshot.hours : undefined;
+        const snapshotBillableHours = typeof subjectSnapshot?.billableHours === "number" ? subjectSnapshot.billableHours : undefined;
+        // Parse weekStart from subjectId format "personId:YYYY-MM-DD"
+        const subjectParts = (item.subjectId || "").split(":");
+        const parsedWeekStart = subjectParts.length >= 2
+          ? subjectParts[subjectParts.length - 1]
+          : "";
+        const parsedWeekEnd = parsedWeekStart
+          ? (() => {
+              const d = new Date(parsedWeekStart);
+              d.setDate(d.getDate() + 4);
+              return d.toISOString().slice(0, 10);
+            })()
+          : "";
+
+        // Resolve submitter name: use timesheetData if available, else approverName as party label
+        const weekStart = item.timesheetData?.weekStart || snapshotStart || parsedWeekStart;
+        const weekEnd = item.timesheetData?.weekEnd || snapshotEnd || parsedWeekEnd;
+        const submitterName = subjectSnapshot?.submitterName
+          || item.timesheetData?.contractorName
+          || subjectSnapshot?.title
+          || (item.subjectType === "timesheet" ? "Submitted timesheet" : "Unknown");
+        const submitterOrgName = subjectSnapshot?.submitterOrg
+          || resolveSubmitterOrgName(item.projectId, item.timesheetData?.submitterId || subjectSnapshot?.submitterId);
+        const totalHours = snapshotHours ?? item.timesheetData?.totalHours ?? 0;
+
+        return ({
         id: item.id,
         objectType: item.subjectType,
+        notes: item.notes,
         project: {
           id: item.projectId,
-          name: item.projectName || "Unknown Project",
+          name: item.projectName || item.projectId || "Unknown Project",
         },
         stepOrder: item.approvalLayer,
         totalSteps: item.approvalLayer,
         policyVersion: 1,
-        partyId: item.approverUserId,
+        partyId: item.approverNodeId || item.approverUserId,
         partyName: item.approverName,
         period: {
-          start: item.timesheetData?.weekStart || "",
-          end: item.timesheetData?.weekEnd || "",
+          start: weekStart,
+          end: weekEnd,
         },
         person: {
-          id: item.approverUserId,
-          name: item.timesheetData?.contractorName || "Unknown",
-          role: "Contractor",
+          id: subjectSnapshot?.submitterId || item.approverUserId,
+          name: submitterName,
+          role: submitterOrgName || "Unknown organization",
         },
-        hours: item.timesheetData?.totalHours || 0,
+        hours: totalHours,
         amount:
-          item.timesheetData?.hourlyRate && item.timesheetData?.totalHours
-            ? item.timesheetData.totalHours * item.timesheetData.hourlyRate
-            : null,
-        canViewRates: !!item.timesheetData?.hourlyRate,
+          subjectSnapshot?.amount ??
+          (item.timesheetData?.hourlyRate && totalHours
+            ? totalHours * item.timesheetData.hourlyRate
+            : null),
+        canViewRates: subjectSnapshot?.canViewRates ?? !!item.timesheetData?.hourlyRate,
+        currentApproverName: subjectSnapshot?.currentApproverName || item.approverName,
+        submitterOrg: subjectSnapshot?.submitterOrg || submitterOrgName || "Unknown organization",
+        routeLabel: subjectSnapshot?.routeLabel,
+        approvalTrail: item.approvalTrail,
         gating: {
           blocked: false,
           reasons: [],
@@ -182,7 +275,9 @@ export function ApprovalsWorkbench({
         },
         submittedAt: item.submittedAt || new Date().toISOString(),
         status: item.status,
-      }));
+        subjectSnapshot,
+        });
+      });
 
       setItems(transformedItems);
     } catch (error) {
@@ -272,6 +367,7 @@ export function ApprovalsWorkbench({
     try {
       await approveItem(itemId, { approvedBy: user?.id || "current-user" });
       toast.success("Approval recorded");
+      notifyApprovalMutation();
       await loadApprovals();
     } catch (error) {
       toast.error("Failed to approve");
@@ -302,6 +398,7 @@ export function ApprovalsWorkbench({
         reason: rejectReason.trim(),
       });
       toast.success("Rejection recorded");
+      notifyApprovalMutation();
       closeRejectDialog(true);
       await loadApprovals();
     } catch (error) {
@@ -323,6 +420,7 @@ export function ApprovalsWorkbench({
       });
       toast.success(`Approved ${selectedItems.size} item${selectedItems.size === 1 ? "" : "s"}`);
       setSelectedItems(new Set());
+      notifyApprovalMutation();
       await loadApprovals();
     } catch (error) {
       toast.error("Failed to bulk approve");
@@ -336,13 +434,17 @@ export function ApprovalsWorkbench({
     setShowGraphModal(true);
   };
 
+  const handleViewDetails = (item: UIApprovalItem) => {
+    setSelectedDetailItem(item);
+  };
+
   const clearFilters = () => {
     setSearchQuery("");
     setTypeFilter("all");
     setSortBy("newest");
 
     if (!externalStatusFilter) {
-      setStatusFilter("pending");
+      setStatusFilter("all");
     }
   };
 
@@ -390,10 +492,14 @@ export function ApprovalsWorkbench({
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="m-0 text-2xl font-semibold tracking-tight text-foreground">
-              {projectFilter ? "Project approvals" : "Approvals workbench"}
+              {viewScope === "submitted"
+                ? (projectFilter ? "Submission history" : "My submissions")
+                : (projectFilter ? "Project approvals" : "Approvals workbench")}
             </h2>
             <p className="mt-1 mb-0 text-sm text-muted-foreground">
-              Review and resolve approval requests with pending work kept at the front of the queue.
+              {viewScope === "submitted"
+                ? "Review what you submitted and see the full approval trail after decisions are made."
+                : "Review and resolve approval requests with pending work kept at the front of the queue."}
             </p>
           </div>
         </div>
@@ -426,23 +532,31 @@ export function ApprovalsWorkbench({
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 <Button
                   size="sm"
-                  variant={statusFilter === "pending" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("pending")}
-                  className="rounded-full"
-                >
-                  Pending first
-                </Button>
-                <Button
-                  size="sm"
                   variant={statusFilter === "all" ? "default" : "outline"}
                   onClick={() => setStatusFilter("all")}
                   className="rounded-full"
                 >
                   All statuses
                 </Button>
+                <Button
+                  size="sm"
+                  variant={statusFilter === "pending" ? "default" : "outline"}
+                  onClick={() => setStatusFilter("pending")}
+                  className="rounded-full"
+                >
+                  Pending first
+                </Button>
               </div>
             )}
           </div>
+
+          {effectiveStatusFilter === "pending" && (
+            <p className="m-0 text-xs text-muted-foreground">
+              {viewScope === "submitted"
+                ? "Showing submitted items only. Switch to All statuses to see the full approval trail for your submissions."
+                : "Showing pending items only. Switch to All statuses to see approved/rejected history."}
+            </p>
+          )}
 
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative w-full xl:max-w-xl">
@@ -567,6 +681,11 @@ export function ApprovalsWorkbench({
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                Approvers can review items row-by-row or bulk approve a whole month. Open a detail packet for context, keep the
+                table as the fast scan surface, and use history for the audit trail.
+              </div>
+
               <div className="rounded-xl border border-border/60 bg-background/80 px-4 py-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
@@ -586,167 +705,148 @@ export function ApprovalsWorkbench({
                 </div>
               </div>
 
-              {filteredItems.map((item) => {
-                const isPending = item.status === "pending";
-                const isBlocked = item.gating.blocked;
-                const isSelectable = isPending && !isBlocked;
-                const isApproving = approvingItemId === item.id;
-                const showAmount = item.canViewRates && item.amount !== null;
-
-                return (
-                  <div
-                    key={item.id}
-                    className="rounded-xl border border-border/60 bg-background/90 p-4 shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]"
-                  >
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <Checkbox
-                          checked={selectedItems.has(item.id)}
-                          onCheckedChange={() => handleToggleItem(item.id)}
-                          disabled={!isSelectable}
-                          className="mt-1"
-                        />
-
-                        <div className="min-w-0 flex-1 space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="m-0 text-sm font-semibold text-foreground">
-                              {formatObjectType(item.objectType)} approval
-                            </h3>
-                            <Badge
-                              variant={
-                                item.status === "approved"
-                                  ? "default"
-                                  : item.status === "rejected"
-                                    ? "destructive"
-                                    : "secondary"
-                              }
-                              className="capitalize"
-                            >
-                              {item.status.replace("_", " ")}
-                            </Badge>
-                            <Badge variant="outline" className="text-[11px]">
-                              Step {item.stepOrder} of {item.totalSteps}
-                            </Badge>
-                            {item.sla.breached && (
-                              <Badge variant="destructive" className="text-[11px]">
-                                SLA breached
-                              </Badge>
-                            )}
-                            {isBlocked && (
-                              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
-                                Action blocked
-                              </Badge>
-                            )}
-                          </div>
-
-                          <div className="space-y-1">
-                            <p className="m-0 text-sm text-muted-foreground">
-                              <span className="font-medium text-foreground">{item.person.name}</span> in{" "}
-                              <span className="font-medium text-foreground">{item.project.name}</span>
-                            </p>
-                            {item.person.role && (
-                              <p className="m-0 text-xs text-muted-foreground">{item.person.role}</p>
-                            )}
-                          </div>
-
-                          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
-                            <div className="rounded-lg bg-muted/40 px-3 py-2">
-                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                                Submitted
-                              </p>
-                              <p className="mt-1 mb-0 flex items-center gap-1.5 text-sm text-foreground">
-                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                                {formatDate(item.submittedAt)}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-muted/40 px-3 py-2">
-                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                                Current approver
-                              </p>
-                              <p className="mt-1 mb-0 text-sm text-foreground">{item.partyName || "Unassigned"}</p>
-                            </div>
-
-                            <div className="rounded-lg bg-muted/40 px-3 py-2">
-                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                                Period
-                              </p>
-                              <p className="mt-1 mb-0 text-sm text-foreground">
-                                {formatPeriod(item.period.start, item.period.end)}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-muted/40 px-3 py-2">
-                              <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                                Summary
-                              </p>
-                              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground">
-                                <span>{item.hours} hours</span>
-                                {showAmount ? (
-                                  <span>{currencyFormatter.format(item.amount)}</span>
-                                ) : (
-                                  <span className="text-muted-foreground">Rate masked</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {isBlocked && item.gating.reasons.length > 0 && (
-                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                              <span>{item.gating.reasons.join(", ")}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex w-full flex-col gap-2 xl:w-[220px] xl:shrink-0">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleViewGraph(item)}
-                          className="h-9 w-full justify-center xl:justify-start"
+              <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/90">
+                <table className="w-full min-w-[1240px] border-collapse text-sm">
+                  <thead className="sticky top-0 z-10 bg-background/95 text-left backdrop-blur supports-[backdrop-filter]:bg-background/85">
+                    <tr className="border-b border-border/60">
+                      <th className="px-3 py-2.5 w-[42px]"></th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Type</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Person</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Organization</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Project</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Period</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Hours / Amount</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Current Approver</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Submitted</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Status</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredItems.map((item) => {
+                      const isPending = item.status === "pending";
+                      const isBlocked = item.gating.blocked;
+                      const isSelectable = isPending && !isBlocked;
+                      const isApproving = approvingItemId === item.id;
+                      const showAmount = item.canViewRates && item.amount !== null;
+                      return (
+                        <tr
+                          key={item.id}
+                          className="border-b border-border/50 last:border-0 transition-colors hover:bg-muted/10 even:bg-muted/[0.03]"
                         >
-                          <Eye className="h-4 w-4" />
-                          View path
-                        </Button>
-
-                        {isPending ? (
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                            <Button
-                              size="sm"
-                              onClick={() => void handleApprove(item.id)}
-                              className="h-9 w-full bg-emerald-600 hover:bg-emerald-700"
-                              disabled={isBlocked || isApproving}
-                            >
-                              {isApproving ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <CheckCircle className="h-4 w-4" />
-                              )}
-                              {isBlocked ? "Blocked" : "Approve"}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => openRejectDialog(item)}
-                              className="h-9 w-full"
-                              disabled={isApproving}
-                            >
-                              <XCircle className="h-4 w-4" />
-                              Reject
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                            This request is {item.status.replace("_", " ")}.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                          <td className="px-3 py-3 align-top">
+                            <Checkbox
+                              checked={selectedItems.has(item.id)}
+                              onCheckedChange={() => handleToggleItem(item.id)}
+                              disabled={!isSelectable}
+                            />
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="space-y-1">
+                              <div className="font-medium text-foreground">{formatObjectType(item.objectType)}</div>
+                              <div className="text-xs text-muted-foreground">Step {item.stepOrder} of {item.totalSteps}</div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-foreground">{item.person.name}</div>
+                              <div className="text-xs text-muted-foreground">{item.person.role || "Unknown person role"}</div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="font-medium text-foreground">{item.person.role || "—"}</div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="font-medium text-foreground">
+                              {item.project.name.startsWith("proj_") ? (
+                                <span className="font-mono text-xs text-muted-foreground">{item.project.name}</span>
+                              ) : item.project.name}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top text-muted-foreground">
+                            {formatPeriod(item.period.start, item.period.end)}
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="space-y-1">
+                              <div className="font-medium text-foreground">{item.hours}h</div>
+                              <div className="text-xs text-muted-foreground">
+                                {showAmount ? currencyFormatter.format(item.amount) : "Rate masked"}
+                              </div>
+                              {item.subjectSnapshot?.daySummary?.length ? (
+                                <DayMiniGrid daySummary={item.subjectSnapshot.daySummary} />
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="space-y-1">
+                              <div className="font-medium text-foreground">{item.partyName || "Unassigned"}</div>
+                              <div className="text-xs text-muted-foreground">Step {item.stepOrder} of {item.totalSteps}</div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-foreground">{formatDate(item.submittedAt)}</div>
+                              <div className="text-xs text-muted-foreground">Captured at submission</div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge
+                                variant={
+                                  item.status === "approved"
+                                    ? "default"
+                                    : item.status === "rejected"
+                                      ? "destructive"
+                                      : "secondary"
+                                }
+                                className="capitalize"
+                              >
+                                {item.status.replace("_", " ")}
+                              </Badge>
+                              {item.sla.breached ? <Badge variant="destructive">SLA</Badge> : null}
+                              {isBlocked ? <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Blocked</Badge> : null}
+                            </div>
+                            {isBlocked && item.gating.reasons.length > 0 ? (
+                              <div className="mt-1 text-xs text-amber-700">{item.gating.reasons.join(", ")}</div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="flex justify-end gap-1.5">
+                              <Button size="sm" variant="outline" onClick={() => handleViewDetails(item)} className="h-8">
+                                Details
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => handleViewGraph(item)} className="h-8">
+                                Path
+                              </Button>
+                              {isPending ? (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => void handleApprove(item.id)}
+                                    className="h-8 bg-emerald-600 hover:bg-emerald-700"
+                                    disabled={isBlocked || isApproving}
+                                  >
+                                    {isApproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Approve"}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={() => openRejectDialog(item)}
+                                    className="h-8"
+                                    disabled={isApproving}
+                                  >
+                                    Reject
+                                  </Button>
+                                </>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -803,6 +903,396 @@ export function ApprovalsWorkbench({
           }}
         />
       )}
+
+      <Sheet open={!!selectedDetailItem} onOpenChange={(open) => !open && setSelectedDetailItem(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
+          {selectedDetailItem && (
+            <div className="flex h-full flex-col">
+              <SheetHeader className="border-b border-border/60 px-6 pb-5 pt-6 space-y-0">
+                {/* Approver identity context — who is acting */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="h-7 w-7 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                      <span className="text-[11px] font-bold text-emerald-700">
+                        {(viewerName || user?.user_metadata?.full_name || user?.email || "?").slice(0, 1).toUpperCase()}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="m-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">Approving as</p>
+                      <p className="m-0 text-sm font-medium text-foreground leading-tight">
+                        {viewerName || user?.user_metadata?.full_name || user?.email || "You"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Badge
+                      variant={
+                        selectedDetailItem.status === "approved"
+                          ? "default"
+                          : selectedDetailItem.status === "rejected"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                      className="capitalize"
+                    >
+                      {selectedDetailItem.status.replace("_", " ")}
+                    </Badge>
+                    <Badge variant="outline" className="text-[11px]">
+                      Step {selectedDetailItem.stepOrder} of {selectedDetailItem.totalSteps}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* What is being approved */}
+                <div className="rounded-xl bg-muted/40 border border-border/50 px-4 py-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]">
+                      Submitted by
+                    </Badge>
+                    <span className="font-medium text-foreground">{selectedDetailItem.person.name}</span>
+                    <span>•</span>
+                    <span>{selectedDetailItem.submitterOrg || selectedDetailItem.person.role || "Unknown organization"}</span>
+                  </div>
+
+                  {selectedDetailItem.currentApproverName || selectedDetailItem.partyName ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]">
+                        Current approver
+                      </Badge>
+                      <span className="font-medium text-foreground">{selectedDetailItem.currentApproverName || selectedDetailItem.partyName}</span>
+                      <span>•</span>
+                      <span>Step {selectedDetailItem.stepOrder} of {selectedDetailItem.totalSteps}</span>
+                    </div>
+                  ) : null}
+
+                  {/* Submitter row */}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Approving for</p>
+                      <p className="m-0 text-base font-semibold text-foreground leading-snug">{selectedDetailItem.person.name}</p>
+                      <p className="m-0 text-xs text-muted-foreground">{selectedDetailItem.submitterOrg || selectedDetailItem.person.role || "Unknown organization"}</p>
+                    </div>
+                    <div className="sm:text-right">
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Project</p>
+                      <p className="m-0 text-sm font-medium text-foreground leading-snug">
+                        {selectedDetailItem.project.name.startsWith("proj_")
+                          ? <span className="font-mono text-xs text-muted-foreground">{selectedDetailItem.project.name}</span>
+                          : selectedDetailItem.project.name}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Period + hours row */}
+                  <div className="flex items-center gap-4 pt-1 border-t border-border/40">
+                    <div>
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Period</p>
+                      <p className="m-0 text-sm font-medium text-foreground">
+                        {formatPeriod(selectedDetailItem.period.start, selectedDetailItem.period.end)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Hours</p>
+                      <p className="m-0 text-sm font-semibold text-foreground">{selectedDetailItem.hours}h</p>
+                    </div>
+                    <div>
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Amount</p>
+                      <p className="m-0 text-sm text-muted-foreground">
+                        {selectedDetailItem.canViewRates && selectedDetailItem.amount !== null
+                          ? currencyFormatter.format(selectedDetailItem.amount)
+                          : "Rate masked"}
+                      </p>
+                    </div>
+                    <div className="ml-auto text-right">
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Submitted</p>
+                      <p className="m-0 text-xs text-muted-foreground">{formatDate(selectedDetailItem.submittedAt)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Visually hidden title for accessibility */}
+                <SheetTitle className="sr-only">
+                  {`Decision packet — ${selectedDetailItem.person.name} · ${selectedDetailItem.person.role || "Unknown organization"} · ${formatPeriod(selectedDetailItem.period.start, selectedDetailItem.period.end)}`}
+                </SheetTitle>
+                <SheetDescription className="sr-only">
+                  {`Review and act on the timesheet submitted by ${selectedDetailItem.person.name} from ${selectedDetailItem.person.role || "Unknown organization"} for ${selectedDetailItem.project.name}.`}
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="flex-1 space-y-5 px-6 py-6">
+
+                {/* Timesheet grid — primary review surface */}
+                <section className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4">
+                  <div className="flex items-baseline justify-between">
+                    <div>
+                      <h4 className="m-0 text-sm font-semibold">Timesheet</h4>
+                      <p className="mt-0.5 mb-0 text-xs text-muted-foreground">
+                        {formatPeriod(selectedDetailItem.period.start, selectedDetailItem.period.end)}
+                        {" · "}
+                        {selectedDetailItem.hours}h total
+                        {selectedDetailItem.canViewRates && selectedDetailItem.amount !== null
+                          ? ` · ${currencyFormatter.format(selectedDetailItem.amount)}`
+                          : " · Rate masked"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Submitted {formatDate(selectedDetailItem.submittedAt)}</span>
+                  </div>
+                  <TimesheetDayGrid
+                    daySummary={selectedDetailItem.subjectSnapshot?.daySummary ?? null}
+                    weekStart={selectedDetailItem.period.start}
+                  />
+                </section>
+
+                {/* Approval chain timeline */}
+                <section className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4">
+                  <h4 className="m-0 text-sm font-semibold">
+                    {selectedDetailItem.approvalTrail && selectedDetailItem.approvalTrail.length > 1
+                      ? "Approval trail"
+                      : "Approval path"}
+                  </h4>
+                  {selectedDetailItem.approvalTrail && selectedDetailItem.approvalTrail.length > 1 ? (
+                    <div className="space-y-2">
+                      {selectedDetailItem.approvalTrail.map((step) => (
+                        <ApprovalPathStep
+                          key={`${selectedDetailItem.id}-${step.approvalLayer}`}
+                          label={`${step.approverName} · Step ${step.approvalLayer}`}
+                          sublabel={`${step.status.replace("_", " ")}${step.decidedAt ? ` · ${formatDate(step.decidedAt)}` : ""}`}
+                          state={
+                            step.status === "approved"
+                              ? "done"
+                              : step.status === "rejected"
+                                ? "error"
+                                : step.approvalLayer === selectedDetailItem.stepOrder
+                                  ? "current"
+                                  : "waiting"
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <ApprovalPathStep
+                        label={selectedDetailItem.person.name}
+                        sublabel={`Submitted ${formatDate(selectedDetailItem.submittedAt)}`}
+                        state="done"
+                      />
+                      <ApprovalPathStep
+                        label={selectedDetailItem.partyName || "Current approver"}
+                        sublabel={`Step ${selectedDetailItem.stepOrder} of ${selectedDetailItem.totalSteps} · You`}
+                        state="current"
+                      />
+                      {selectedDetailItem.totalSteps > selectedDetailItem.stepOrder ? (
+                        <ApprovalPathStep
+                          label="Next approver"
+                          sublabel={`Step ${selectedDetailItem.stepOrder + 1} of ${selectedDetailItem.totalSteps} · Waiting`}
+                          state="waiting"
+                        />
+                      ) : null}
+                    </div>
+                  )}
+                </section>
+
+                {/* Compact metadata */}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <DetailTile label="Project" value={selectedDetailItem.project.name} />
+                  <DetailTile label="Organization" value={selectedDetailItem.submitterOrg || selectedDetailItem.person.role || "Unknown"} />
+                  <DetailTile label="Current approver" value={selectedDetailItem.currentApproverName || selectedDetailItem.partyName || "Unassigned"} />
+                  <DetailTile label="Approval step" value={`Step ${selectedDetailItem.stepOrder} of ${selectedDetailItem.totalSteps}`} />
+                  <DetailTile label="Rate visibility" value={selectedDetailItem.canViewRates ? "Visible" : "Masked"} />
+                  <DetailTile label="Object type" value={formatObjectType(selectedDetailItem.objectType)} />
+                </div>
+
+                {selectedDetailItem.notes ? (
+                  <section className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4">
+                    <h4 className="m-0 text-sm font-semibold">Note</h4>
+                    <p className="m-0 text-sm text-muted-foreground">{selectedDetailItem.notes}</p>
+                  </section>
+                ) : null}
+              </div>
+
+              <div className="border-t border-border/60 px-6 py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedDetailItem(null);
+                      setSelectedGraphItem(selectedDetailItem);
+                      setShowGraphModal(true);
+                    }}
+                  >
+                    <Eye className="h-4 w-4" />
+                    View path
+                  </Button>
+                  {selectedDetailItem.status === "pending" ? (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedDetailItem(null);
+                          openRejectDialog(selectedDetailItem);
+                        }}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                        onClick={() => {
+                          setSelectedDetailItem(null);
+                          void handleApprove(selectedDetailItem.id);
+                        }}
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Approve
+                      </Button>
+                    </div>
+                  ) : (
+                    <Badge variant={selectedDetailItem.status === "approved" ? "default" : "destructive"} className="capitalize">
+                      {selectedDetailItem.status}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
+
+function DetailTile({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="rounded-lg bg-muted/40 px-3 py-2">
+      <p className="m-0 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/80">{label}</p>
+      <p className={cn("mt-1 mb-0 text-sm", muted ? "text-muted-foreground" : "text-foreground")}>{value}</p>
+    </div>
+  );
+}
+
+// Compact Mon-Fri strip shown inline in the queue row
+function DayMiniGrid({ daySummary }: { daySummary: Array<{ day: string; hours: number }> }) {
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  return (
+    <div className="flex gap-1.5 pt-0.5">
+      {DAYS.map((label) => {
+        const entry = daySummary.find((d) => d.day === label || d.day?.startsWith(label));
+        const hrs = entry?.hours ?? 0;
+        return (
+          <div key={label} className="flex flex-col items-center gap-0.5">
+            <span className={cn("text-[10px] leading-none font-medium", hrs > 0 ? "text-foreground" : "text-muted-foreground/40")}>
+              {hrs > 0 ? `${hrs}h` : "—"}
+            </span>
+            <span className="text-[9px] leading-none text-muted-foreground/50">{label[0]}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Full Mon-Fri grid for the decision packet — shows dates + hours + notes
+function TimesheetDayGrid({
+  daySummary,
+  weekStart,
+}: {
+  daySummary: Array<{ day: string; hours: number; notes?: string }> | null;
+  weekStart: string;
+}) {
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+  function getDateForDay(index: number): string {
+    if (!weekStart) return DAYS[index];
+    const base = new Date(`${weekStart}T00:00:00`);
+    if (Number.isNaN(base.getTime())) return DAYS[index];
+    base.setDate(base.getDate() + index);
+    return base.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  if (!daySummary?.length) {
+    return (
+      <p className="m-0 text-xs text-muted-foreground italic">
+        Day breakdown not captured — submitted before snapshot migration.
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-5 gap-1.5">
+      {DAYS.map((label, index) => {
+        const entry = daySummary.find((d) => d.day === label || d.day?.startsWith(label));
+        const hrs = entry?.hours ?? 0;
+        const hasHours = hrs > 0;
+        return (
+          <div
+            key={label}
+            className={cn(
+              "rounded-lg px-2 py-2 text-center",
+              hasHours ? "bg-emerald-50 border border-emerald-100" : "bg-muted/30 border border-transparent",
+            )}
+          >
+            <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</p>
+            <p className="m-0 text-[10px] text-muted-foreground/60 mb-1">{getDateForDay(index)}</p>
+            <p className={cn("m-0 text-base font-semibold", hasHours ? "text-emerald-700" : "text-muted-foreground/30")}>
+              {hasHours ? `${hrs}h` : "0"}
+            </p>
+            {entry?.notes ? (
+              <p className="m-0 mt-1 text-[10px] text-muted-foreground leading-tight truncate" title={entry.notes}>
+                {entry.notes}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Vertical timeline step for the approval chain
+function ApprovalPathStep({
+  label,
+  sublabel,
+  state,
+}: {
+  label: string;
+  sublabel: string;
+  state: "done" | "current" | "waiting" | "error";
+}) {
+  const dotClass = cn(
+    "h-2.5 w-2.5 rounded-full border-2 shrink-0 mt-0.5",
+    state === "done" && "bg-emerald-500 border-emerald-500",
+    state === "current" && "bg-white border-emerald-600 ring-2 ring-emerald-300",
+    state === "waiting" && "bg-muted border-muted-foreground/30",
+    state === "error" && "bg-rose-500 border-rose-500",
+  );
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex flex-col items-center">
+        <div className={dotClass} />
+      </div>
+      <div>
+        <p className={cn(
+          "m-0 text-sm font-medium",
+          state === "waiting" && "text-muted-foreground",
+          state === "error" && "text-rose-700",
+          state !== "waiting" && state !== "error" && "text-foreground",
+        )}>
+          {label}
+          {state === "current" ? <span className="ml-2 text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">← You</span> : null}
+        </p>
+        <p className={cn("m-0 text-xs", state === "error" ? "text-rose-600" : "text-muted-foreground")}>{sublabel}</p>
+      </div>
+    </div>
+  );
+}
+

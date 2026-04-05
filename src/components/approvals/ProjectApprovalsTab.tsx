@@ -27,7 +27,7 @@ export function ProjectApprovalsTab({
   viewerName,
   viewerNodeId,
 }: ProjectApprovalsTabProps) {
-  const [viewMode, setViewMode] = useState<"queue" | "analytics">("queue");
+  const [viewMode, setViewMode] = useState<"queue" | "history" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<QueueStatus>("pending");
 
   return (
@@ -64,6 +64,9 @@ export function ProjectApprovalsTab({
               <TabsTrigger value="queue" className="min-w-[120px]">
                 Queue
               </TabsTrigger>
+              <TabsTrigger value="history" className="min-w-[120px]">
+                My submissions
+              </TabsTrigger>
               <TabsTrigger value="analytics" className="min-w-[120px]">
                 Analytics
               </TabsTrigger>
@@ -93,6 +96,23 @@ export function ProjectApprovalsTab({
           projectFilter={projectId}
           statusFilter={filterStatus}
           viewerNodeId={viewerNodeId}
+          viewerName={viewerName}
+          viewScope="inbox"
+          embedded
+        />
+      </TabsContent>
+
+      <TabsContent value="history" className="m-0 p-4 sm:p-6">
+        <div className="mb-3 rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+          Submission history keeps the audit trail visible even after decisions are made. Use this view to review what
+          you submitted and how each approval step resolved.
+        </div>
+        <ApprovalsWorkbench
+          projectFilter={projectId}
+          statusFilter="all"
+          viewerNodeId={viewerNodeId}
+          viewerName={viewerName}
+          viewScope="submitted"
           embedded
         />
       </TabsContent>

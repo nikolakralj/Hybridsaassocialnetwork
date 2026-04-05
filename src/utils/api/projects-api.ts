@@ -1,7 +1,10 @@
 // Phase 1: Projects Frontend API Client
 // Calls KV-backed server endpoints instead of direct Supabase queries
+// Direct Supabase writes used as primary path (edge function not deployed)
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
+import { createClient } from '../supabase/client';
+const supabase = createClient();
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
@@ -226,6 +229,74 @@ export interface StoredProjectInvitation {
 
 // ---------- Projects ----------
 
+// ── Direct Supabase write (primary path — edge function not deployed) ─────────
+
+interface SupabaseProjectInput {
+  id: string;
+  name: string;
+  startDate?: string;
+  endDate?: string;
+  workWeek?: Record<string, boolean>;
+  ownerId: string;
+  parties?: any;
+  members?: Array<{
+    id: string;
+    userId?: string;
+    userName?: string;
+    userEmail?: string;
+    role?: string;
+    scope?: string;
+    graphNodeId?: string;
+  }>;
+}
+
+async function supabaseCreateProject(input: SupabaseProjectInput) {
+  const now = new Date().toISOString();
+
+  const { data: project, error: projError } = await supabase
+    .from('wg_projects')
+    .insert({
+      id: input.id,
+      name: input.name,
+      start_date: input.startDate || now.slice(0, 10),
+      end_date: input.endDate || null,
+      work_week: input.workWeek || { monday: true, tuesday: true, wednesday: true, thursday: true, friday: true, saturday: false, sunday: false },
+      owner_id: input.ownerId,
+      status: 'active',
+      supply_chain_status: 'complete',
+      parties: input.parties || null,
+    })
+    .select()
+    .single();
+
+  if (projError) throw new Error(`Failed to create project in DB: ${projError.message}`);
+
+  if (input.members && input.members.length > 0) {
+    const memberRows = input.members.map((m) => ({
+      id: m.id,
+      project_id: input.id,
+      user_id: m.userId || null,
+      user_name: m.userName || null,
+      user_email: m.userEmail || null,
+      role: m.role || 'Viewer',
+      scope: m.scope || null,
+      invited_by: input.ownerId,
+      invited_at: now,
+      accepted_at: m.userId ? now : null,
+    }));
+
+    const { error: membersError } = await supabase
+      .from('wg_project_members')
+      .insert(memberRows);
+
+    if (membersError) {
+      console.warn('Failed to insert project members:', membersError.message);
+    }
+  }
+
+  return project;
+}
+
 export async function listProjects(accessToken?: string | null) {
   try {
     const res = await fetch(`${BASE}/projects`, {
@@ -288,10 +359,55 @@ export async function createProject(
     supplyChainStatus?: 'complete' | 'incomplete';
     ownerName?: string;
     ownerEmail?: string;
-    members?: Array<{ userName?: string; userEmail?: string; role?: string }>;
+    ownerId?: string;
+    parties?: any;
+    members?: Array<{ id?: string; userId?: string; userName?: string; userEmail?: string; role?: string; scope?: string; graphNodeId?: string }>;
   },
   accessToken?: string | null
 ) {
+  // Primary path: write directly to Supabase (edge function not deployed)
+  if (accessToken && project.ownerId) {
+    try {
+      const localId = generateId('proj');
+      const dbProject = await supabaseCreateProject({
+        id: localId,
+        name: project.name,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        workWeek: project.workWeek,
+        ownerId: project.ownerId,
+        parties: project.parties,
+        members: project.members?.map((m) => ({
+          id: m.id || generateId('mem'),
+          userId: m.userId,
+          userName: m.userName,
+          userEmail: m.userEmail,
+          role: m.role,
+          scope: m.scope,
+          graphNodeId: m.graphNodeId,
+        })),
+      });
+      const createdProject = {
+        id: localId,
+        name: dbProject.name,
+        startDate: dbProject.start_date,
+        endDate: dbProject.end_date,
+        workWeek: dbProject.work_week,
+        status: dbProject.status,
+        ownerId: dbProject.owner_id,
+        createdAt: dbProject.created_at,
+        updatedAt: dbProject.updated_at,
+      };
+      // Cache locally too
+      const records = readLocalProjects().filter((r) => r.project?.id !== localId);
+      records.push({ project: createdProject, members: [] });
+      writeLocalProjects(records);
+      return { project: createdProject, members: [] };
+    } catch (dbError) {
+      console.warn('Direct Supabase create failed, falling back to local:', dbError);
+    }
+  }
+
   try {
     const res = await fetch(`${BASE}/projects`, {
       method: 'POST',
@@ -304,6 +420,13 @@ export async function createProject(
         return localCreateProject(project);
       }
       throw new Error(data.error || 'Failed to create project');
+    }
+    // Cache the API-created project locally so listProjects mergeProjectsById
+    // always has a fallback copy even if the API later returns empty due to RLS/session issues.
+    if (data?.project?.id) {
+      const records = readLocalProjects().filter((r) => r.project?.id !== data.project.id);
+      records.push({ project: data.project, members: data.members || [] });
+      writeLocalProjects(records);
     }
     return data;
   } catch (error) {

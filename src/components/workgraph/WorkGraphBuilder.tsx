@@ -24,6 +24,7 @@ import {
   FileCheck,
   Receipt,
   UserCheck,
+  X,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -32,6 +33,7 @@ import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
 import { TEMPLATES } from './templates';
 import { useGraphPersistence } from '../hooks/useGraphPersistence';
+import { ProjectCreateWizard } from './ProjectCreateWizard';
 import {
   computeScopedView,
   buildViewerOptions,
@@ -54,6 +56,7 @@ import type {
   BaseEdge,
   CompiledProjectConfig,
 } from '../../types/workgraph';
+import type { PartyEntry } from '../../utils/graph/auto-generate';
 import { getProject, updateProject } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
@@ -903,6 +906,103 @@ class DrawerErrorBoundary extends React.Component<
   }
 }
 
+type GraphVersionHistoryEntry = {
+  id: string;
+  version_number: number;
+  created_at: string;
+  change_summary: string;
+  graph_data?: {
+    nodes: BaseNode[];
+    edges: BaseEdge[];
+  };
+};
+
+function formatHistoryTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function VersionHistoryPanel({
+  versions,
+  loading,
+  restoringVersionId,
+  onClose,
+  onRestore,
+}: {
+  versions: GraphVersionHistoryEntry[];
+  loading: boolean;
+  restoringVersionId: string | null;
+  onClose: () => void;
+  onRestore: (version: GraphVersionHistoryEntry) => void;
+}) {
+  return (
+    <div className="w-[360px] border-l border-border bg-card flex flex-col shrink-0 z-30 shadow-xl">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <div className="text-sm font-semibold text-foreground">Version History</div>
+            <div className="text-[11px] text-muted-foreground">Saved checkpoints</div>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+          aria-label="Close version history"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        {loading ? (
+          <div className="flex h-40 items-center justify-center text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        ) : versions.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border bg-background/60 px-4 py-6 text-center">
+            <p className="text-sm font-medium text-foreground">No history yet — save the graph to create a checkpoint</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {versions.map((version) => (
+              <div key={version.id} className="rounded-xl border border-border bg-background p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">v{version.version_number}</span>
+                      <span className="text-[11px] text-muted-foreground">{formatHistoryTimestamp(version.created_at)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                      {version.change_summary || 'Graph updated'}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-[11px] shrink-0"
+                    onClick={() => onRestore(version)}
+                    disabled={restoringVersionId === version.id}
+                  >
+                    {restoringVersionId === version.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Restore'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Graph Canvas
 // ============================================================================
@@ -1263,6 +1363,45 @@ function HiddenBanner({ hiddenNodes, hiddenEdges }: { hiddenNodes: number; hidde
   );
 }
 
+function buildEditableParties(nodes: BaseNode[], edges: BaseEdge[]): PartyEntry[] {
+  return nodes
+    .filter((node) => node.type === 'party')
+    .map((partyNode, index) => {
+      const partyId = partyNode.id;
+      const people = nodes
+        .filter((node) => node.type === 'person' && (node.data?.partyId === partyId || node.data?.orgId === partyId))
+        .map((personNode) => ({
+          id: personNode.id,
+          name: personNode.data?.name || '',
+          email: personNode.data?.email || '',
+          role: personNode.data?.role || '',
+          canApprove: personNode.data?.canApprove === true,
+          canViewRates: personNode.data?.canViewRates === true,
+          canEditTimesheets: personNode.data?.canEditTimesheets === true,
+          visibleToChain: personNode.data?.visibleToChain === true,
+        }));
+
+      const billsTo = edges
+        .filter((edge) =>
+          edge.source === partyId &&
+          (edge.data?.edgeType === 'billsTo' || edge.data?.edgeType === 'subcontracts' || edge.data?.edgeType === 'bills_to')
+        )
+        .map((edge) => edge.target);
+
+      return {
+        id: partyId,
+        name: partyNode.data?.name || '',
+        partyType: partyNode.data?.partyType || 'company',
+        billsTo,
+        organizationId: partyNode.data?.organizationId,
+        logo: partyNode.data?.logo,
+        people,
+        isCreator: partyNode.data?.isCreator === true || index === 0,
+        chainVisibility: partyNode.data?.chainVisibility,
+      };
+    });
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -1280,6 +1419,7 @@ interface WorkGraphBuilderProps {
 
 export function WorkGraphBuilder({
   projectId: propProjectId,
+  projectName: propProjectName,
   onSave,
   initialConfig,
 }: WorkGraphBuilderProps) {
@@ -1468,8 +1608,13 @@ export function WorkGraphBuilder({
   // Layout mode
   const [layoutMode, setLayoutMode] = useState<'graph' | 'list'>('graph');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<GraphVersionHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isEditSupplyChainOpen, setIsEditSupplyChainOpen] = useState(false);
 
   // Persistence
   const graphPersistence = useGraphPersistence({
@@ -1478,6 +1623,58 @@ export function WorkGraphBuilder({
     onSaveSuccess: () => toast.success('Graph saved'),
     onSaveError: () => toast.error('Failed to save'),
   });
+
+  const openHistoryPanel = useCallback(() => {
+    setSelectedId(null);
+    setHistoryOpen((prev) => !prev);
+  }, []);
+
+  const handleRestoreVersion = useCallback(async (version: GraphVersionHistoryEntry) => {
+    setRestoringVersionId(version.id);
+    try {
+      const restored = await graphPersistence.loadVersionById(version.id);
+      const graphData = restored?.graph_data;
+      if (!graphData || !Array.isArray(graphData.nodes) || !Array.isArray(graphData.edges)) {
+        toast.error('Failed to restore version');
+        return;
+      }
+
+      setAllNodes(graphData.nodes as BaseNode[]);
+      setAllEdges(graphData.edges as BaseEdge[]);
+      setSelectedId(null);
+      toast.success(`Restored v${restored.version_number}`);
+    } finally {
+      setRestoringVersionId(null);
+    }
+  }, [graphPersistence.loadVersionById]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    let cancelled = false;
+
+    const loadHistory = async () => {
+      setHistoryLoading(true);
+      try {
+        const versions = await graphPersistence.getVersionHistory();
+        if (!cancelled) {
+          setHistoryVersions([...versions].sort((a, b) => b.version_number - a.version_number));
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    };
+
+    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyOpen, graphPersistence.getVersionHistory]);
+
+  useEffect(() => {
+    if (!historyOpen) {
+      setHistoryLoading(false);
+    }
+  }, [historyOpen]);
 
   const runGraphMigration = useCallback(async () => {
     const migrated = migrateGraphForVisibility(allNodes, allEdges);
@@ -1573,8 +1770,48 @@ export function WorkGraphBuilder({
     approvals: filteredEdges.filter(e => e.data?.edgeType === 'approves').length,
   }), [filteredNodes, filteredEdges]);
 
+  const editableParties = useMemo(() => buildEditableParties(allNodes, allEdges), [allNodes, allEdges]);
+
+  const handleEditSupplyChainSave = useCallback(async ({
+    parties,
+    nodes,
+    edges,
+  }: {
+    parties: PartyEntry[];
+    nodes: BaseNode[];
+    edges: BaseEdge[];
+  }) => {
+    const existingNodeIds = new Set(allNodes.map((node) => node.id));
+    const existingEdgeIds = new Set(allEdges.map((edge) => edge.id));
+    const mergedNodes = [...allNodes, ...nodes.filter((node) => !existingNodeIds.has(node.id))];
+    const mergedEdges = [...allEdges, ...edges.filter((edge) => !existingEdgeIds.has(edge.id))];
+
+    await updateProject(projectId, {
+      graph: {
+        nodes: mergedNodes,
+        edges: mergedEdges,
+      },
+      parties: parties.map((party) => ({
+        id: party.id,
+        name: party.name,
+        partyType: party.partyType,
+        billsTo: [...party.billsTo],
+        peopleCount: party.people.length,
+      })),
+    }, accessToken);
+
+    setAllNodes(mergedNodes);
+    setAllEdges(mergedEdges);
+    await graphPersistence.saveVersion(mergedNodes as any, mergedEdges as any, 'Supply chain updated');
+    toast.success('Supply chain updated', {
+      description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
+    });
+    setIsEditSupplyChainOpen(false);
+  }, [allNodes, allEdges, projectId, accessToken, graphPersistence]);
+
   return (
-    <div className="h-[calc(100vh-16rem)] flex flex-col bg-background rounded-xl border border-border overflow-hidden">
+    <>
+      <div className="h-[calc(100vh-16rem)] flex flex-col bg-background rounded-xl border border-border overflow-hidden">
       {/* Header */}
       <div className="bg-card border-b border-border px-5 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
@@ -1639,12 +1876,32 @@ export function WorkGraphBuilder({
           <Button
             variant="outline"
             size="sm"
+            onClick={() => setIsEditSupplyChainOpen(true)}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <Users className="h-3.5 w-3.5" />
+            Edit Supply Chain
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => graphPersistence.saveVersion(allNodes as any, allEdges as any, 'Manual save')}
             disabled={graphPersistence.isSaving}
             className="h-8 gap-1.5 text-xs"
           >
             {graphPersistence.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
             Save
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={openHistoryPanel}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            History
           </Button>
         </div>
       </div>
@@ -1673,7 +1930,21 @@ export function WorkGraphBuilder({
           />
         )}
 
-        {selectedId && (
+        {historyOpen && (
+          <div className="absolute top-0 right-0 bottom-0 z-30 shadow-xl">
+            <DrawerErrorBoundary onClose={() => setHistoryOpen(false)}>
+              <VersionHistoryPanel
+                versions={historyVersions}
+                loading={historyLoading}
+                restoringVersionId={restoringVersionId}
+                onClose={() => setHistoryOpen(false)}
+                onRestore={handleRestoreVersion}
+              />
+            </DrawerErrorBoundary>
+          </div>
+        )}
+
+        {selectedId && !historyOpen && (
           <div className="absolute top-0 right-0 bottom-0 z-30 shadow-xl">
             <DrawerErrorBoundary onClose={() => setSelectedId(null)}>
               <NodeDetailDrawer
@@ -1690,6 +1961,16 @@ export function WorkGraphBuilder({
           </div>
         )}
       </div>
-    </div>
+      </div>
+
+      <ProjectCreateWizard
+        open={isEditSupplyChainOpen}
+        onClose={() => setIsEditSupplyChainOpen(false)}
+        onEditSave={handleEditSupplyChainSave}
+        editMode={true}
+        initialParties={editableParties}
+        initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
+      />
+    </>
   );
 }

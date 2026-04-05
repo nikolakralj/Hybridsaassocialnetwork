@@ -36,8 +36,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
-import { canViewerApproveSubmitter, getApprovalStepsForParty, type ApprovalParty } from '../../utils/graph/approval-fallback';
-import { createApproval } from '../../utils/api/approvals-supabase';
+import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -765,8 +764,8 @@ function PersonSection({
   const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
   const notifStore = useNotificationStore();
 
-  const fireStatusChange = useCallback((w: StoredWeek, newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
-    store.setWeekStatus(personId, w.weekStart, newStatus, meta);
+  const fireStatusChange = useCallback(async (w: StoredWeek, newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
+    await store.setWeekStatus(personId, w.weekStart, newStatus, meta);
     notifStore.onTimesheetStatusChange(personId, w.weekStart, w.weekLabel, newStatus, sumWeekHours(w), meta);
   }, [store, notifStore, personId]);
 
@@ -849,11 +848,25 @@ function PersonSection({
 
             <div className="flex items-center gap-0.5 w-14 justify-end opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
               {isApprover && w.status === 'submitted' && (
-                <button onClick={() => { fireStatusChange(w, 'approved', { by: personName(viewerId || '') }); toast.success(`Approved ${w.weekLabel}`); }}
+                <button onClick={async () => {
+                  try {
+                    await fireStatusChange(w, 'approved', { by: personName(viewerId || '') });
+                    toast.success(`Approved ${w.weekLabel}`);
+                  } catch {
+                    // setWeekStatus already emits actionable error toasts
+                  }
+                }}
                   className="p-1 rounded hover:bg-emerald-100 text-emerald-600"><ThumbsUp className="h-3 w-3" /></button>
               )}
               {isOwn && w.status === 'submitted' && (
-                <button onClick={() => { fireStatusChange(w, 'draft'); toast.info(`Recalled ${w.weekLabel}`); }}
+                <button onClick={async () => {
+                  try {
+                    await fireStatusChange(w, 'draft');
+                    toast.info(`Recalled ${w.weekLabel}`);
+                  } catch {
+                    // setWeekStatus already emits actionable error toasts
+                  }
+                }}
                   className="p-1 rounded hover:bg-amber-100 text-amber-500"><Undo2 className="h-3 w-3" /></button>
               )}
             </div>
@@ -1118,37 +1131,9 @@ function WeekDetailDrawer({
   const prevWeek = weekIdx > 0 ? allWeeks[weekIdx - 1] : null;
   const nextWeek = weekIdx < allWeeks.length - 1 ? allWeeks[weekIdx + 1] : null;
 
-  // Wrapper: set status + fire notification + create approval_record on submit
-  const changeStatus = useCallback((newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
-    store.setWeekStatus(personId, week.weekStart, newStatus, meta);
+  const changeStatus = useCallback(async (newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
+    await store.setWeekStatus(personId, week.weekStart, newStatus, meta);
     notifStore.onTimesheetStatusChange(personId, week.weekStart, week.weekLabel, newStatus, weekTotal, meta);
-
-    // When submitted: write a pending approval_record to the DB.
-    // approver_node_id stores the graph node that must approve (e.g. "org-nas").
-    // This is later matched in getApprovalQueue by the viewer's current graph node.
-    if (newStatus === 'submitted') {
-      const parties = getApprovalParties(activeProjectId);
-      const submitterEntry = Object.values(getNameDir()).find((e) => e.type === 'person');
-      // Find which party this person belongs to
-      const personParty = parties.find((p) => p.people.some((m) => m.id === personId));
-      if (personParty) {
-        const steps = getApprovalStepsForParty(personParty.id, parties);
-        const firstStep = steps[0];
-        if (firstStep) {
-          createApproval({
-            projectId: activeProjectId,
-            subjectType: 'timesheet',
-            subjectId: `${personId}:${week.weekStart}`,
-            approverUserId: firstStep.partyId, // graph node ID used as approver ref until UUID mapping exists
-            approverName: parties.find((p) => p.id === firstStep.partyId)?.name ?? firstStep.partyId,
-            approverNodeId: firstStep.partyId,
-            approvalLayer: firstStep.step,
-            status: 'pending',
-            submittedAt: new Date().toISOString(),
-          }).catch((err) => console.warn('approval_record write failed (non-blocking):', err));
-        }
-      }
-    }
   }, [store, notifStore, personId, week.weekStart, week.weekLabel, weekTotal]);
 
   // Get approval chain for this week
@@ -1310,10 +1295,14 @@ function WeekDetailDrawer({
               <input type="text" value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="Reason (optional)..." autoFocus
                 className="w-full h-9 px-3 text-sm rounded-lg border border-red-200 focus:border-red-400 outline-none bg-white" />
               <div className="flex gap-2">
-                <Button size="sm" variant="destructive" className="flex-1 h-9 text-xs gap-1.5" onClick={() => {
-                  changeStatus('rejected', { by: personName(viewerId || ''), note: rejectNote });
-                  setRejectMode(false);
-                  toast.error(`Rejected ${week.weekLabel}`);
+                <Button size="sm" variant="destructive" className="flex-1 h-9 text-xs gap-1.5" onClick={async () => {
+                  try {
+                    await changeStatus('rejected', { by: personName(viewerId || ''), note: rejectNote });
+                    setRejectMode(false);
+                    toast.error(`Rejected ${week.weekLabel}`);
+                  } catch {
+                    // setWeekStatus already emits actionable error toasts
+                  }
                 }}><ThumbsDown className="h-3.5 w-3.5" /> Confirm</Button>
                 <Button size="sm" variant="ghost" className="h-9 text-xs" onClick={() => setRejectMode(false)}>Cancel</Button>
               </div>
@@ -1324,18 +1313,39 @@ function WeekDetailDrawer({
         {/* Footer */}
         <div className="px-5 py-3 border-t bg-muted/20 flex items-center gap-2">
           {isOwn && week.status === 'draft' && weekTotal > 0 && (
-            <Button size="sm" className="h-9 text-xs gap-1.5" onClick={() => { changeStatus('submitted'); toast.success(`Submitted ${week.weekLabel}`); }}>
+            <Button size="sm" className="h-9 text-xs gap-1.5" onClick={async () => {
+              try {
+                await changeStatus('submitted');
+                toast.success(`Submitted ${week.weekLabel}`);
+              } catch {
+                // setWeekStatus already emits actionable error toasts
+              }
+            }}>
               <Send className="h-3.5 w-3.5" /> Submit
             </Button>
           )}
           {isOwn && week.status === 'submitted' && (
-            <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 text-amber-600" onClick={() => { changeStatus('draft'); toast.info(`Recalled`); }}>
+            <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 text-amber-600" onClick={async () => {
+              try {
+                await changeStatus('draft');
+                toast.info('Recalled');
+              } catch {
+                // setWeekStatus already emits actionable error toasts
+              }
+            }}>
               <Undo2 className="h-3.5 w-3.5" /> Recall
             </Button>
           )}
           {canApprove && week.status === 'submitted' && !rejectMode && (
             <>
-              <Button size="sm" className="h-9 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700" onClick={() => { changeStatus('approved', { by: personName(viewerId || '') }); toast.success(`Approved`); }}>
+              <Button size="sm" className="h-9 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700" onClick={async () => {
+                try {
+                  await changeStatus('approved', { by: personName(viewerId || '') });
+                  toast.success('Approved');
+                } catch {
+                  // setWeekStatus already emits actionable error toasts
+                }
+              }}>
                 <ThumbsUp className="h-3.5 w-3.5" /> Approve
               </Button>
               <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => setRejectMode(true)}>

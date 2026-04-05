@@ -99,6 +99,9 @@ export function ProjectWorkspace({
     if (!stored || shouldReplaceDemoProjectId) {
       sessionStorage.setItem('currentProjectId', projectId);
     }
+    window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
+      detail: { projectId },
+    }));
   }, [projectId, shouldReplaceDemoProjectId]);
   
   // Load project name from API if not provided
