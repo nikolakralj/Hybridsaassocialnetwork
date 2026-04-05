@@ -1584,7 +1584,9 @@ export function WorkGraphBuilder({
         };
       });
 
-    sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, JSON.stringify({ parties }));
+    const approvalDirPayload = JSON.stringify({ parties });
+    sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload);
+    try { localStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload); } catch { /* quota */ }
   }, [viewerOptions, allNodes, allEdges, projectId]);
 
   // When viewer changes in the graph, persist the identity for other tabs.

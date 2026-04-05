@@ -252,24 +252,57 @@ function readNameDir(projectId: string): Record<string, NameDirEntry> {
 
 function readApprovalParties(projectId: string): ApprovalParty[] {
   if (!projectId) return [];
+  // Try sessionStorage first (written by Graph tab / wizard)
   const parsed = readSessionJson<{ parties?: ApprovalParty[] }>(`workgraph-approval-dir:${projectId}`);
-  return Array.isArray(parsed?.parties) ? parsed.parties : [];
+  if (Array.isArray(parsed?.parties) && parsed!.parties.length > 0) return parsed!.parties;
+
+  // Fallback: try localStorage (durable copy persisted alongside sessionStorage)
+  try {
+    const lsRaw = localStorage.getItem(`workgraph-approval-dir:${projectId}`);
+    if (lsRaw) {
+      const lsParsed = JSON.parse(lsRaw);
+      const lsParties = Array.isArray(lsParsed?.parties) ? lsParsed.parties : [];
+      if (lsParties.length > 0) {
+        // Re-hydrate sessionStorage so subsequent reads are fast
+        sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, lsRaw);
+        return lsParties;
+      }
+    }
+  } catch { /* localStorage unavailable or corrupt — continue */ }
+
+  return [];
+}
+
+/** Persist approval directory to BOTH sessionStorage and localStorage. */
+function writeApprovalParties(projectId: string, parties: ApprovalParty[]): void {
+  const payload = JSON.stringify({ parties });
+  try { sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, payload); } catch { /* quota */ }
+  try { localStorage.setItem(`workgraph-approval-dir:${projectId}`, payload); } catch { /* quota */ }
 }
 
 async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
   const sessionParties = readApprovalParties(projectId);
   if (sessionParties.length > 0) return sessionParties;
 
+  // DB fallback for UUID-format project IDs
   try {
     const data = await getProject(projectId, accessToken);
     const projectParties = data?.project?.parties;
 
+    let resolved: ApprovalParty[] = [];
     if (Array.isArray(projectParties)) {
-      return projectParties as ApprovalParty[];
+      resolved = projectParties as ApprovalParty[];
+    } else {
+      const nestedParties = (projectParties as { parties?: ApprovalParty[] })?.parties;
+      resolved = Array.isArray(nestedParties) ? nestedParties : [];
     }
 
-    const nestedParties = (projectParties as { parties?: ApprovalParty[] })?.parties;
-    return Array.isArray(nestedParties) ? nestedParties : [];
+    // If we got parties from the DB, persist them locally so future reads don't
+    // hit the network again.
+    if (resolved.length > 0) {
+      writeApprovalParties(projectId, resolved);
+    }
+    return resolved;
   } catch {
     return [];
   }
@@ -312,25 +345,39 @@ function findNextApprovalParty(
 
 async function getApprovalRouteForSubmitter(projectId: string, personId: string, accessToken?: string | null): Promise<ApprovalRoute | null> {
   const parties = await loadApprovalParties(projectId, accessToken);
-  if (parties.length === 0) return null;
+  if (parties.length === 0) {
+    console.warn('[approval-route] No parties found for project', projectId,
+      '| sessionStorage key:', `workgraph-approval-dir:${projectId}`,
+      '| sessionStorage value:', sessionStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200),
+      '| localStorage value:', localStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200));
+    return null;
+  }
+
+  console.log('[approval-route] Loaded', parties.length, 'parties for project', projectId,
+    '| party names:', parties.map(p => `${p.name}(${p.people.length}ppl, billsTo:${p.billsTo.length})`).join(', '));
 
   let submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
+  let fallbackUsed = submitterParty ? 'direct' : 'none';
 
   // Fallback 1: submitter not in any party's people list (floating node).
   // Use the name directory's orgId to find the submitter's party.
   if (!submitterParty) {
     const nameDir = readNameDir(projectId);
     const orgId = nameDir[personId]?.orgId;
+    console.log('[approval-route] Fallback 1: nameDir orgId for', personId, '=', orgId);
     if (orgId) {
       submitterParty = parties.find((p) => p.id === orgId);
+      if (submitterParty) fallbackUsed = 'nameDir';
     }
   }
 
   // Fallback 2: try the viewer meta (the identity the user is currently "viewing as")
   if (!submitterParty) {
     const viewerRaw = readSessionJson<{ nodeId?: string; orgId?: string }>(`workgraph-viewer-meta:${projectId}`);
+    console.log('[approval-route] Fallback 2: viewerMeta =', viewerRaw);
     if (viewerRaw?.orgId) {
       submitterParty = parties.find((p) => p.id === viewerRaw.orgId);
+      if (submitterParty) fallbackUsed = 'viewerMeta';
     }
   }
 
@@ -339,19 +386,32 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   if (!submitterParty) {
     submitterParty = parties.find((p) => p.billsTo.length > 0 && p.partyType !== 'client');
     if (!submitterParty) submitterParty = parties[0]; // absolute last resort
+    if (submitterParty) fallbackUsed = 'firstParty';
+    console.log('[approval-route] Fallback 3: using first party =', submitterParty?.name);
   }
 
-  if (!submitterParty) return null;
+  if (!submitterParty) {
+    console.warn('[approval-route] All fallbacks exhausted, no submitterParty found');
+    return null;
+  }
+
+  console.log('[approval-route] Using submitterParty:', submitterParty.name, '(via', fallbackUsed, ')');
 
   // Walk approval steps — skip any step where the only approver is the submitter themselves
   // (self-approval). If Nikola is the approver in their own party, route upstream to next DAG node.
   const steps = getApprovalStepsForParty(submitterParty.id, parties);
+  console.log('[approval-route] Steps for party', submitterParty.name, ':', steps.length,
+    'steps', steps.map(s => `step${s.step}(${s.partyId}, approvers:${s.approverIds.length})`).join(', '));
+
   const firstStep = steps.find((step) => {
     if (step.approverIds.length === 0) return true; // upstream party — fine
     // Skip this step if every approver ID resolves to the submitter
     return !step.approverIds.every((id) => id === personId);
   });
-  if (!firstStep) return null;
+  if (!firstStep) {
+    console.warn('[approval-route] No valid first step found (all steps are self-approval or empty)');
+    return null;
+  }
 
   let resolvedStep = firstStep;
   let eligibleApprovers = firstStep.approverIds.filter((id) => id !== personId);
@@ -371,7 +431,10 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
     }
   }
 
-  if (eligibleApprovers.length === 0) return null;
+  if (eligibleApprovers.length === 0) {
+    console.warn('[approval-route] No eligible approvers found after step resolution');
+    return null;
+  }
 
   const approverUserRef = [...eligibleApprovers].sort()[0] || resolvedStep.partyId;
   const partyName = parties.find((party) => party.id === resolvedStep.partyId)?.name;

@@ -332,10 +332,9 @@ export function ProjectCreateWizard({
             canApprove: person.canApprove,
           })),
         }));
-        sessionStorage.setItem(
-          `workgraph-approval-dir:${result.project.id}`,
-          JSON.stringify({ parties: approvalParties })
-        );
+        const approvalDirPayload = JSON.stringify({ parties: approvalParties });
+        sessionStorage.setItem(`workgraph-approval-dir:${result.project.id}`, approvalDirPayload);
+        try { localStorage.setItem(`workgraph-approval-dir:${result.project.id}`, approvalDirPayload); } catch { /* quota */ }
 
         sessionStorage.setItem('currentProjectName', name);
         if (startDate) {
