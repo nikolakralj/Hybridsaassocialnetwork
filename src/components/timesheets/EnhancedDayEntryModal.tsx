@@ -712,11 +712,23 @@ export function EnhancedDayEntryModal({
         </div>
 
         <DialogFooter className="flex justify-between">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleSave} 
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            {totals.totalHours > 0 && (
+              <Button
+                variant="ghost"
+                className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5"
+                onClick={() => { onSave(date, 0, []); onOpenChange(false); }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear entry
+              </Button>
+            )}
+          </div>
+          <Button
+            onClick={handleSave}
             disabled={totals.totalHours === 0 || !!validationError}
             className="gap-2"
           >
