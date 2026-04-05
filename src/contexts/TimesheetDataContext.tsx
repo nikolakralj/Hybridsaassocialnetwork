@@ -189,15 +189,29 @@ function weekHasHoursBeforeProjectStart(week: StoredWeek, projectStartDate: stri
   });
 }
 
-/** Return Monday dates that fall inside a month key (YYYY-MM). */
+/** Return Monday dates whose week overlaps a month key (YYYY-MM).
+ *  Includes the prior-month Monday when the month starts mid-week (e.g. Apr 1 = Wed
+ *  → the Mar 30 week has Apr days and must appear in the April view). */
 function getMondaysForMonth(monthKey: string): string[] {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!yearRaw || !monthRaw || monthRaw < 1 || monthRaw > 12) return [];
 
   const monthIndex = monthRaw - 1;
-  const date = new Date(yearRaw, monthIndex, 1);
+  const firstOfMonth = new Date(yearRaw, monthIndex, 1);
   const mondays: string[] = [];
 
+  // If the month doesn't start on Monday, include the prior Monday whose week
+  // overlaps into this month (its Friday falls on or after the 1st).
+  const firstDayOfWeek = firstOfMonth.getDay(); // 0=Sun, 1=Mon … 6=Sat
+  const daysToLastMonday = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1;
+  if (daysToLastMonday > 0) {
+    const prevMonday = new Date(firstOfMonth);
+    prevMonday.setDate(prevMonday.getDate() - daysToLastMonday);
+    mondays.push(formatISODateLocal(prevMonday));
+  }
+
+  // All Mondays whose date falls inside this month.
+  const date = new Date(yearRaw, monthIndex, 1);
   while (date.getMonth() === monthIndex) {
     if (date.getDay() === 1) {
       mondays.push(formatISODateLocal(date));
@@ -206,6 +220,13 @@ function getMondaysForMonth(monthKey: string): string[] {
   }
 
   return mondays;
+}
+
+/** True when any day of the Mon–Fri week touches the given month. */
+function weekOverlapsMonth(weekStart: string, month: string): boolean {
+  if (monthOf(weekStart) === month) return true;
+  const friday = weekEndIso(weekStart);
+  return monthOf(friday) === month;
 }
 
 function readSessionJson<T>(key: string): T | null {
@@ -254,6 +275,41 @@ async function loadApprovalParties(projectId: string, accessToken?: string | nul
   }
 }
 
+function findNextApprovalParty(
+  submitterPartyId: string,
+  parties: ApprovalParty[],
+  submitterPersonId: string,
+): ApprovalParty | null {
+  const partyMap = new Map(parties.map((party) => [party.id, party]));
+  const submitterParty = partyMap.get(submitterPartyId);
+  if (!submitterParty) return null;
+
+  const visited = new Set<string>([submitterPartyId]);
+  const queue = [...submitterParty.billsTo]
+    .map((targetId) => partyMap.get(targetId))
+    .filter((party): party is ApprovalParty => Boolean(party))
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+
+  while (queue.length > 0) {
+    const party = queue.shift();
+    if (!party || visited.has(party.id)) continue;
+    visited.add(party.id);
+
+    const approvers = party.people.filter((person) => person.canApprove && person.id !== submitterPersonId);
+    if (approvers.length > 0) {
+      return party;
+    }
+
+    for (const targetId of party.billsTo) {
+      if (visited.has(targetId)) continue;
+      const nextParty = partyMap.get(targetId);
+      if (nextParty) queue.push(nextParty);
+    }
+  }
+
+  return null;
+}
+
 async function getApprovalRouteForSubmitter(projectId: string, personId: string, accessToken?: string | null): Promise<ApprovalRoute | null> {
   const parties = await loadApprovalParties(projectId, accessToken);
   if (parties.length === 0) return null;
@@ -271,19 +327,38 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   });
   if (!firstStep) return null;
 
-  // Filter out the submitter from the approver list
-  const eligibleApprovers = firstStep.approverIds.filter((id) => id !== personId);
-  const approverUserRef = [...eligibleApprovers].sort()[0] || firstStep.partyId;
-  const partyName = parties.find((party) => party.id === firstStep.partyId)?.name;
+  let resolvedStep = firstStep;
+  let eligibleApprovers = firstStep.approverIds.filter((id) => id !== personId);
+
+  if (eligibleApprovers.length === 0) {
+    const nextParty = findNextApprovalParty(submitterParty.id, parties, personId);
+    if (nextParty) {
+      resolvedStep = {
+        ...firstStep,
+        partyId: nextParty.id,
+        partyType: nextParty.partyType,
+        approverIds: nextParty.people
+          .filter((person) => person.canApprove && person.id !== personId)
+          .map((person) => person.id),
+      };
+      eligibleApprovers = resolvedStep.approverIds.filter((id) => id !== personId);
+    }
+  }
+
+  if (eligibleApprovers.length === 0) return null;
+
+  const approverUserRef = [...eligibleApprovers].sort()[0] || resolvedStep.partyId;
+  const partyName = parties.find((party) => party.id === resolvedStep.partyId)?.name;
   const approverName = partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
 
   return {
-    approvalLayer: firstStep.step,
+    approvalLayer: resolvedStep.step,
     approverName,
-    approverNodeId: firstStep.partyId,
+    approverNodeId: resolvedStep.partyId,
     approverUserRef,
   };
 }
+
 
 function buildTimesheetSubjectId(personId: string, weekStart: string): string {
   return `${personId}:${weekStart}`;
@@ -714,13 +789,13 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   const getWeeksForPerson = useCallback((personId: string, month: string): StoredWeek[] => {
     return weeks
-      .filter(w => w.personId === personId && monthOf(w.weekStart) === month)
+      .filter(w => w.personId === personId && weekOverlapsMonth(w.weekStart, month))
       .map(normalizeStoredWeek);
   }, [weeks]);
 
   const getAllWeeksForMonth = useCallback((month: string): StoredWeek[] => {
     return weeks
-      .filter(w => monthOf(w.weekStart) === month)
+      .filter(w => weekOverlapsMonth(w.weekStart, month))
       .map(normalizeStoredWeek);
   }, [weeks]);
 

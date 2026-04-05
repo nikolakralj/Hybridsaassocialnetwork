@@ -763,11 +763,32 @@ function PersonSection({
   const total = weeks.reduce((s, w) => s + sumWeekHours(w), 0);
   const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
   const notifStore = useNotificationStore();
+  const [submittingMonth, setSubmittingMonth] = useState(false);
 
   const fireStatusChange = useCallback(async (w: StoredWeek, newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
     await store.setWeekStatus(personId, w.weekStart, newStatus, meta);
     notifStore.onTimesheetStatusChange(personId, w.weekStart, w.weekLabel, newStatus, sumWeekHours(w), meta);
   }, [store, notifStore, personId]);
+
+  // Submit all draft/rejected weeks that have hours logged
+  const submitableWeeks = weeks.filter(w => (w.status === 'draft' || w.status === 'rejected') && sumWeekHours(w) > 0);
+
+  const handleSubmitMonth = useCallback(async () => {
+    if (submitableWeeks.length === 0) return;
+    setSubmittingMonth(true);
+    let submitted = 0;
+    for (const w of submitableWeeks) {
+      try {
+        await store.setWeekStatus(personId, w.weekStart, 'submitted');
+        notifStore.onTimesheetStatusChange(personId, w.weekStart, w.weekLabel, 'submitted', sumWeekHours(w));
+        submitted++;
+      } catch {
+        // individual week errors are already toasted by setWeekStatus
+      }
+    }
+    setSubmittingMonth(false);
+    if (submitted > 0) toast.success(`Submitted ${submitted} week${submitted > 1 ? 's' : ''} for approval`);
+  }, [submitableWeeks, store, personId, notifStore]);
 
   return (
     <div>
@@ -780,6 +801,17 @@ function PersonSection({
         </div>
         {isOwn && <Badge variant="outline" className="text-[8px] h-4">You</Badge>}
         <button onClick={onViewInGraph} className="p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-blue-600 transition-colors" title="View in Graph"><Network className="h-3.5 w-3.5" /></button>
+        {isOwn && submitableWeeks.length > 0 && (
+          <button
+            onClick={handleSubmitMonth}
+            disabled={submittingMonth}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors disabled:opacity-50"
+            title={`Submit ${submitableWeeks.length} week${submitableWeeks.length > 1 ? 's' : ''} for approval`}
+          >
+            <Send className="h-2.5 w-2.5" />
+            Submit {submitableWeeks.length > 1 ? `${submitableWeeks.length} weeks` : 'week'}
+          </button>
+        )}
         {isApprover && weeks.some(w => w.status === 'submitted') && (
           <button onClick={() => { const ct = store.batchApproveMonth(personId, weeks[0].weekStart.slice(0, 7), personName(viewerId || '')); toast.success(`Approved ${ct} weeks`); }}
             className="p-1 rounded hover:bg-emerald-50 text-emerald-600 transition-colors" title="Approve all"><CheckCircle2 className="h-3.5 w-3.5" /></button>
