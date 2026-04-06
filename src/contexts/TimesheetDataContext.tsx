@@ -606,6 +606,9 @@ const TimesheetStoreContext = createContext<TimesheetStoreAPI | null>(null);
 // --- localStorage fallback persistence ---
 const LS_KEY = 'workgraph-timesheet-weeks';
 const isDemoPersonId = (personId: string) => personId.startsWith('user-');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Local projects (proj_ prefix) don't exist in the DB — they must be handled locally. */
+const isLocalProjectId = (projectId: string) => !UUID_RE.test(projectId);
 
 function loadFromLocalStorage(): StoredWeek[] | null {
   try {
@@ -823,8 +826,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   // --- Debounced API persist ---
   const persistWeek = useCallback((personId: string, weekStart: string, weekData: StoredWeek) => {
-    // Skip demo identities and persist all real authenticated data.
-    if (!accessToken || isDemoPersonId(personId)) return;
+    // Skip demo identities and local-only projects (no DB row exists for proj_ IDs).
+    if (!accessToken || isDemoPersonId(personId) || isLocalProjectId(activeProjectId())) return;
 
     const key = `${personId}:${weekStart}`;
     // Cancel any pending sync for this week
@@ -857,7 +860,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     status: WeekStatus,
     meta?: { note?: string; by?: string }
   ) => {
-    if (!accessToken || isDemoPersonId(personId)) return;
+    if (!accessToken || isDemoPersonId(personId) || isLocalProjectId(activeProjectId())) return;
 
     try {
       await updateTimesheetStatus(weekStart, status, {
@@ -1015,14 +1018,14 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       }
     }
 
-    const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId));
+    const projectId = activeProjectId();
+    const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId) && !isLocalProjectId(projectId));
     if (!isRemoteWorkflow) {
       applyWeekStatusLocally(personId, weekStart, status, meta);
       return;
     }
 
     try {
-      const projectId = activeProjectId();
       const subjectId = buildTimesheetSubjectId(personId, weekStart);
 
       if (status === 'submitted') {
