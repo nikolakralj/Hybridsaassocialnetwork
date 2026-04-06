@@ -401,15 +401,56 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   // (self-approval). If Nikola is the approver in their own party, route upstream to next DAG node.
   const steps = getApprovalStepsForParty(submitterParty.id, parties);
   console.log('[approval-route] Steps for party', submitterParty.name, ':', steps.length,
-    'steps', steps.map(s => `step${s.step}(${s.partyId}, approvers:${s.approverIds.length})`).join(', '));
+    'steps', steps.map(s => `step${s.step}(${s.partyId}, approvers:[${s.approverIds.join(',')}])`).join(', '));
 
-  const firstStep = steps.find((step) => {
-    if (step.approverIds.length === 0) return true; // upstream party — fine
-    // Skip this step if every approver ID resolves to the submitter
+  let firstStep = steps.find((step) => {
+    if (step.approverIds.length === 0) return true;
     return !step.approverIds.every((id) => id === personId);
   });
+
+  // All steps are self-approval — find the next upstream party that has real approvers.
+  // This is the core fix: findNextApprovalParty walks the billsTo DAG beyond the submitter's
+  // party and finds the first party with an approver who isn't the submitter.
   if (!firstStep) {
-    console.warn('[approval-route] No valid first step found (all steps are self-approval or empty)');
+    console.log('[approval-route] All steps are self-approval, walking upstream via findNextApprovalParty');
+    const nextParty = findNextApprovalParty(submitterParty.id, parties, personId);
+    if (nextParty) {
+      const nextApprovers = nextParty.people
+        .filter((p) => p.canApprove && p.id !== personId)
+        .map((p) => p.id);
+      console.log('[approval-route] Found upstream party:', nextParty.name, 'with approvers:', nextApprovers);
+      if (nextApprovers.length > 0) {
+        firstStep = {
+          step: 1,
+          partyId: nextParty.id,
+          partyType: nextParty.partyType || 'company',
+          approverIds: nextApprovers,
+        };
+      }
+    }
+  }
+
+  if (!firstStep) {
+    // Last resort: scan ALL parties for anyone who can approve and isn't the submitter
+    console.log('[approval-route] findNextApprovalParty failed too, scanning all parties');
+    for (const party of parties) {
+      const approvers = party.people
+        .filter((p) => p.canApprove && p.id !== personId);
+      if (approvers.length > 0) {
+        firstStep = {
+          step: 1,
+          partyId: party.id,
+          partyType: party.partyType || 'company',
+          approverIds: approvers.map((p) => p.id),
+        };
+        console.log('[approval-route] Found approver in party', party.name, ':', approvers.map(a => a.name || a.id));
+        break;
+      }
+    }
+  }
+
+  if (!firstStep) {
+    console.warn('[approval-route] No approver found in any party after exhaustive search');
     return null;
   }
 
