@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
 import { ProjectApprovalsTab } from "./approvals/ProjectApprovalsTab";
-import { WorkGraphBuilder } from "./workgraph/WorkGraphBuilder";
+import { WorkGraphBuilder, ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card } from "./ui/card";
@@ -240,6 +240,8 @@ export function ProjectWorkspace({
   const [isTeamLoading, setIsTeamLoading] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [activeGraphViewer, setActiveGraphViewer] = useState<ViewerIdentity | null>(null);
+  const [workspaceViewer, setWorkspaceViewer] = useState<ViewerIdentity | null>(null);
+  const [workspaceViewerOptions, setWorkspaceViewerOptions] = useState<ViewerIdentity[]>([]);
 
   const enabledModules = modules.filter(m => m.isEnabled);
   const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
@@ -301,21 +303,57 @@ export function ProjectWorkspace({
       try {
         const parsed = JSON.parse(raw);
         if (parsed?.nodeId && parsed?.type) {
-          setActiveGraphViewer(parsed as ViewerIdentity);
+          const viewer = parsed as ViewerIdentity;
+          setActiveGraphViewer(viewer);
+          setWorkspaceViewer(viewer);
         }
       } catch {
         // Ignore malformed viewer payloads
       }
     }
 
+    const nameDirKey = `workgraph-name-dir:${projectId}`;
+    const VIEWER_TYPES = ['admin', 'company', 'agency', 'client', 'freelancer', 'party'];
+    const normalizeViewerType = (t: string): ViewerIdentity['type'] =>
+      t === 'party' ? 'company' : t as ViewerIdentity['type'];
+
+    const buildViewersFromNameDir = (): ViewerIdentity[] => {
+      const result: ViewerIdentity[] = [{ nodeId: '__admin__', type: 'admin', name: 'Admin (Full View)' }];
+      const nameDirRaw = sessionStorage.getItem(nameDirKey);
+      if (!nameDirRaw) return result;
+      try {
+        const parsed = JSON.parse(nameDirRaw) as Record<string, { name?: string; type?: string; orgId?: string }>;
+        Object.entries(parsed).forEach(([nodeId, meta]) => {
+          if (!meta?.name || !meta?.type) return;
+          if (!VIEWER_TYPES.includes(meta.type)) return;
+          result.push({ nodeId, type: normalizeViewerType(meta.type), name: meta.name, orgId: meta.orgId });
+        });
+      } catch { /* Ignore malformed viewer directory */ }
+      return result;
+    };
+    setWorkspaceViewerOptions(buildViewersFromNameDir());
+
     const onViewerChanged = (event: Event) => {
       const custom = event as CustomEvent<{ projectId?: string; viewer?: ViewerIdentity }>;
       if (!custom.detail?.viewer || custom.detail?.projectId !== projectId) return;
       setActiveGraphViewer(custom.detail.viewer);
+      setWorkspaceViewer(custom.detail.viewer);
+      setWorkspaceViewerOptions(buildViewersFromNameDir());
+    };
+
+    // Also listen for name directory updates (fired by WorkGraphBuilder when graph loads)
+    const onNameDirUpdated = (event: Event) => {
+      const custom = event as CustomEvent<{ projectId?: string }>;
+      if (custom.detail?.projectId !== projectId) return;
+      setWorkspaceViewerOptions(buildViewersFromNameDir());
     };
 
     window.addEventListener('workgraph-viewer-changed', onViewerChanged);
-    return () => window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
+    window.addEventListener('workgraph-namedir-updated', onNameDirUpdated);
+    return () => {
+      window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
+      window.removeEventListener('workgraph-namedir-updated', onNameDirUpdated);
+    };
   }, [projectId]);
 
   const resolveStoredViewer = (): ViewerIdentity | null => {
@@ -333,7 +371,7 @@ export function ProjectWorkspace({
     return activeGraphViewer;
   };
 
-  const effectiveViewer = resolveStoredViewer();
+  const effectiveViewer = workspaceViewer || resolveStoredViewer();
 
   const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
     await addProjectMember(projectId, payload, accessToken);
@@ -390,7 +428,7 @@ export function ProjectWorkspace({
                 Project workspace
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <NotificationCenterBell />
               <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenTeam}>
                 <Users className="w-4 h-4" />
@@ -401,6 +439,23 @@ export function ProjectWorkspace({
                 Settings
               </Button>
             </div>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            {effectiveViewer ? (
+              <ViewerSelector
+                viewers={workspaceViewerOptions}
+                current={effectiveViewer}
+                onChange={(viewer) => {
+                  setWorkspaceViewer(viewer);
+                  setActiveGraphViewer(viewer);
+                  sessionStorage.setItem(`workgraph-viewer-meta:${projectId}`, JSON.stringify(viewer));
+                  sessionStorage.setItem(`workgraph-viewer:${projectId}`, viewer.nodeId);
+                  window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
+                    detail: { projectId, viewer },
+                  }));
+                }}
+              />
+            ) : null}
           </div>
         </div>
       </div>
@@ -513,6 +568,11 @@ export function ProjectWorkspace({
                 scope={scope}
                 mode={mode}
                 asOf={asOf}
+                currentViewer={effectiveViewer}
+                onViewerChange={(viewer) => {
+                  setWorkspaceViewer(viewer);
+                  setActiveGraphViewer(viewer);
+                }}
               />
             </TabsContent>
 

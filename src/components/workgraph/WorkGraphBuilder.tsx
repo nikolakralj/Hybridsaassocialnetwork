@@ -1542,6 +1542,8 @@ export function WorkGraphBuilder({
       }
     });
     sessionStorage.setItem(`workgraph-name-dir:${projectId}`, JSON.stringify(dir));
+    // Notify ProjectWorkspace that the name directory is available/updated
+    window.dispatchEvent(new CustomEvent('workgraph-namedir-updated', { detail: { projectId } }));
 
     // Build a resilient person → org map from viewerOptions, which already uses
     // buildPersonToOrgMap (checks edges, partyId/orgId, and company name match).
