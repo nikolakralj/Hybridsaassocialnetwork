@@ -1364,12 +1364,49 @@ function HiddenBanner({ hiddenNodes, hiddenEdges }: { hiddenNodes: number; hidde
 }
 
 function buildEditableParties(nodes: BaseNode[], edges: BaseEdge[]): PartyEntry[] {
+  // Build person→org map using the same resilient logic as graph-visibility
+  const personToOrg = new Map<string, string>();
+  const partyIds = new Set(nodes.filter((n) => n.type === 'party').map((n) => n.id));
+
+  // From edges (employs/assigns)
+  edges.forEach((e) => {
+    if ((e.data?.edgeType === 'employs' || e.data?.edgeType === 'assigns') && partyIds.has(e.source)) {
+      personToOrg.set(e.target, e.source);
+    }
+  });
+  // From node data (partyId/orgId)
+  nodes.forEach((n) => {
+    if (n.type !== 'person' || personToOrg.has(n.id)) return;
+    const candidate = n.data?.partyId || n.data?.orgId;
+    if (typeof candidate === 'string' && partyIds.has(candidate)) {
+      personToOrg.set(n.id, candidate);
+    }
+  });
+  // From company name match
+  const partyNameToId = new Map<string, string>();
+  nodes.forEach((n) => {
+    if (n.type === 'party' && n.data?.name) {
+      partyNameToId.set(n.data.name.trim().toLowerCase(), n.id);
+    }
+  });
+  nodes.forEach((n) => {
+    if (n.type !== 'person' || personToOrg.has(n.id)) return;
+    const company = (n.data?.company || n.data?.orgName || '').trim().toLowerCase();
+    if (company && partyNameToId.has(company)) {
+      personToOrg.set(n.id, partyNameToId.get(company)!);
+    }
+  });
+
   return nodes
     .filter((node) => node.type === 'party')
     .map((partyNode, index) => {
       const partyId = partyNode.id;
       const people = nodes
-        .filter((node) => node.type === 'person' && (node.data?.partyId === partyId || node.data?.orgId === partyId))
+        .filter((node) => node.type === 'person' && (
+          node.data?.partyId === partyId ||
+          node.data?.orgId === partyId ||
+          personToOrg.get(node.id) === partyId
+        ))
         .map((personNode) => ({
           id: personNode.id,
           name: personNode.data?.name || '',
@@ -1841,10 +1878,35 @@ export function WorkGraphBuilder({
     nodes: BaseNode[];
     edges: BaseEdge[];
   }) => {
-    const existingNodeIds = new Set(allNodes.map((node) => node.id));
-    const existingEdgeIds = new Set(allEdges.map((edge) => edge.id));
-    const mergedNodes = [...allNodes, ...nodes.filter((node) => !existingNodeIds.has(node.id))];
-    const mergedEdges = [...allEdges, ...edges.filter((edge) => !existingEdgeIds.has(edge.id))];
+    // Build maps for incoming nodes/edges by ID so we can update OR add
+    const incomingNodeMap = new Map(nodes.map((n) => [n.id, n]));
+    const incomingEdgeMap = new Map(edges.map((e) => [e.id, e]));
+
+    // Update existing nodes with new data (e.g., partyId, canApprove, name changes),
+    // then append genuinely new nodes
+    const mergedNodes = allNodes.map((existing) => {
+      const incoming = incomingNodeMap.get(existing.id);
+      if (!incoming) return existing;
+      // Merge: incoming data overwrites, but keep existing position
+      return {
+        ...existing,
+        ...incoming,
+        position: existing.position, // preserve layout
+        data: { ...existing.data, ...incoming.data },
+      };
+    });
+    // Add nodes that don't exist yet
+    const existingNodeIds = new Set(allNodes.map((n) => n.id));
+    nodes.forEach((n) => { if (!existingNodeIds.has(n.id)) mergedNodes.push(n); });
+
+    // Same for edges: update existing, add new
+    const mergedEdges = allEdges.map((existing) => {
+      const incoming = incomingEdgeMap.get(existing.id);
+      if (!incoming) return existing;
+      return { ...existing, ...incoming, data: { ...existing.data, ...incoming.data } };
+    });
+    const existingEdgeIds = new Set(allEdges.map((e) => e.id));
+    edges.forEach((e) => { if (!existingEdgeIds.has(e.id)) mergedEdges.push(e); });
 
     await updateProject(projectId, {
       graph: {

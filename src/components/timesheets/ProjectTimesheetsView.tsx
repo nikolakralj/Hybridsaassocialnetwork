@@ -301,34 +301,53 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   const viewerId = viewerOverride?.id || storedViewerMeta?.nodeId || user?.id;
   const viewerType = viewerOverride?.type || storedViewerMeta?.type || authViewerType;
   const viewerOrgId = viewerOverride?.orgId || storedViewerMeta?.orgId;
-  const isPersonViewer = Boolean(viewerOrgId || viewerId?.startsWith('user-') || viewerType === 'freelancer');
+
+  // Determine if the viewer is a person or an org/party
+  const nameDir = getNameDir();
+  const viewerEntry = viewerId ? nameDir[viewerId] : undefined;
+  const isPersonViewer = Boolean(
+    viewerOrgId ||
+    viewerId?.startsWith('user-') ||
+    viewerType === 'freelancer' ||
+    (viewerEntry && viewerEntry.type !== 'party' && viewerEntry.orgId)
+  );
   const isAdmin = viewerType === 'admin';
-  const isMultiPersonViewer =
-    !isPersonViewer && (
-      isAdmin ||
-      viewerType === 'company' ||
-      viewerType === 'agency' ||
-      viewerType === 'client' ||
-      viewerId?.startsWith('org-') ||
-      viewerId?.startsWith('client-')
-    );
+  // Org/party viewer: an org, agency, or client party node (not a person)
+  const isOrgViewer = !isPersonViewer && !isAdmin && (
+    viewerType === 'company' ||
+    viewerType === 'agency' ||
+    viewerType === 'client' ||
+    (viewerEntry?.type === 'party')
+  );
+  const isMultiPersonViewer = isAdmin || isOrgViewer;
 
   // Persona-filtered weeks
   const { orgGroups, flatPersonWeeks } = useMemo(() => {
     const allWeeks = store.getAllWeeksForMonth(monthKey);
     const parties = getApprovalParties(projectId);
     let filtered: StoredWeek[];
-    if (isAdmin) filtered = allWeeks;
-    else if (viewerId?.startsWith('org-')) filtered = allWeeks.filter(w => personOrgId(w.personId) === viewerId);
-    else if (viewerId?.startsWith('client-')) filtered = allWeeks;
-    else if (viewerId) {
-      // Show own weeks + weeks of people this viewer can approve
+
+    if (isAdmin) {
+      // Admin sees everything
+      filtered = allWeeks;
+    } else if (isOrgViewer && viewerId) {
+      // Org/party viewer: sees weeks from people IN this org + people this org can approve
+      // Client at end of DAG should only see people they directly approve, not everything
+      filtered = allWeeks.filter(w => {
+        // Person belongs to this org
+        if (personOrgId(w.personId) === viewerId) return true;
+        // This org's approvers can approve the submitter (follows the approval chain)
+        return canViewerApproveSubmitter(viewerId, w.personId, parties);
+      });
+    } else if (viewerId) {
+      // Person viewer: own weeks + weeks of people this person can approve
       filtered = allWeeks.filter(w =>
         w.personId === viewerId ||
         canViewerApproveSubmitter(viewerId, w.personId, parties)
       );
+    } else {
+      filtered = allWeeks;
     }
-    else filtered = allWeeks;
 
     const byPerson = new Map<string, StoredWeek[]>();
     filtered.forEach(w => { const arr = byPerson.get(w.personId) || []; arr.push(w); byPerson.set(w.personId, arr); });

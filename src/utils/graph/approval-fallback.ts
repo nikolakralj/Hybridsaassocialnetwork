@@ -277,5 +277,17 @@ export function canViewerApproveSubmitter(
   if (!submitterParty) return false;
 
   const steps = getApprovalStepsForParty(submitterParty.id, parties);
-  return steps.some((s) => s.approverIds.includes(viewerId));
+
+  // Check if the viewerId is a person approver in any step
+  if (steps.some((s) => s.approverIds.includes(viewerId))) return true;
+
+  // Also check if viewerId is an org/party ID — the viewer might be an org-level viewer
+  // (e.g., NAS viewing as the client org). In that case, check if the org's partyId
+  // matches any step's partyId AND that party has at least one approver.
+  const viewerParty = parties.find((p) => p.id === viewerId);
+  if (viewerParty) {
+    return steps.some((s) => s.partyId === viewerId && s.approverIds.length > 0);
+  }
+
+  return false;
 }
