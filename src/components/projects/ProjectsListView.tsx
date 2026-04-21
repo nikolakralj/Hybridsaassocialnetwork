@@ -27,6 +27,7 @@ import {
   isLocalProjectFallbackEnabled,
   type StoredProjectInvitation,
 } from '../../utils/api/projects-api';
+import { clearProjectData } from '../../contexts/TimesheetDataContext';
 import type { ProjectRole } from '../../types/collaboration';
 import { toast } from 'sonner';
 
@@ -151,6 +152,7 @@ export function ProjectsListView() {
     if (!confirm('Are you sure you want to delete this project?')) return;
     try {
       await deleteProjectApi(projectId, accessToken);
+      clearProjectData(projectId); // Purge timesheets, approval dirs, viewer meta
       setProjects(projects.filter(p => p.id !== projectId));
       toast.success('Project deleted');
     } catch (error: any) {

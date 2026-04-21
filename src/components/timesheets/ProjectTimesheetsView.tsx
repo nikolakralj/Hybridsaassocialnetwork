@@ -33,7 +33,8 @@ import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask, TimeEntry, TimeCategory } from '../../contexts/TimesheetDataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useMonthContextSafe } from '../../contexts/MonthContext';
+import { useMonthContextSafe, monthKeyFromDate, toMonthStart } from '../../contexts/MonthContext';
+import { useWorkGraphContext } from '../../contexts/WorkGraphContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
 import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
@@ -44,37 +45,20 @@ import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph
 
 type NameDirEntry = { name: string; type: string; orgId?: string };
 type NameDir = Record<string, NameDirEntry>;
+const EMPTY_NAME_DIR: NameDir = {};
+const EMPTY_APPROVAL_PARTIES: ApprovalParty[] = [];
 
 let activeProjectId = '';
-let cachedNameDir: NameDir | null = null;
+let cachedNameDir: NameDir = EMPTY_NAME_DIR;
 let cachedOrgMap: Record<string, OrgInfo> | null = null;
-// NOTE: approval-parties cache is intentionally NOT module-level persistent —
-// the component uses a state-driven invalidation via workgraph-viewer-changed events
-// so the useMemo dependency handles freshness correctly.
+let cachedApprovalParties: ApprovalParty[] = EMPTY_APPROVAL_PARTIES;
 
 function getNameDir(): NameDir {
-  if (!activeProjectId) return {};
-  if (cachedNameDir) return cachedNameDir;
-  try {
-    const raw = sessionStorage.getItem(`workgraph-name-dir:${activeProjectId}`);
-    cachedNameDir = raw ? JSON.parse(raw) : {};
-    return cachedNameDir!;
-  } catch {
-    return {};
-  }
+  return cachedNameDir;
 }
 
-function getApprovalParties(projectId: string): ApprovalParty[] {
-  // Always read fresh from sessionStorage so graph-tab updates are reflected
-  // immediately without requiring a project navigation.
-  try {
-    const raw = sessionStorage.getItem(`workgraph-approval-dir:${projectId}`);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed?.parties) ? parsed.parties : [];
-  } catch {
-    return [];
-  }
+function getApprovalParties(): ApprovalParty[] {
+  return cachedApprovalParties;
 }
 
 function personName(id: string): string {
@@ -193,11 +177,19 @@ interface ProjectTimesheetsViewProps {
 // ============================================================================
 
 export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTimesheetsViewProps) {
+  const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
+  const projectNameDir = nameDirectory[projectId] ?? EMPTY_NAME_DIR;
+  const projectApprovalParties = approvalDirectory[projectId] ?? EMPTY_APPROVAL_PARTIES;
+
   if (activeProjectId !== projectId) {
     activeProjectId = projectId;
-    cachedNameDir = null;
     cachedOrgMap = null;
   }
+  if (cachedNameDir !== projectNameDir) {
+    cachedNameDir = projectNameDir;
+    cachedOrgMap = null;
+  }
+  cachedApprovalParties = projectApprovalParties;
 
   const store = useTimesheetStore();
   const { user } = useAuth();
@@ -236,28 +228,34 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   // Month helpers
   const monthKey = useMemo(() => {
     const d = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return monthKeyFromDate(d);
   }, [selectedMonth]);
   const monthLabel = useMemo(() => {
     const d = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
-    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return toMonthStart(d).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }, [selectedMonth]);
   const goMonth = useCallback((delta: number) => {
     const d = selectedMonth instanceof Date ? new Date(selectedMonth) : new Date(selectedMonth);
-    d.setMonth(d.getMonth() + delta);
-    setSelectedMonth(d);
+    const monthStart = toMonthStart(d);
+    monthStart.setMonth(monthStart.getMonth() + delta);
+    setSelectedMonth(monthStart);
   }, [selectedMonth, setSelectedMonth]);
 
   const goToToday = useCallback(() => {
-    const now = new Date();
-    setSelectedMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    setSelectedMonth(toMonthStart(new Date()));
   }, [setSelectedMonth]);
 
   const isCurrentMonth = useMemo(() => {
-    const now = new Date();
-    const d = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
+    const now = toMonthStart(new Date());
+    const d = selectedMonth instanceof Date ? toMonthStart(selectedMonth) : toMonthStart(new Date(selectedMonth));
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
   }, [selectedMonth]);
+
+  useEffect(() => {
+    if (!nameDirectory[projectId] || !approvalDirectory[projectId]) {
+      void loadGraphContext(projectId);
+    }
+  }, [projectId, nameDirectory, approvalDirectory, loadGraphContext]);
 
   // Read viewer meta from sessionStorage and stay in sync with graph-tab changes.
   // useMemo([projectId]) would go stale when WorkGraphBuilder updates sessionStorage
@@ -275,22 +273,18 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     }
   };
   const [storedViewerMeta, setStoredViewerMeta] = useState(readViewerMeta);
-  // graphVersion increments on every workgraph-viewer-changed event so that
-  // approvalParties useMemo re-reads fresh data from sessionStorage.
-  const [graphVersion, setGraphVersion] = useState(0);
-
   useEffect(() => {
     // Re-read whenever the graph tab updates the viewer or approval parties.
     const onViewerChanged = (e: Event) => {
       const detail = (e as CustomEvent<{ projectId?: string }>).detail;
       if (detail?.projectId && detail.projectId !== projectId) return;
       setStoredViewerMeta(readViewerMeta());
-      setGraphVersion(v => v + 1);
+      void loadGraphContext(projectId);
     };
     window.addEventListener('workgraph-viewer-changed', onViewerChanged);
     return () => window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, loadGraphContext]);
 
   const authViewerType =
     user?.persona_type === 'company'
@@ -324,7 +318,6 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   // Persona-filtered weeks
   const { orgGroups, flatPersonWeeks } = useMemo(() => {
     const allWeeks = store.getAllWeeksForMonth(monthKey);
-    const parties = getApprovalParties(projectId);
     let filtered: StoredWeek[];
 
     if (isAdmin) {
@@ -337,13 +330,13 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
         // Person belongs to this org
         if (personOrgId(w.personId) === viewerId) return true;
         // This org's approvers can approve the submitter (follows the approval chain)
-        return canViewerApproveSubmitter(viewerId, w.personId, parties);
+        return canViewerApproveSubmitter(viewerId, w.personId, projectApprovalParties);
       });
     } else if (viewerId) {
       // Person viewer: own weeks + weeks of people this person can approve
       filtered = allWeeks.filter(w =>
         w.personId === viewerId ||
-        canViewerApproveSubmitter(viewerId, w.personId, parties)
+        canViewerApproveSubmitter(viewerId, w.personId, projectApprovalParties)
       );
     } else {
       filtered = allWeeks;
@@ -363,7 +356,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
     return { orgGroups: [...byOrg.values()], flatPersonWeeks: flatPW };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.version, monthKey, viewerId, isAdmin]);
+  }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir]);
 
   // Stats
   const totalHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHours(w), 0), 0);
@@ -415,7 +408,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       options.push({ id, name: entry.name, type: entry.type, label: `${entry.name} (${suffix})` });
     });
     return options;
-  }, [graphVersion]);
+  }, [projectNameDir]);
 
   const switchViewer = useCallback((option: { id: string; name: string; type: string; orgId?: string }) => {
     // Write to sessionStorage so the rest of the app picks it up
@@ -424,7 +417,6 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       : { nodeId: option.id, type: option.type, name: option.name, orgId: option.orgId };
     sessionStorage.setItem(`workgraph-viewer-meta:${projectId}`, JSON.stringify(meta));
     setStoredViewerMeta(meta);
-    setGraphVersion(v => v + 1);
     setViewerPickerOpen(false);
     // Also fire the event so other components stay in sync
     window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', { detail: { projectId } }));
@@ -446,15 +438,15 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayPopup, store.version, monthKey]);
 
-  // graphVersion dependency ensures this re-reads when the graph tab updates sessionStorage.
-  const approvalParties = useMemo(() => getApprovalParties(projectId), [projectId, store.version, graphVersion]);
+  const approvalParties = getApprovalParties();
 
   const canEditDay = useCallback((personId: string, weekStatus: WeekStatus) => {
     const isOwn = viewerId === personId;
     return isOwn && (weekStatus === 'draft' || weekStatus === 'rejected');
   }, [viewerId]);
 
-  const canViewerApprovePerson = useCallback((personId: string) => {
+  const canViewerApprovePerson = useCallback((personId: string, week?: StoredWeek) => {
+    if (week && (week.status === 'approved' || week.status === 'draft')) return false;
     if (isAdmin) return true;
     if (!viewerId) return false;
     return canViewerApproveSubmitter(viewerId, personId, approvalParties);
@@ -754,7 +746,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
           week={drawerWeekData} personId={drawerWeek.personId}
           allWeeks={store.getWeeksForPerson(drawerWeek.personId, monthKey)}
           viewerId={viewerId} isAdmin={isAdmin} store={store}
-          canApprove={canViewerApprovePerson(drawerWeek.personId)}
+          canApprove={canViewerApprovePerson(drawerWeek.personId, drawerWeekData)}
           onClose={() => setDrawerWeek(null)}
           onNavigateWeek={(ws) => setDrawerWeek(prev => prev ? { ...prev, weekStart: ws } : null)}
           onViewInGraph={viewInGraph}
@@ -780,7 +772,7 @@ function PersonSection({
   viewerId?: string;
   isAdmin: boolean;
   store: ReturnType<typeof useTimesheetStore>;
-  canApprovePerson: (personId: string) => boolean;
+  canApprovePerson: (personId: string, week?: StoredWeek) => boolean;
   onClickWeek: (weekStart: string) => void;
   onClickDay: (e: React.MouseEvent, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => void;
   canEditDay: (weekStatus: WeekStatus) => boolean;
@@ -794,7 +786,7 @@ function PersonSection({
   dragOverDay: number | null;
 }) {
   const isOwn = viewerId === personId;
-  const isApprover = canApprovePerson(personId);
+  const hasPendingApprovalActions = weeks.some((week) => canApprovePerson(personId, week) && week.status === 'submitted');
   const total = weeks.reduce((s, w) => s + sumWeekHours(w), 0);
   const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
   const notifStore = useNotificationStore();
@@ -847,7 +839,7 @@ function PersonSection({
             Submit {submitableWeeks.length > 1 ? `${submitableWeeks.length} weeks` : 'week'}
           </button>
         )}
-        {isApprover && weeks.some(w => w.status === 'submitted') && (
+        {hasPendingApprovalActions && (
           <button onClick={() => { const ct = store.batchApproveMonth(personId, weeks[0].weekStart.slice(0, 7), personName(viewerId || '')); toast.success(`Approved ${ct} weeks`); }}
             className="p-1 rounded hover:bg-emerald-50 text-emerald-600 transition-colors" title="Approve all"><CheckCircle2 className="h-3.5 w-3.5" /></button>
         )}
@@ -914,7 +906,7 @@ function PersonSection({
             <Badge variant="outline" className={`text-[9px] w-16 justify-center ${STATUS_COLOR[w.status]}`}>{STATUS_LABEL[w.status]}</Badge>
 
             <div className="flex items-center gap-0.5 w-14 justify-end opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-              {isApprover && w.status === 'submitted' && (
+              {canApprovePerson(personId, w) && w.status === 'submitted' && (
                 <button onClick={async () => {
                   try {
                     await fireStatusChange(w, 'approved', { by: personName(viewerId || '') });

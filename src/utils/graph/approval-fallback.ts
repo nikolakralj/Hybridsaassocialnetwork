@@ -37,12 +37,21 @@ function getApprovers(party: ApprovalParty): ApprovalPerson[] {
   return sortDeterministically(party.people.filter((p) => p.canApprove));
 }
 
+/** When true, suppresses all approval-fallback logging (used during wizard preview). */
+let _suppressLogs = false;
+
+export function suppressApprovalLogs(suppress: boolean): void {
+  _suppressLogs = suppress;
+}
+
 function logFallbackDecision(message: string, details: Record<string, unknown>): void {
+  if (_suppressLogs) return;
   if (typeof console === 'undefined' || typeof console.debug !== 'function') return;
   console.debug(`[approval-fallback] ${message}`, details);
 }
 
 function logFallbackWarning(message: string, details: Record<string, unknown>): void {
+  if (_suppressLogs) return;
   if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
   console.warn(`[approval-fallback] ${message}`, details);
 }

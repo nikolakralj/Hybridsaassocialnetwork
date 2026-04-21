@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Plus, Save, Sparkles, Trash2, Upload } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileText,
+  Loader2,
+  Plus,
+  Save,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +27,15 @@ type InvoiceLineItem = {
   quantity: string;
   unitPrice: string;
   amount: string;
+};
+
+type ExtractionPreview = {
+  locale: string;
+  sellerLabel: string;
+  buyerLabel: string;
+  invoiceNumberLabel: string;
+  vatRate: string;
+  confidence: 'api' | 'fallback';
 };
 
 type ImportedInvoice = {
@@ -38,6 +57,8 @@ type ImportedInvoice = {
   aiMessage: string;
   requiresManualReview: boolean;
   templateApplied: boolean;
+  extractionStatus: 'idle' | 'loading' | 'ready' | 'fallback' | 'error';
+  extractionPreview: ExtractionPreview | null;
 };
 
 type FileHints = {
@@ -45,6 +66,35 @@ type FileHints = {
   issueDate?: string;
   currency?: CurrencyCode;
   total?: string;
+};
+
+type ExtractApiResponse = {
+  locale?: string;
+  layout?: {
+    header?: {
+      invoiceNumberLabel?: string;
+    };
+    parties?: {
+      sellerLabel?: string;
+      buyerLabel?: string;
+    };
+  };
+  compliance?: {
+    taxRate?: number | string;
+  };
+  fieldMap?: {
+    invoiceNumber?: string;
+  };
+  extractedInvoice?: {
+    invoiceNumber?: string;
+    issueDate?: string;
+    dueDate?: string;
+    currency?: string;
+    vendor?: string;
+    client?: string;
+    notes?: string;
+    total?: string | number;
+  };
 };
 
 export type ProjectInvoiceLineDefault = {
@@ -209,8 +259,92 @@ function ensureLineItem(line: Partial<ProjectInvoiceLineDefault> | null | undefi
     amount,
   };
 
-  // Keep template-derived values internally consistent before rendering/editing.
   return line?.amount?.trim() ? normalizeLineItem(draftLine, 'amount') : normalizeLineItem(draftLine, 'unitPrice');
+}
+
+function inferLocaleFromCurrency(currency: string): string {
+  if (currency === 'EUR') return 'hr-HR';
+  if (currency === 'GBP') return 'en-GB';
+  return 'en-US';
+}
+
+function createFallbackPreview(file: File): ExtractionPreview {
+  const hints = deriveFileHints(file.name);
+  const currency = hints.currency ?? 'USD';
+  const locale = inferLocaleFromCurrency(currency);
+  return {
+    locale,
+    sellerLabel: locale === 'hr-HR' ? 'Prodavatelj' : 'Seller',
+    buyerLabel: locale === 'hr-HR' ? 'Kupac' : 'Buyer',
+    invoiceNumberLabel: locale === 'hr-HR' ? 'Racun' : 'Invoice number',
+    vatRate: locale === 'hr-HR' ? '25%' : '0%',
+    confidence: 'fallback',
+  };
+}
+
+function previewFromApiResponse(response: ExtractApiResponse, fallback: ExtractionPreview): ExtractionPreview {
+  const locale = response.locale || fallback.locale;
+  const invoiceNumberLabel = response.fieldMap?.invoiceNumber || response.layout?.header?.invoiceNumberLabel || fallback.invoiceNumberLabel;
+  return {
+    locale,
+    sellerLabel: response.layout?.parties?.sellerLabel || fallback.sellerLabel,
+    buyerLabel: response.layout?.parties?.buyerLabel || fallback.buyerLabel,
+    invoiceNumberLabel,
+    vatRate: String(response.compliance?.taxRate ?? fallback.vatRate),
+    confidence: 'api',
+  };
+}
+
+function applyExtractionResponse(invoice: ImportedInvoice, response: ExtractApiResponse, preview: ExtractionPreview): ImportedInvoice {
+  const extracted = response.extractedInvoice;
+  const nextInvoice = { ...invoice };
+
+  if (extracted?.invoiceNumber) nextInvoice.invoiceNumber = extracted.invoiceNumber;
+  if (extracted?.issueDate) nextInvoice.issueDate = extracted.issueDate;
+  if (extracted?.dueDate) nextInvoice.dueDate = extracted.dueDate;
+  if (extracted?.vendor) nextInvoice.vendor = extracted.vendor;
+  if (extracted?.client) nextInvoice.client = extracted.client;
+  if (extracted?.currency) nextInvoice.currency = extracted.currency.toUpperCase();
+  if (typeof extracted?.notes === 'string' && extracted.notes.trim()) nextInvoice.notes = extracted.notes;
+  if (typeof extracted?.total === 'string' || typeof extracted?.total === 'number') {
+    const totalValue = typeof extracted.total === 'number' ? formatAmount(extracted.total) : extracted.total;
+    if (!nextInvoice.isTotalManuallyEdited) nextInvoice.total = totalValue;
+  }
+
+  nextInvoice.extractionPreview = preview;
+  nextInvoice.extractionStatus = 'ready';
+  nextInvoice.requiresManualReview = false;
+  nextInvoice.aiStatus = 'suggested';
+  nextInvoice.aiMessage = 'Claude extracted a reusable invoice template preview from this file.';
+  return nextInvoice;
+}
+
+async function requestInvoiceExtraction(file: File): Promise<{ preview: ExtractionPreview; response?: ExtractApiResponse; usedFallback: boolean }> {
+  const fallbackPreview = createFallbackPreview(file);
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('mode', 'template-preview');
+  formData.append('model', 'claude-sonnet-4-6');
+
+  try {
+    const response = await fetch('/api/invoice-extract', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) throw new Error(`invoice-extract ${response.status}`);
+    const json = (await response.json()) as ExtractApiResponse;
+    return {
+      preview: previewFromApiResponse(json, fallbackPreview),
+      response: json,
+      usedFallback: false,
+    };
+  } catch {
+    return {
+      preview: fallbackPreview,
+      usedFallback: true,
+    };
+  }
 }
 
 export function invoiceTemplateStorageKey(projectId: string): string {
@@ -235,10 +369,7 @@ export function readProjectInvoiceTemplate(projectId: string): ProjectInvoiceTem
     if (typeof parsed.currency !== 'string' || typeof parsed.notes !== 'string') return null;
     if (typeof parsed.dueDateOffsetDays !== 'number') return null;
     const lineDefaults = Array.isArray(parsed.lineDefaults) ? parsed.lineDefaults : [];
-    const normalizedNotes = parsed.notes
-      .replace(/Imported from .*?\.?/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const normalizedNotes = parsed.notes.replace(/Imported from .*?\.?/gi, '').replace(/\s+/g, ' ').trim();
     return {
       templateName: typeof parsed.templateName === 'string' ? parsed.templateName : 'Project Invoice Template',
       vendor: parsed.vendor,
@@ -318,9 +449,11 @@ function createImportedInvoice(
     notes: `Imported from ${file.name}.`,
     isTotalManuallyEdited: false,
     aiStatus: 'idle',
-    aiMessage: 'Ready for editing. AI Adapt is optional.',
+    aiMessage: 'Ready for editing. AI extraction has not run yet.',
     requiresManualReview: false,
     templateApplied: false,
+    extractionStatus: 'loading',
+    extractionPreview: null,
   };
 
   return template ? applyTemplateToInvoice(baseInvoice, template, 'upload') : baseInvoice;
@@ -328,10 +461,7 @@ function createImportedInvoice(
 
 function toTemplate(invoice: ImportedInvoice): ProjectInvoiceTemplate {
   const dueDateOffsetDays = dayOffset(invoice.issueDate, invoice.dueDate);
-  const sanitizedNotes = invoice.notes
-    .replace(/Imported from .*?\.?/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const sanitizedNotes = invoice.notes.replace(/Imported from .*?\.?/gi, '').replace(/\s+/g, ' ').trim();
   return {
     templateName: 'Project Invoice Template',
     vendor: invoice.vendor,
@@ -349,6 +479,21 @@ function toTemplate(invoice: ImportedInvoice): ProjectInvoiceTemplate {
   };
 }
 
+async function createInvoiceTemplate(projectId: string, template: ProjectInvoiceTemplate): Promise<'api' | 'fallback'> {
+  try {
+    const response = await fetch('/api/invoice-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, template }),
+    });
+    if (!response.ok) throw new Error(`invoice-template ${response.status}`);
+    return 'api';
+  } catch {
+    writeProjectInvoiceTemplate(projectId, template);
+    return 'fallback';
+  }
+}
+
 export function InvoiceImportPanel({
   projectId,
   defaultVendor,
@@ -359,6 +504,8 @@ export function InvoiceImportPanel({
   const [importedInvoices, setImportedInvoices] = useState<ImportedInvoice[]>([]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [localTemplate, setLocalTemplate] = useState<ProjectInvoiceTemplate | null>(() => readProjectInvoiceTemplate(projectId));
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
 
   useEffect(() => {
     setLocalTemplate(projectTemplate ?? readProjectInvoiceTemplate(projectId));
@@ -390,15 +537,41 @@ export function InvoiceImportPanel({
     setImportedInvoices(prev => prev.map(inv => (inv.id === invoiceId ? updater(inv) : inv)));
   };
 
-  const handleUploadChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files ? Array.from(event.target.files) : [];
     if (files.length === 0) return;
 
+    setIsUploading(true);
     const nextInvoices = files.map(file => createImportedInvoice(file, { defaultVendor, defaultClient }, activeTemplate ?? null));
     setImportedInvoices(prev => [...nextInvoices, ...prev]);
     setSelectedInvoiceId(nextInvoices[0]?.id ?? null);
     event.target.value = '';
 
+    await Promise.all(nextInvoices.map(async invoice => {
+      const sourceFile = files.find(file => file.name === invoice.sourceFileName);
+      if (!sourceFile) return;
+
+      const result = await requestInvoiceExtraction(sourceFile);
+      updateInvoice(invoice.id, current => {
+        if (result.response) {
+          return {
+            ...applyExtractionResponse(current, result.response, result.preview),
+            extractionStatus: 'ready',
+          };
+        }
+
+        return {
+          ...current,
+          extractionPreview: result.preview,
+          extractionStatus: 'fallback',
+          aiStatus: 'manual_required',
+          requiresManualReview: true,
+          aiMessage: 'Edge extraction is unavailable, so a local fallback preview was generated. Review before saving.',
+        };
+      });
+    }));
+
+    setIsUploading(false);
     const templateMsg = activeTemplate ? ' Template settings were auto-applied.' : '';
     toast.success(`Imported ${nextInvoices.length} file${nextInvoices.length === 1 ? '' : 's'} for invoice review.${templateMsg}`);
   };
@@ -488,47 +661,29 @@ export function InvoiceImportPanel({
     }));
   };
 
-  const runAiAdapt = (invoiceId: string) => {
-    updateInvoice(invoiceId, invoice => {
-      const hints = deriveFileHints(invoice.sourceFileName);
-      const defaultIssueDate = invoice.uploadedAt;
-      const defaultDueDate = addDays(defaultIssueDate, 30);
-      let suggestionsApplied = 0;
-      let nextInvoice = { ...invoice };
+  const runAiAdapt = async (invoiceId: string) => {
+    const invoice = importedInvoices.find(item => item.id === invoiceId);
+    if (!invoice) return;
 
-      if (hints.invoiceNumber && (invoice.invoiceNumber.trim() === '' || invoice.invoiceNumber.startsWith('IMP-'))) {
-        nextInvoice.invoiceNumber = hints.invoiceNumber;
-        suggestionsApplied += 1;
-      }
+    updateInvoice(invoiceId, current => ({
+      ...current,
+      extractionStatus: 'loading',
+      aiMessage: 'Analyzing your invoice template...',
+    }));
 
-      if (hints.issueDate && invoice.issueDate === defaultIssueDate) {
-        nextInvoice.issueDate = hints.issueDate;
-        if (invoice.dueDate === defaultDueDate) nextInvoice.dueDate = addDays(hints.issueDate, 30);
-        suggestionsApplied += 1;
-      }
+    const file = new File([''], invoice.sourceFileName, { type: invoice.sourceFileType });
+    const result = await requestInvoiceExtraction(file);
 
-      if (hints.currency && invoice.currency === 'USD') {
-        nextInvoice.currency = hints.currency;
-        suggestionsApplied += 1;
-      }
-
-      if (hints.total && !invoice.isTotalManuallyEdited && parseAmount(invoice.total) === 0) {
-        nextInvoice.total = hints.total;
-        if (invoice.lineItems.length > 0) {
-          const [first, ...rest] = invoice.lineItems;
-          const amount = hints.total;
-          nextInvoice.lineItems = [{ ...first, quantity: '1', unitPrice: amount, amount }, ...rest];
-        }
-        suggestionsApplied += 1;
-      }
-
-      nextInvoice.requiresManualReview = suggestionsApplied === 0;
-      nextInvoice.aiStatus = suggestionsApplied > 0 ? 'suggested' : 'manual_required';
-      nextInvoice.aiMessage = suggestionsApplied > 0
-        ? `AI Adapt updated ${suggestionsApplied} field${suggestionsApplied === 1 ? '' : 's'}.`
-        : 'AI Adapt could not infer confident values from this file. Manual review required.';
-      nextInvoice.templateApplied = false;
-      return nextInvoice;
+    updateInvoice(invoiceId, current => {
+      if (result.response) return applyExtractionResponse(current, result.response, result.preview);
+      return {
+        ...current,
+        extractionPreview: result.preview,
+        extractionStatus: 'fallback',
+        aiStatus: 'manual_required',
+        requiresManualReview: true,
+        aiMessage: 'AI extract endpoint is unavailable right now, so a local fallback preview is shown.',
+      };
     });
 
     toast.info('AI Adapt completed.');
@@ -538,13 +693,19 @@ export function InvoiceImportPanel({
     setImportedInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
   };
 
-  const saveSelectedAsTemplate = () => {
+  const saveSelectedAsTemplate = async () => {
     if (!selectedInvoice) return;
+    setIsSavingTemplate(true);
     const template = toTemplate(selectedInvoice);
-    writeProjectInvoiceTemplate(projectId, template);
+    const saveMode = await createInvoiceTemplate(projectId, template);
     setLocalTemplate(template);
     onTemplateSaved?.(template);
-    toast.success('Project template saved. Future imports and drafts can reuse these settings.');
+    setIsSavingTemplate(false);
+    toast.success(
+      saveMode === 'api'
+        ? 'Project invoice template saved to the API.'
+        : 'Project invoice template saved locally. API unavailable, so local fallback was used.',
+    );
   };
 
   const applyTemplateToSelected = () => {
@@ -566,8 +727,7 @@ export function InvoiceImportPanel({
           <div>
             <CardTitle className="text-base font-semibold text-slate-900">Invoice Import + Template Reuse</CardTitle>
             <p className="mt-1 text-sm text-slate-500">
-              Upload invoice files, edit fields, and reuse project template settings. This reuses invoice format/settings,
-              not exact OCR or visual PDF cloning.
+              Upload invoice files, extract a reusable template preview, then save project-level invoice settings for future drafts.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -584,7 +744,7 @@ export function InvoiceImportPanel({
             Upload files (PDF, DOC, DOCX, images, or any format)
           </Label>
           <div className="flex items-center gap-3">
-            <Upload className="h-4 w-4 text-slate-500" />
+            {isUploading ? <Loader2 className="h-4 w-4 animate-spin text-indigo-600" /> : <Upload className="h-4 w-4 text-slate-500" />}
             <Input
               id="invoice-file-upload"
               type="file"
@@ -592,8 +752,10 @@ export function InvoiceImportPanel({
               accept="*/*,.pdf,.doc,.docx,image/*"
               onChange={handleUploadChange}
               className="h-10 cursor-pointer bg-white"
+              disabled={isUploading}
             />
           </div>
+          {isUploading ? <p className="mt-2 text-xs text-indigo-700">Analyzing your invoice template...</p> : null}
         </div>
       </CardHeader>
 
@@ -602,7 +764,7 @@ export function InvoiceImportPanel({
           <div className="rounded-lg border border-slate-200 bg-white p-8 text-center">
             <FileText className="mx-auto mb-2 h-8 w-8 text-slate-300" />
             <p className="text-sm text-slate-600">
-              No files imported yet. Upload an invoice to start editing and optionally save template settings for this project.
+              No files imported yet. Upload an invoice to start editing, preview extracted fields, and save template settings for this project.
             </p>
           </div>
         ) : (
@@ -615,14 +777,17 @@ export function InvoiceImportPanel({
                 {importedInvoices.map(invoice => {
                   let badgeLabel = 'Ready';
                   let badgeClass = 'border-slate-200 text-slate-600';
-                  if (invoice.requiresManualReview) {
+                  if (invoice.extractionStatus === 'loading') {
+                    badgeLabel = 'Extracting';
+                    badgeClass = 'border-indigo-200 bg-indigo-50 text-indigo-700';
+                  } else if (invoice.requiresManualReview) {
                     badgeLabel = 'Needs Review';
                     badgeClass = 'border-amber-200 bg-amber-50 text-amber-700';
                   } else if (invoice.templateApplied) {
                     badgeLabel = 'Template Applied';
                     badgeClass = 'border-emerald-200 bg-emerald-50 text-emerald-700';
                   } else if (invoice.aiStatus === 'suggested') {
-                    badgeLabel = 'AI Adapted';
+                    badgeLabel = 'Extracted';
                     badgeClass = 'border-indigo-200 bg-indigo-50 text-indigo-700';
                   }
 
@@ -657,6 +822,7 @@ export function InvoiceImportPanel({
                       </div>
                       <div className="mt-2 flex items-center gap-2">
                         <Badge variant="outline" className={badgeClass}>
+                          {invoice.extractionStatus === 'loading' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                           {badgeLabel}
                         </Badge>
                       </div>
@@ -676,29 +842,16 @@ export function InvoiceImportPanel({
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      className="border-slate-200 text-slate-700 hover:bg-slate-50"
-                      onClick={saveSelectedAsTemplate}
-                    >
-                      <Save className="mr-2 h-4 w-4" />
-                      Save as Template
+                    <Button variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50" onClick={saveSelectedAsTemplate} disabled={isSavingTemplate || selectedInvoice.extractionStatus === 'loading'}>
+                      {isSavingTemplate ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                      Save Template
                     </Button>
-                    <Button
-                      variant="outline"
-                      disabled={!activeTemplate}
-                      className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                      onClick={applyTemplateToSelected}
-                    >
+                    <Button variant="outline" disabled={!activeTemplate} className="border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={applyTemplateToSelected}>
                       <CheckCircle2 className="mr-2 h-4 w-4" />
                       Apply Project Template
                     </Button>
-                    <Button
-                      variant="outline"
-                      className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                      onClick={() => runAiAdapt(selectedInvoice.id)}
-                    >
-                      <Sparkles className="mr-2 h-4 w-4" />
+                    <Button variant="outline" className="border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={() => runAiAdapt(selectedInvoice.id)} disabled={selectedInvoice.extractionStatus === 'loading'}>
+                      {selectedInvoice.extractionStatus === 'loading' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                       AI Adapt
                     </Button>
                   </div>
@@ -713,61 +866,53 @@ export function InvoiceImportPanel({
                 ) : (
                   <Alert className="mb-4 border-slate-200 bg-slate-50 text-slate-800">
                     <CheckCircle2 className="h-4 w-4" />
-                    <AlertTitle>Editing mode</AlertTitle>
+                    <AlertTitle>Template preview ready</AlertTitle>
                     <AlertDescription>{selectedInvoice.aiMessage}</AlertDescription>
                   </Alert>
                 )}
 
+                {selectedInvoice.extractionPreview ? (
+                  <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-slate-900">Extracted preview</h5>
+                      <Badge variant="outline" className={selectedInvoice.extractionPreview.confidence === 'api' ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-amber-200 bg-amber-50 text-amber-700'}>
+                        {selectedInvoice.extractionPreview.confidence === 'api' ? 'Claude API' : 'Fallback'}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="rounded-md border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Locale</p><p className="mt-1 text-sm font-medium text-slate-900">{selectedInvoice.extractionPreview.locale}</p></div>
+                      <div className="rounded-md border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Seller label</p><p className="mt-1 text-sm font-medium text-slate-900">{selectedInvoice.extractionPreview.sellerLabel}</p></div>
+                      <div className="rounded-md border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Buyer label</p><p className="mt-1 text-sm font-medium text-slate-900">{selectedInvoice.extractionPreview.buyerLabel}</p></div>
+                      <div className="rounded-md border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Invoice number label</p><p className="mt-1 text-sm font-medium text-slate-900">{selectedInvoice.extractionPreview.invoiceNumberLabel}</p></div>
+                      <div className="rounded-md border border-slate-200 bg-white p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">VAT rate</p><p className="mt-1 text-sm font-medium text-slate-900">{selectedInvoice.extractionPreview.vatRate}</p></div>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="space-y-1">
                     <Label htmlFor={`invoice-number-${selectedInvoice.id}`}>Invoice Number</Label>
-                    <Input
-                      id={`invoice-number-${selectedInvoice.id}`}
-                      value={selectedInvoice.invoiceNumber}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'invoiceNumber', event.target.value)}
-                    />
+                    <Input id={`invoice-number-${selectedInvoice.id}`} value={selectedInvoice.invoiceNumber} onChange={event => handleFieldChange(selectedInvoice.id, 'invoiceNumber', event.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`currency-${selectedInvoice.id}`}>Currency</Label>
-                    <Input
-                      id={`currency-${selectedInvoice.id}`}
-                      value={selectedInvoice.currency}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'currency', event.target.value)}
-                    />
+                    <Input id={`currency-${selectedInvoice.id}`} value={selectedInvoice.currency} onChange={event => handleFieldChange(selectedInvoice.id, 'currency', event.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`issue-date-${selectedInvoice.id}`}>Issue Date</Label>
-                    <Input
-                      id={`issue-date-${selectedInvoice.id}`}
-                      type="date"
-                      value={selectedInvoice.issueDate}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'issueDate', event.target.value)}
-                    />
+                    <Input id={`issue-date-${selectedInvoice.id}`} type="date" value={selectedInvoice.issueDate} onChange={event => handleFieldChange(selectedInvoice.id, 'issueDate', event.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`due-date-${selectedInvoice.id}`}>Due Date</Label>
-                    <Input
-                      id={`due-date-${selectedInvoice.id}`}
-                      type="date"
-                      value={selectedInvoice.dueDate}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'dueDate', event.target.value)}
-                    />
+                    <Input id={`due-date-${selectedInvoice.id}`} type="date" value={selectedInvoice.dueDate} onChange={event => handleFieldChange(selectedInvoice.id, 'dueDate', event.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`vendor-${selectedInvoice.id}`}>Vendor</Label>
-                    <Input
-                      id={`vendor-${selectedInvoice.id}`}
-                      value={selectedInvoice.vendor}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'vendor', event.target.value)}
-                    />
+                    <Input id={`vendor-${selectedInvoice.id}`} value={selectedInvoice.vendor} onChange={event => handleFieldChange(selectedInvoice.id, 'vendor', event.target.value)} />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`client-${selectedInvoice.id}`}>Client</Label>
-                    <Input
-                      id={`client-${selectedInvoice.id}`}
-                      value={selectedInvoice.client}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'client', event.target.value)}
-                    />
+                    <Input id={`client-${selectedInvoice.id}`} value={selectedInvoice.client} onChange={event => handleFieldChange(selectedInvoice.id, 'client', event.target.value)} />
                   </div>
                 </div>
 
@@ -785,47 +930,23 @@ export function InvoiceImportPanel({
                         <div className="grid grid-cols-1 gap-2 md:grid-cols-12">
                           <div className="md:col-span-5">
                             <Label htmlFor={`desc-${item.id}`}>Description</Label>
-                            <Input
-                              id={`desc-${item.id}`}
-                              value={item.description}
-                              onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'description', event.target.value)}
-                            />
+                            <Input id={`desc-${item.id}`} value={item.description} onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'description', event.target.value)} />
                           </div>
                           <div className="md:col-span-2">
                             <Label htmlFor={`qty-${item.id}`}>Qty</Label>
-                            <Input
-                              id={`qty-${item.id}`}
-                              inputMode="decimal"
-                              value={item.quantity}
-                              onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'quantity', event.target.value)}
-                            />
+                            <Input id={`qty-${item.id}`} inputMode="decimal" value={item.quantity} onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'quantity', event.target.value)} />
                           </div>
                           <div className="md:col-span-2">
                             <Label htmlFor={`unit-price-${item.id}`}>Unit Price</Label>
-                            <Input
-                              id={`unit-price-${item.id}`}
-                              inputMode="decimal"
-                              value={item.unitPrice}
-                              onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'unitPrice', event.target.value)}
-                            />
+                            <Input id={`unit-price-${item.id}`} inputMode="decimal" value={item.unitPrice} onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'unitPrice', event.target.value)} />
                           </div>
                           <div className="md:col-span-3">
                             <Label htmlFor={`amount-${item.id}`}>Amount</Label>
-                            <Input
-                              id={`amount-${item.id}`}
-                              inputMode="decimal"
-                              value={item.amount}
-                              onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'amount', event.target.value)}
-                            />
+                            <Input id={`amount-${item.id}`} inputMode="decimal" value={item.amount} onChange={event => handleLineItemChange(selectedInvoice.id, item.id, 'amount', event.target.value)} />
                           </div>
                         </div>
                         <div className="mt-2 flex justify-end">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-slate-500 hover:text-rose-600"
-                            onClick={() => removeLineItem(selectedInvoice.id, item.id)}
-                          >
+                          <Button variant="ghost" size="sm" className="text-slate-500 hover:text-rose-600" onClick={() => removeLineItem(selectedInvoice.id, item.id)}>
                             <Trash2 className="mr-1 h-4 w-4" />
                             Remove
                           </Button>
@@ -838,12 +959,7 @@ export function InvoiceImportPanel({
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
                   <div className="space-y-1">
                     <Label htmlFor={`total-${selectedInvoice.id}`}>Total</Label>
-                    <Input
-                      id={`total-${selectedInvoice.id}`}
-                      inputMode="decimal"
-                      value={selectedInvoice.total}
-                      onChange={event => handleFieldChange(selectedInvoice.id, 'total', event.target.value)}
-                    />
+                    <Input id={`total-${selectedInvoice.id}`} inputMode="decimal" value={selectedInvoice.total} onChange={event => handleFieldChange(selectedInvoice.id, 'total', event.target.value)} />
                   </div>
                   <Button variant="outline" onClick={() => useLineItemTotal(selectedInvoice.id)}>
                     Use line-item sum ({lineItemsTotal(selectedInvoice.lineItems).toFixed(2)})
@@ -852,12 +968,7 @@ export function InvoiceImportPanel({
 
                 <div className="mt-4 space-y-1">
                   <Label htmlFor={`notes-${selectedInvoice.id}`}>Notes</Label>
-                  <Textarea
-                    id={`notes-${selectedInvoice.id}`}
-                    value={selectedInvoice.notes}
-                    onChange={event => handleFieldChange(selectedInvoice.id, 'notes', event.target.value)}
-                    className="min-h-24"
-                  />
+                  <Textarea id={`notes-${selectedInvoice.id}`} value={selectedInvoice.notes} onChange={event => handleFieldChange(selectedInvoice.id, 'notes', event.target.value)} className="min-h-24" />
                 </div>
               </div>
             )}

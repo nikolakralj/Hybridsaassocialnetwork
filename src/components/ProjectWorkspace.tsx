@@ -1,11 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { 
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt, 
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
 } from "lucide-react";
-import { ProjectTimesheetsView } from "./timesheets/ProjectTimesheetsView";
-import { ProjectApprovalsTab } from "./approvals/ProjectApprovalsTab";
-import { WorkGraphBuilder, ViewerSelector } from "./workgraph/WorkGraphBuilder";
+import { ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Card } from "./ui/card";
@@ -24,12 +22,25 @@ import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
-import { InvoicesWorkspace } from "./invoices/InvoicesWorkspace";
 import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
 import type { ViewerIdentity } from "./workgraph/graph-visibility";
+
+const LazyWorkGraphBuilder = lazy(() =>
+  import("./workgraph/WorkGraphBuilder").then((mod) => ({ default: mod.WorkGraphBuilder }))
+);
+const LazyProjectTimesheetsView = lazy(() =>
+  import("./timesheets/ProjectTimesheetsView").then((mod) => ({ default: mod.ProjectTimesheetsView }))
+);
+const LazyProjectApprovalsTab = lazy(() =>
+  import("./approvals/ProjectApprovalsTab").then((mod) => ({ default: mod.ProjectApprovalsTab }))
+);
+const LazyInvoicesWorkspace = lazy(() =>
+  import("./invoices/InvoicesWorkspace").then((mod) => ({ default: mod.InvoicesWorkspace }))
+);
+const tabLoadingFallback = <div className="p-8 text-muted-foreground">Loading...</div>;
 
 // Module definitions
 type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "invoices" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
@@ -319,7 +330,18 @@ export function ProjectWorkspace({
 
     const buildViewersFromNameDir = (): ViewerIdentity[] => {
       const result: ViewerIdentity[] = [{ nodeId: '__admin__', type: 'admin', name: 'Admin (Full View)' }];
-      const nameDirRaw = sessionStorage.getItem(nameDirKey);
+      // Try sessionStorage first, fall back to localStorage
+      let nameDirRaw = sessionStorage.getItem(nameDirKey);
+      if (!nameDirRaw) {
+        try {
+          const lsRaw = localStorage.getItem(nameDirKey);
+          if (lsRaw) {
+            nameDirRaw = lsRaw;
+            // Promote to sessionStorage for faster subsequent reads
+            sessionStorage.setItem(nameDirKey, lsRaw);
+          }
+        } catch { /* ignore */ }
+      }
       if (!nameDirRaw) return result;
       try {
         const parsed = JSON.parse(nameDirRaw) as Record<string, { name?: string; type?: string; orgId?: string }>;
@@ -462,7 +484,7 @@ export function ProjectWorkspace({
 
       {/* Modular Tabs */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <MonthProvider>
+        <MonthProvider key={projectId}>
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ModuleId)}>
             {/* Tab List with (+) Button */}
             <div className="flex items-center gap-2 mb-6">
@@ -562,50 +584,58 @@ export function ProjectWorkspace({
             </TabsContent>
 
             <TabsContent value="project-graph" className="space-y-6">
-              <WorkGraphBuilder
-                projectId={projectId}
-                focusNodeId={focusNodeId}
-                scope={scope}
-                mode={mode}
-                asOf={asOf}
-                currentViewer={effectiveViewer}
-                onViewerChange={(viewer) => {
-                  setWorkspaceViewer(viewer);
-                  setActiveGraphViewer(viewer);
-                }}
-              />
+              <Suspense fallback={tabLoadingFallback}>
+                <LazyWorkGraphBuilder
+                  projectId={projectId}
+                  focusNodeId={focusNodeId}
+                  scope={scope}
+                  mode={mode}
+                  asOf={asOf}
+                  currentViewer={effectiveViewer}
+                  onViewerChange={(viewer) => {
+                    setWorkspaceViewer(viewer);
+                    setActiveGraphViewer(viewer);
+                  }}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="timesheets" className="space-y-6">
-              <ProjectTimesheetsView
-                projectId={projectId}
-                ownerId={user?.id || "current-user"}
-                ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
-                contractors={[]}
-                hourlyRate={95}
-                viewerOverride={effectiveViewer ? {
-                  id: effectiveViewer.nodeId,
-                  type: effectiveViewer.type,
-                  name: effectiveViewer.name,
-                  orgId: effectiveViewer.orgId,
-                } : undefined}
-              />
+              <Suspense fallback={tabLoadingFallback}>
+                <LazyProjectTimesheetsView
+                  projectId={projectId}
+                  ownerId={user?.id || "current-user"}
+                  ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
+                  contractors={[]}
+                  hourlyRate={95}
+                  viewerOverride={effectiveViewer ? {
+                    id: effectiveViewer.nodeId,
+                    type: effectiveViewer.type,
+                    name: effectiveViewer.name,
+                    orgId: effectiveViewer.orgId,
+                  } : undefined}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="approvals" className="space-y-6">
-              <ProjectApprovalsTab
-                projectId={projectId}
-                projectName={projectName}
-                viewerName={effectiveViewer?.name}
-                viewerNodeId={effectiveViewer?.nodeId}
-              />
+              <Suspense fallback={tabLoadingFallback}>
+                <LazyProjectApprovalsTab
+                  projectId={projectId}
+                  projectName={projectName}
+                  viewerName={effectiveViewer?.name}
+                  viewerNodeId={effectiveViewer?.nodeId}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="invoices" className="space-y-6">
-              <InvoicesWorkspace
-                projectId={projectId}
-                projectName={projectName}
-              />
+              <Suspense fallback={tabLoadingFallback}>
+                <LazyInvoicesWorkspace
+                  projectId={projectId}
+                  projectName={projectName}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="contracts" className="space-y-6">

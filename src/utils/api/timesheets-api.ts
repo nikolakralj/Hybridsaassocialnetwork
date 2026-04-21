@@ -19,7 +19,9 @@ function getHeaders(accessToken?: string | null): HeadersInit {
   };
 }
 
-export async function listTimesheets(month?: string, accessToken?: string | null) {
+export async function listTimesheets(month?: string, accessToken?: string | null, projectId?: string | null) {
+  const currentProjectId = projectId || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectId') : null);
+  if (currentProjectId && !isUuid(currentProjectId)) return [];
   const url = month ? `${BASE}/timesheets?month=${month}` : `${BASE}/timesheets`;
   const res = await fetch(url, {
     headers: getHeaders(accessToken),

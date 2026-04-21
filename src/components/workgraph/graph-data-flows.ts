@@ -82,6 +82,11 @@ export interface EdgeFlowSummary {
   hasAlerts: boolean;
 }
 
+export interface MonthOption {
+  month: string; // YYYY-MM
+  label: string; // "Apr 2026"
+}
+
 // ============================================================================
 // Mock monthly snapshots (realistic demo data)
 // ============================================================================
@@ -178,6 +183,95 @@ export const MONTHLY_SNAPSHOTS: MonthlySnapshot[] = [
   },
 ];
 
+const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  year: 'numeric',
+});
+
+function monthLabelFromKey(monthKey: string): string {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return monthKey;
+  return MONTH_LABEL_FORMATTER.format(parsed);
+}
+
+export function parseMonthKey(monthKey: string): Date | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || monthIndex < 0 || monthIndex > 11) return null;
+  return new Date(year, monthIndex, 1);
+}
+
+export function formatMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function normalizeMonthLike(value?: string | null): string | null {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return formatMonthKey(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
+}
+
+function compareMonthKeys(a: string, b: string): number {
+  const ad = parseMonthKey(a);
+  const bd = parseMonthKey(b);
+  if (!ad || !bd) return a.localeCompare(b);
+  return ad.getTime() - bd.getTime();
+}
+
+function addMonths(monthKey: string, delta: number): string {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return monthKey;
+  const shifted = new Date(parsed.getFullYear(), parsed.getMonth() + delta, 1);
+  return formatMonthKey(shifted);
+}
+
+function enumerateMonths(startMonth: string, endMonth: string): MonthOption[] {
+  const start = parseMonthKey(startMonth);
+  const end = parseMonthKey(endMonth);
+  if (!start || !end) return [];
+
+  const result: MonthOption[] = [];
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  const endTime = end.getTime();
+  while (cursor.getTime() <= endTime) {
+    const monthKey = formatMonthKey(cursor);
+    result.push({ month: monthKey, label: monthLabelFromKey(monthKey) });
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+  return result;
+}
+
+export function resolveGraphMonthOptions(
+  projectStartDate?: string | null,
+  selectedMonth?: string | null
+): MonthOption[] {
+  const currentMonth = formatMonthKey(new Date());
+  const projectStartMonth = normalizeMonthLike(projectStartDate);
+  const selectedMonthKey = normalizeMonthLike(selectedMonth);
+
+  // Only include demo snapshot months when there's no real project/selection context.
+  // This prevents Sep-Nov 2025 demo data from polluting real project month ranges.
+  const hasRealContext = !!(projectStartMonth || selectedMonthKey);
+  const demoStart = hasRealContext ? null : (MONTHLY_SNAPSHOTS[0]?.month || null);
+  const demoEnd = hasRealContext ? null : (MONTHLY_SNAPSHOTS[MONTHLY_SNAPSHOTS.length - 1]?.month || null);
+
+  // Default start: 2 months before current month if no other anchor
+  const defaultStart = addMonths(currentMonth, -2);
+
+  const startCandidates = [demoStart, projectStartMonth, selectedMonthKey, defaultStart].filter(Boolean) as string[];
+  const endAnchorCandidates = [demoEnd, currentMonth, projectStartMonth, selectedMonthKey].filter(Boolean) as string[];
+
+  const startMonth = startCandidates.sort(compareMonthKeys)[0];
+  const endAnchor = endAnchorCandidates.sort(compareMonthKeys).at(-1) || currentMonth;
+  const endMonth = addMonths(endAnchor, 6);
+
+  return enumerateMonths(startMonth, endMonth);
+}
+
 // ============================================================================
 // Compute edge flow summaries for a given month
 // ============================================================================
@@ -241,7 +335,24 @@ export function computeEdgeFlows(
 // ============================================================================
 
 export function getSnapshotForMonth(month: string): MonthlySnapshot | null {
-  return MONTHLY_SNAPSHOTS.find(s => s.month === month) || null;
+  const existing = MONTHLY_SNAPSHOTS.find(s => s.month === month);
+  if (existing) return existing;
+  if (!parseMonthKey(month)) return null;
+
+  return {
+    month,
+    label: monthLabelFromKey(month),
+    activePeople: [],
+    flows: [],
+    stats: {
+      totalHoursSubmitted: 0,
+      totalHoursApproved: 0,
+      totalAmountInvoiced: 0,
+      pendingApprovals: 0,
+      activeContracts: 0,
+      activeNDAs: 0,
+    },
+  };
 }
 
 // ============================================================================

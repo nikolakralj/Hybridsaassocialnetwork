@@ -16,6 +16,7 @@ import {
   bulkApprove,
   getApprovalQueue,
   rejectItem,
+  resolveGraphNodeToUserId,
   type ApprovalQueueFilters,
 } from "../../utils/api/approvals-supabase";
 import { GraphOverlayModal } from "./GraphOverlayModal";
@@ -47,6 +48,7 @@ import {
 } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../ui/utils";
+import { useWorkGraphContext } from "../../contexts/WorkGraphContext";
 import type { ApprovalSubjectSnapshot } from "../../utils/api/approvals-supabase";
 
 export interface UIApprovalItem {
@@ -120,23 +122,68 @@ const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 });
 
-function readSessionJson<T>(key: string): T | null {
-  if (typeof sessionStorage === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveSubmitterOrgName(projectId: string | undefined, submitterId: string | undefined): string | undefined {
+function resolveSubmitterOrgName(
+  projectId: string | undefined,
+  submitterId: string | undefined,
+  nameDirectory: Record<string, Record<string, NameDirEntry>>,
+  approvalDirectory: Record<string, ApprovalDirParty[]>,
+): string | undefined {
   if (!projectId || !submitterId) return undefined;
-  const nameDir = readSessionJson<Record<string, NameDirEntry>>(`workgraph-name-dir:${projectId}`) || {};
-  const approvalDir = readSessionJson<{ parties?: ApprovalDirParty[] }>(`workgraph-approval-dir:${projectId}`);
+  const nameDir = nameDirectory[projectId] || {};
+  const approvalDir = approvalDirectory[projectId] || [];
   const orgId = nameDir[submitterId]?.orgId;
   if (!orgId) return undefined;
-  return (approvalDir?.parties || []).find((party) => party.id === orgId)?.name || nameDir[orgId]?.name || orgId;
+  return approvalDir.find((party) => party.id === orgId)?.name || nameDir[orgId]?.name || orgId;
+}
+
+function parseSubmitterIdFromSubjectId(subjectId?: string): string | undefined {
+  if (!subjectId) return undefined;
+  const parts = subjectId.split(":");
+  if (parts.length < 2) return undefined;
+  return parts.slice(0, -1).join(":");
+}
+
+function sanitizeSubmitterName(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized || normalized === "Me") return undefined;
+  return normalized;
+}
+
+function resolveSubmitterId(item: {
+  subjectId?: string;
+  subjectSnapshot?: ApprovalSubjectSnapshot | null;
+  timesheetData?: { submitterId?: string };
+  person?: { id: string };
+}): string | undefined {
+  return (
+    item.timesheetData?.submitterId
+    || item.subjectSnapshot?.submitterId
+    || parseSubmitterIdFromSubjectId(item.subjectId)
+    || item.person?.id
+  );
+}
+
+function resolveSubmitterDisplayName(
+  item: {
+    projectId?: string;
+    subjectId?: string;
+    subjectType?: string;
+    subjectSnapshot?: ApprovalSubjectSnapshot | null;
+    timesheetData?: { submitterId?: string; contractorName?: string };
+    person?: { id: string; name: string };
+  },
+  nameDirectory: Record<string, Record<string, NameDirEntry>>,
+): string {
+  const submitterId = resolveSubmitterId(item);
+  const nameDir = item.projectId ? (nameDirectory[item.projectId] || {}) : {};
+  return (
+    (submitterId ? sanitizeSubmitterName(nameDir[submitterId]?.name) : undefined)
+    || sanitizeSubmitterName(item.subjectSnapshot?.submitterName)
+    || sanitizeSubmitterName(item.timesheetData?.contractorName)
+    || sanitizeSubmitterName(item.person?.name)
+    || item.subjectSnapshot?.title
+    || (item.subjectType === "timesheet" ? "Submitted timesheet" : "Unknown")
+  );
 }
 
 export function ApprovalsWorkbench({
@@ -148,6 +195,7 @@ export function ApprovalsWorkbench({
   embedded = false,
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
+  const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
   const [items, setItems] = useState<UIApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -184,21 +232,96 @@ export function ApprovalsWorkbench({
   }, [externalStatusFilter]);
 
   useEffect(() => {
+    if (projectFilter && (!nameDirectory[projectFilter] || !approvalDirectory[projectFilter])) {
+      void loadGraphContext(projectFilter);
+    }
+  }, [projectFilter, nameDirectory, approvalDirectory, loadGraphContext]);
+
+  useEffect(() => {
     void loadApprovals();
-  }, [user?.id, projectFilter, viewerNodeId, effectiveStatusFilter, typeFilter]);
+  }, [user?.id, projectFilter, viewerNodeId, effectiveStatusFilter, typeFilter, viewScope]);
+
+  useEffect(() => {
+    const projectIds = Array.from(new Set(items.map((item) => item.project.id).filter(Boolean)));
+    projectIds.forEach((projectId) => {
+      if (!nameDirectory[projectId] || !approvalDirectory[projectId]) {
+        void loadGraphContext(projectId);
+      }
+    });
+  }, [items, nameDirectory, approvalDirectory, loadGraphContext]);
+
+  useEffect(() => {
+    setItems((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        const resolvedSubmitterName = resolveSubmitterDisplayName({
+          projectId: item.project.id,
+          subjectType: item.objectType,
+          subjectSnapshot: item.subjectSnapshot,
+          person: item.person,
+        }, nameDirectory);
+        const submitterId = resolveSubmitterId({
+          subjectSnapshot: item.subjectSnapshot,
+          person: item.person,
+        });
+        const resolvedSubmitterOrg =
+          item.subjectSnapshot?.submitterOrg ||
+          resolveSubmitterOrgName(item.project.id, submitterId, nameDirectory, approvalDirectory) ||
+          "Unknown organization";
+
+        if (
+          item.person.name === resolvedSubmitterName &&
+          (item.submitterOrg || "Unknown organization") === resolvedSubmitterOrg &&
+          (item.person.role || "Unknown organization") === resolvedSubmitterOrg
+        ) {
+          return item;
+        }
+
+        changed = true;
+        return {
+          ...item,
+          person: {
+            ...item.person,
+            name: resolvedSubmitterName,
+            role: resolvedSubmitterOrg,
+          },
+          submitterOrg: resolvedSubmitterOrg,
+        };
+      });
+
+      return changed ? next : current;
+    });
+  }, [nameDirectory, approvalDirectory]);
 
   async function loadApprovals() {
     setLoading(true);
     setRefreshing(true);
 
     try {
+      let submitterUserId: string | undefined;
+      let submitterGraphNodeId: string | undefined;
+
+      if (viewScope === "submitted") {
+        if (viewerNodeId) {
+          submitterGraphNodeId = viewerNodeId;
+          try {
+            submitterUserId = await resolveGraphNodeToUserId(projectFilter || "", viewerNodeId);
+          } catch (error) {
+            console.warn("[approvals] Failed to resolve submitter viewer identity", error);
+          }
+        } else {
+          submitterUserId = user?.id;
+        }
+      }
+
       const filters: ApprovalQueueFilters = {
         status: effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
         subjectType: typeFilter === "all" ? undefined : (typeFilter as ApprovalQueueFilters["subjectType"]),
         projectId: projectFilter,
         approverNodeId: viewScope === "inbox" ? (viewerNodeId || undefined) : undefined,
         approverUserId: viewScope === "inbox" && !viewerNodeId ? user?.id : undefined,
-        submitterUserId: viewScope === "submitted" ? user?.id : undefined,
+        submitterUserId,
+        submitterGraphNodeId,
       };
 
       const data = await getApprovalQueue(filters);
@@ -208,7 +331,6 @@ export function ApprovalsWorkbench({
         const snapshotStart = subjectSnapshot?.periodStart || "";
         const snapshotEnd = subjectSnapshot?.periodEnd || "";
         const snapshotHours = typeof subjectSnapshot?.hours === "number" ? subjectSnapshot.hours : undefined;
-        const snapshotBillableHours = typeof subjectSnapshot?.billableHours === "number" ? subjectSnapshot.billableHours : undefined;
         // Parse weekStart from subjectId format "personId:YYYY-MM-DD"
         const subjectParts = (item.subjectId || "").split(":");
         const parsedWeekStart = subjectParts.length >= 2
@@ -225,12 +347,25 @@ export function ApprovalsWorkbench({
         // Resolve submitter name: use timesheetData if available, else approverName as party label
         const weekStart = item.timesheetData?.weekStart || snapshotStart || parsedWeekStart;
         const weekEnd = item.timesheetData?.weekEnd || snapshotEnd || parsedWeekEnd;
-        const submitterName = subjectSnapshot?.submitterName
-          || item.timesheetData?.contractorName
-          || subjectSnapshot?.title
-          || (item.subjectType === "timesheet" ? "Submitted timesheet" : "Unknown");
+        const submitterId = resolveSubmitterId({
+          subjectId: item.subjectId,
+          subjectSnapshot,
+          timesheetData: item.timesheetData,
+        });
+        const submitterName = resolveSubmitterDisplayName({
+          projectId: item.projectId,
+          subjectId: item.subjectId,
+          subjectType: item.subjectType,
+          subjectSnapshot,
+          timesheetData: item.timesheetData,
+        }, nameDirectory);
         const submitterOrgName = subjectSnapshot?.submitterOrg
-          || resolveSubmitterOrgName(item.projectId, item.timesheetData?.submitterId || subjectSnapshot?.submitterId);
+          || resolveSubmitterOrgName(
+            item.projectId,
+            submitterId,
+            nameDirectory,
+            approvalDirectory,
+          );
         const totalHours = snapshotHours ?? item.timesheetData?.totalHours ?? 0;
 
         return ({
@@ -251,7 +386,7 @@ export function ApprovalsWorkbench({
           end: weekEnd,
         },
         person: {
-          id: subjectSnapshot?.submitterId || item.approverUserId,
+          id: submitterId || item.approverUserId,
           name: submitterName,
           role: submitterOrgName || "Unknown organization",
         },

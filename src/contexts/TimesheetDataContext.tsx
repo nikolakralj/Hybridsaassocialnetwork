@@ -73,6 +73,8 @@ export interface StoredWeek {
   approvedBy?: string;
   rejectedBy?: string;
   rejectionNote?: string;
+  /** Project this week belongs to. Weeks without a projectId are legacy/unscoped. */
+  projectId?: string;
 }
 
 export interface TimesheetStoreAPI {
@@ -245,6 +247,12 @@ function activeProjectId(): string {
   return sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID;
 }
 
+/** Returns true if a week belongs to the given project (or has no projectId — legacy data). */
+function matchesProject(week: StoredWeek, projectId: string): boolean {
+  if (!week.projectId) return true; // Legacy weeks without projectId are shown everywhere
+  return week.projectId === projectId;
+}
+
 function readNameDir(projectId: string): Record<string, NameDirEntry> {
   if (!projectId) return {};
   return readSessionJson<Record<string, NameDirEntry>>(`workgraph-name-dir:${projectId}`) || {};
@@ -283,6 +291,7 @@ function writeApprovalParties(projectId: string, parties: ApprovalParty[]): void
 async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
   const sessionParties = readApprovalParties(projectId);
   if (sessionParties.length > 0) return sessionParties;
+  if (isLocalProjectId(projectId)) return [];
 
   // DB fallback for UUID-format project IDs
   try {
@@ -625,6 +634,52 @@ function loadFromLocalStorage(): StoredWeek[] | null {
   } catch { return null; }
 }
 
+/**
+ * Remove all persisted data for a given project.
+ * Call this when deleting a project so timesheet/approval/viewer data doesn't leak.
+ */
+export function clearProjectData(projectId: string): void {
+  if (!projectId) return;
+
+  // 1. Remove project-specific sessionStorage/localStorage keys
+  const keysToRemove = [
+    `workgraph-approval-dir:${projectId}`,
+    `workgraph-name-dir:${projectId}`,
+    `workgraph-viewer-meta:${projectId}`,
+    `workgraph-viewer:${projectId}`,
+  ];
+  for (const key of keysToRemove) {
+    try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  }
+
+  // 2. Remove timesheet weeks belonging to this project from localStorage
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter((w: any) => w?.projectId !== projectId);
+        localStorage.setItem(LS_KEY, JSON.stringify(filtered));
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 3. Clear active project session if it matches the deleted project
+  try {
+    if (sessionStorage.getItem('currentProjectId') === projectId) {
+      sessionStorage.removeItem('currentProjectId');
+      sessionStorage.removeItem('currentProjectName');
+      sessionStorage.removeItem('currentProjectStartDate');
+    }
+  } catch { /* ignore */ }
+
+  // 4. Notify in-memory store to drop these weeks
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('workgraph-project-deleted', { detail: { projectId } }));
+  }
+}
+
 function saveToLocalStorage(weeks: StoredWeek[]) {
   try {
     // Only save non-demo weeks (skip user- prefixed demo IDs)
@@ -658,6 +713,18 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   const bump = useCallback(() => setVersion(v => v + 1), []);
 
+  // One-time migration: tag untagged (legacy) weeks with the current project
+  const hasTaggedLegacy = useRef(false);
+  useEffect(() => {
+    if (hasTaggedLegacy.current) return;
+    const currentProject = activeProjectId();
+    if (!currentProject || currentProject === DEFAULT_PROJECT_ID) return;
+    const hasUntagged = weeks.some(w => !w.projectId && !isDemoPersonId(w.personId));
+    if (!hasUntagged) { hasTaggedLegacy.current = true; return; }
+    setWeeks(prev => prev.map(w => (!w.projectId && !isDemoPersonId(w.personId)) ? { ...w, projectId: currentProject } : w));
+    hasTaggedLegacy.current = true;
+  }, [weeks]);
+
   // Persist to localStorage on every change (debounced)
   const lsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -684,6 +751,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   const refreshProjectStartDate = useCallback(async (projectIdOverride?: string) => {
     const projectId = projectIdOverride || activeProjectId();
     if (!projectId) {
+      setProjectStartDate(null);
+      return;
+    }
+    if (isLocalProjectId(projectId)) {
       setProjectStartDate(null);
       return;
     }
@@ -718,15 +789,35 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   const reloadWeeksFromApi = useCallback(async () => {
     if (!user?.id || !accessToken) return;
+    const projectId = activeProjectId();
+    if (!projectId || isLocalProjectId(projectId)) return;
     try {
-      const apiWeeks = await listTimesheets(undefined, accessToken);
+      const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
       if (apiWeeks && apiWeeks.length > 0) {
-        setWeeks(apiWeeks.map(apiWeekToStored));
+        const tagged = apiWeeks.map(w => ({ ...apiWeekToStored(w), projectId }));
+        setWeeks(prev => {
+          // Replace weeks for this project, keep weeks from other projects
+          const otherProjects = prev.filter(w => !matchesProject(w, projectId) || !w.projectId);
+          return [...otherProjects, ...tagged];
+        });
       }
     } catch (error) {
       console.warn('[TimesheetStore] Could not refresh weeks from API after approval update:', error);
     }
   }, [accessToken, user?.id]);
+
+  // Purge in-memory weeks when a project is deleted
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onProjectDeleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (!detail?.projectId) return;
+      setWeeks(prev => prev.filter(w => w.projectId !== detail.projectId));
+      bump();
+    };
+    window.addEventListener('workgraph-project-deleted', onProjectDeleted);
+    return () => window.removeEventListener('workgraph-project-deleted', onProjectDeleted);
+  }, [bump]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -787,14 +878,18 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     let cancelled = false;
     const loadFromApi = async () => {
       try {
+        const projectId = activeProjectId();
+        if (projectId && isLocalProjectId(projectId)) {
+          return;
+        }
         setIsLoading(true);
         console.log('[TimesheetStore] Loading timesheets from API for user:', user.id);
-        const apiWeeks = await listTimesheets(undefined, accessToken);
+        const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
 
         if (cancelled) return;
 
         if (apiWeeks && apiWeeks.length > 0) {
-          const converted = apiWeeks.map(apiWeekToStored);
+          const converted = apiWeeks.map(w => ({ ...apiWeekToStored(w), projectId }));
           // Authenticated mode: API rows are source of truth (no demo merge).
           setWeeks(converted);
           console.log(`[TimesheetStore] Loaded ${converted.length} weeks from API`);
@@ -921,19 +1016,22 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   // --- Read ---
 
   const getWeeksForPerson = useCallback((personId: string, month: string): StoredWeek[] => {
+    const currentProject = activeProjectId();
     return weeks
-      .filter(w => w.personId === personId && weekOverlapsMonth(w.weekStart, month))
+      .filter(w => w.personId === personId && weekOverlapsMonth(w.weekStart, month) && matchesProject(w, currentProject))
       .map(normalizeStoredWeek);
   }, [weeks]);
 
   const getAllWeeksForMonth = useCallback((month: string): StoredWeek[] => {
+    const currentProject = activeProjectId();
     return weeks
-      .filter(w => weekOverlapsMonth(w.weekStart, month))
+      .filter(w => weekOverlapsMonth(w.weekStart, month) && matchesProject(w, currentProject))
       .map(normalizeStoredWeek);
   }, [weeks]);
 
   const getPersonIds = useCallback((): string[] => {
-    return [...new Set(weeks.map(w => w.personId))];
+    const currentProject = activeProjectId();
+    return [...new Set(weeks.filter(w => matchesProject(w, currentProject)).map(w => w.personId))];
   }, [weeks]);
 
   // --- Write (local state + API persist) ---
@@ -1021,6 +1119,65 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     const projectId = activeProjectId();
     const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId) && !isLocalProjectId(projectId));
     if (!isRemoteWorkflow) {
+      if (status === 'submitted') {
+        const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
+        if (!approvalRoute) {
+          throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
+        }
+
+        const submittedAt = new Date().toISOString();
+        const nameDir = readNameDir(projectId);
+        const approvalParties = readApprovalParties(projectId);
+        const submitterName = nameDir[personId]?.name || normalizedWeek.personId || user?.user_metadata?.full_name || 'Submitted timesheet';
+        const submitterOrgId = nameDir[personId]?.orgId;
+        const submitterOrg = submitterOrgId
+          ? approvalParties.find((party) => party.id === submitterOrgId)?.name || nameDir[submitterOrgId]?.name || submitterOrgId
+          : undefined;
+        const daySummary = normalizedWeek.days.map((day) => ({
+          day: day.day,
+          hours: typeof day.totalHours === 'number' ? day.totalHours : day.hours || 0,
+          notes: day.notes,
+        }));
+        const approvalSnapshot: ApprovalSubjectSnapshot = {
+          kind: 'timesheet',
+          title: `${submitterName} · ${normalizedWeek.weekLabel}`,
+          summary: `${submitterOrg || 'Unknown organization'} · ${normalizedWeek.weekLabel} · ${sumWeekHours(normalizedWeek)}h`,
+          submitterId: personId,
+          submitterName,
+          submitterOrg,
+          periodStart: normalizedWeek.weekStart,
+          periodEnd: (() => {
+            const end = new Date(`${normalizedWeek.weekStart}T00:00:00`);
+            end.setDate(end.getDate() + 4);
+            return formatISODateLocal(end);
+          })(),
+          weekLabel: normalizedWeek.weekLabel,
+          hours: sumWeekHours(normalizedWeek),
+          billableHours: sumWeekBillableHours(normalizedWeek),
+          currentApproverName: approvalRoute.approverName,
+          currentApproverNodeId: approvalRoute.approverNodeId,
+          currentApproverUserRef: approvalRoute.approverUserRef,
+          approvalLayer: approvalRoute.approvalLayer,
+          daySummary,
+        };
+
+        await createApproval({
+          projectId,
+          subjectType: 'timesheet',
+          subjectId: buildTimesheetSubjectId(personId, weekStart),
+          subjectSnapshot: approvalSnapshot,
+          approverUserId: approvalRoute.approverUserRef,
+          approverName: approvalRoute.approverName,
+          approverNodeId: approvalRoute.approverNodeId,
+          approvalLayer: approvalRoute.approvalLayer,
+          status: 'pending',
+          submittedAt,
+          submitterUserId: user?.id || personId,
+        });
+        applyWeekStatusLocally(personId, weekStart, 'submitted', meta, submittedAt);
+        return;
+      }
+
       applyWeekStatusLocally(personId, weekStart, status, meta);
       return;
     }
@@ -1163,9 +1320,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     const mondays = getMondaysForMonth(month);
     if (mondays.length === 0) return 0;
 
+    const currentProject = activeProjectId();
     const existingKeys = new Set(
       weeks
-        .filter(w => w.personId === personId)
+        .filter(w => w.personId === personId && matchesProject(w, currentProject))
         .map(w => `${w.personId}:${w.weekStart}`)
     );
 
@@ -1182,6 +1340,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         days: mkDays([0, 0, 0, 0, 0]),
         tasks: [],
         status: 'draft',
+        projectId: currentProject,
       }))
       .map(normalizeStoredWeek);
 

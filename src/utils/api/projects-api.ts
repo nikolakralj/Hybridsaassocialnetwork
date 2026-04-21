@@ -10,12 +10,17 @@ const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
 const ENABLE_LOCAL_FALLBACK = import.meta.env.VITE_ENABLE_LOCAL_FALLBACK === 'true';
 export const isLocalProjectFallbackEnabled = ENABLE_LOCAL_FALLBACK;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getHeaders(accessToken?: string | null): HeadersInit {
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${accessToken || publicAnonKey}`,
   };
+}
+
+function isUuid(value?: string | null): value is string {
+  return Boolean(value && UUID_REGEX.test(value));
 }
 
 type LocalProjectMember = {
@@ -104,6 +109,28 @@ function localGetProject(projectId: string) {
   const record = readLocalProjects().find((r) => r.project?.id === projectId);
   if (!record) throw new Error('Project not found');
   return { project: record.project, members: record.members || [] };
+}
+
+function buildLocalProjectStub(projectId: string) {
+  const now = new Date().toISOString().slice(0, 10);
+  return {
+    project: {
+      id: projectId,
+      name: typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectName') || 'Project' : 'Project',
+      startDate: typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectStartDate') || now : now,
+      endDate: null,
+      workWeek: {
+        monday: true,
+        tuesday: true,
+        wednesday: true,
+        thursday: true,
+        friday: true,
+        saturday: false,
+        sunday: false,
+      },
+    },
+    members: [],
+  };
 }
 
 function localCreateProject(project: {
@@ -320,6 +347,13 @@ export async function listProjects(accessToken?: string | null) {
 }
 
 export async function getProject(projectId: string, accessToken?: string | null) {
+  if (!isUuid(projectId)) {
+    if (hasLocalProject(projectId)) {
+      return localGetProject(projectId);
+    }
+    return buildLocalProjectStub(projectId);
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}`, {
       headers: getHeaders(accessToken),
@@ -405,6 +439,8 @@ export async function createProject(
       return { project: createdProject, members: [] };
     } catch (dbError) {
       console.warn('Direct Supabase create failed, falling back to local:', dbError);
+      // Don't fall through to the edge function — go straight to local fallback
+      return localCreateProject(project);
     }
   }
 
@@ -442,6 +478,14 @@ export async function updateProject(
   updates: Record<string, any>,
   accessToken?: string | null
 ) {
+  // Local projects never hit the network
+  if (!isUuid(projectId)) {
+    if (hasLocalProject(projectId)) {
+      return localUpdateProject(projectId, updates);
+    }
+    throw new Error('Project not found');
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}`, {
       method: 'PUT',
@@ -471,6 +515,11 @@ export async function updateProject(
 }
 
 export async function deleteProject(projectId: string, accessToken?: string | null) {
+  if (!isUuid(projectId)) {
+    localDeleteProject(projectId);
+    return true;
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}`, {
       method: 'DELETE',
@@ -505,6 +554,10 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
 // ---------- Members ----------
 
 export async function getProjectMembers(projectId: string, accessToken?: string | null) {
+  if (!isUuid(projectId)) {
+    return hasLocalProject(projectId) ? localGetProjectMembers(projectId) : [];
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}/members`, {
       headers: getHeaders(accessToken),
@@ -563,12 +616,16 @@ export async function removeProjectMember(
 // ---------- Invitations ----------
 
 export async function listProjectInvitations(accessToken?: string | null): Promise<StoredProjectInvitation[]> {
-  const res = await fetch(`${BASE}/invitations`, {
-    headers: getHeaders(accessToken),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to load invitations');
-  return data.invitations || [];
+  try {
+    const res = await fetch(`${BASE}/invitations`, {
+      headers: getHeaders(accessToken),
+    });
+    if (!res.ok) return []; // Edge functions not deployed — silently return empty
+    const data = await res.json();
+    return data.invitations || [];
+  } catch {
+    return []; // Network error / edge functions not deployed
+  }
 }
 
 export async function acceptProjectInvitation(

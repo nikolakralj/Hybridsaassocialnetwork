@@ -18,14 +18,36 @@ interface MonthContextType {
   setSelectedMonth: (date: Date) => void;
 }
 
+export function toMonthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+export function monthKeyFromDate(date: Date): string {
+  const monthStart = toMonthStart(date);
+  return `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function monthKeyToDate(monthKey: string): Date | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (!Number.isFinite(year) || monthIndex < 0 || monthIndex > 11) return null;
+  return new Date(year, monthIndex, 1);
+}
+
 const MonthContext = createContext<MonthContextType | undefined>(undefined);
 
 export function MonthProvider({ children }: { children: ReactNode }) {
   // Default to the current month so the app opens on today's data, not legacy seed data
-  const [selectedMonth, setSelectedMonth] = useState(() => {
+  const [selectedMonth, setSelectedMonthState] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+
+  const setSelectedMonth = (date: Date) => {
+    setSelectedMonthState(toMonthStart(date));
+  };
 
   return (
     <MonthContext.Provider value={{ selectedMonth, setSelectedMonth }}>

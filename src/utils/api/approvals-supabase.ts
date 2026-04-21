@@ -1,4 +1,4 @@
-// Supabase-backed Approvals API
+﻿// Supabase-backed Approvals API
 // Handles approval records and queue
 
 import { createClient } from '../supabase/client';
@@ -13,6 +13,7 @@ const ROLE_PRIORITY: Record<string, number> = {
   Commenter: 3,
   Viewer: 4,
 };
+const LOCAL_APPROVALS_KEY = 'workgraph-local-approvals';
 
 interface NameDirEntry {
   name?: string;
@@ -129,6 +130,7 @@ export interface ApprovalQueueFilters {
   approverUserId?: string;
   approverNodeId?: string;
   submitterUserId?: string;
+  submitterGraphNodeId?: string;
 }
 
 // ============================================================================
@@ -137,6 +139,73 @@ export interface ApprovalQueueFilters {
 
 function isUuid(value?: string | null): value is string {
   return Boolean(value && UUID_REGEX.test(value));
+}
+
+function readLocalApprovals(): ApprovalRecord[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_APPROVALS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as ApprovalRecord[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalApprovals(records: ApprovalRecord[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(LOCAL_APPROVALS_KEY, JSON.stringify(records));
+  } catch {
+    // ignore quota/storage errors
+  }
+}
+
+function createLocalApprovalId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `local-${crypto.randomUUID()}`;
+  }
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getApprovalSubmitterGraphNodeId(
+  record: Pick<ApprovalRecord, 'subjectType' | 'subjectId' | 'subjectSnapshot'>
+): string | undefined {
+  if (record.subjectSnapshot?.submitterId) return record.subjectSnapshot.submitterId;
+  if (record.subjectType !== 'timesheet') return undefined;
+  return parseTimesheetSubject(record.subjectId)?.personId;
+}
+
+function matchesSubmitterFilters(
+  record: Pick<ApprovalRecord, 'subjectType' | 'subjectId' | 'subjectSnapshot' | 'submitterUserId'>,
+  filters: ApprovalQueueFilters
+): boolean {
+  const hasUserFilter = Boolean(filters.submitterUserId);
+  const hasGraphFilter = Boolean(filters.submitterGraphNodeId);
+  if (!hasUserFilter && !hasGraphFilter) return true;
+  if (hasUserFilter && record.submitterUserId === filters.submitterUserId) return true;
+  if (hasGraphFilter) {
+    const submitterNodeId = getApprovalSubmitterGraphNodeId(record);
+    if (submitterNodeId === filters.submitterGraphNodeId) return true;
+    if (filters.projectId && submitterNodeId) {
+      const submitterOrgId = readNameDir(filters.projectId)[submitterNodeId]?.orgId;
+      if (submitterOrgId === filters.submitterGraphNodeId) return true;
+    }
+  }
+  return false;
+}
+
+function filterLocalApprovals(records: ApprovalRecord[], filters: ApprovalQueueFilters): ApprovalRecord[] {
+  return records.filter((record) => {
+    if (filters.projectId && record.projectId !== filters.projectId) return false;
+    if (filters.status && filters.status !== 'all' && record.status !== filters.status) return false;
+    if (filters.subjectType && filters.subjectType !== 'all' && record.subjectType !== filters.subjectType) return false;
+    if (filters.approverUserId && record.approverUserId !== filters.approverUserId) return false;
+    if (filters.approverNodeId && record.approverNodeId !== filters.approverNodeId) return false;
+    if (!matchesSubmitterFilters(record, filters)) return false;
+    return true;
+  });
 }
 
 function normalizeMatchValue(value?: string | null): string {
@@ -151,6 +220,16 @@ function readSessionJson<T>(key: string): T | null {
     return raw ? JSON.parse(raw) as T : null;
   } catch {
     return null;
+  }
+}
+
+function writeSessionJson<T>(key: string, value: T): void {
+  if (typeof sessionStorage === 'undefined') return;
+
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore quota/storage errors
   }
 }
 
@@ -179,12 +258,16 @@ async function loadApprovalParties(projectId: string): Promise<ApprovalDirParty[
 
     if (error || !data?.parties) return [];
 
-    if (Array.isArray(data.parties)) {
-      return data.parties as ApprovalDirParty[];
+    const resolvedParties = Array.isArray(data.parties)
+      ? data.parties as ApprovalDirParty[]
+      : (data.parties as { parties?: ApprovalDirParty[] })?.parties;
+
+    if (Array.isArray(resolvedParties) && resolvedParties.length > 0) {
+      writeSessionJson(`workgraph-approval-dir:${projectId}`, { parties: resolvedParties });
+      return resolvedParties;
     }
 
-    const nestedParties = (data.parties as { parties?: ApprovalDirParty[] })?.parties;
-    return Array.isArray(nestedParties) ? nestedParties : [];
+    return [];
   } catch {
     return [];
   }
@@ -234,14 +317,18 @@ async function buildApprovalPartyRoute(projectId: string, submitterPersonId: str
     const party = partyMap.get(partyId);
     if (!party) continue;
 
-    if ((party.people || []).some((person) => person.canApprove)) {
-      route.push(party);
-    }
+    route.push(party);
 
     for (const upstreamId of party.billsTo || []) {
       if (!visited.has(upstreamId)) queue.push(upstreamId);
     }
   }
+
+  console.info('[approvals.route]', {
+    projectId,
+    submitterPersonId,
+    routeIds: route.map((party) => party.id),
+  });
 
   return route;
 }
@@ -258,13 +345,52 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
 
   const currentPartyId = String(dbApproval.approver_node_id || '');
   const currentLayer = Number(dbApproval.approval_layer || 1);
-  const currentIndex = route.findIndex((party) => party.id === currentPartyId);
-  const nextParty = currentIndex >= 0 ? route[currentIndex + 1] : route[currentLayer];
+  const routeIds = route.map((party) => party.id);
+  let currentIndex = route.findIndex((party) => party.id === currentPartyId);
+
+  if (currentIndex < 0 && currentPartyId) {
+    currentIndex = route.findIndex((party) =>
+      (party.people || []).some((person) => person.id === currentPartyId)
+    );
+  }
+
+  if (currentIndex < 0) {
+    currentIndex = Math.max(0, currentLayer - 1);
+    console.warn('[approvals.nextLayer] Unable to resolve current party from approver node; falling back to approval layer index', {
+      currentLayer,
+      currentPartyId,
+      routeIds,
+    });
+  }
+
+  let nextIndex = currentIndex + 1;
+  let nextParty: ApprovalDirParty | undefined;
+  let sortedApprovers: ApprovalDirPerson[] = [];
+
+  while (nextIndex < route.length) {
+    const candidateParty = route[nextIndex];
+    const candidateApprovers = [...(candidateParty.people || [])]
+      .filter((person) => person.canApprove)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
+
+    if (candidateApprovers.length > 0) {
+      nextParty = candidateParty;
+      sortedApprovers = candidateApprovers;
+      break;
+    }
+
+    nextIndex += 1;
+  }
+
+  console.debug('[approvals.nextLayer]', {
+    currentLayer,
+    currentPartyId,
+    routeIds,
+    nextPartyId: nextParty?.id || null,
+  });
+
   if (!nextParty) return false;
 
-  const sortedApprovers = [...(nextParty.people || [])]
-    .filter((person) => person.canApprove)
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
   const approverRef = sortedApprovers[0]?.id || nextParty.id;
   const approverName = nextParty.name || approverRef;
   const subjectSnapshot = dbApproval.subject_snapshot && typeof dbApproval.subject_snapshot === 'object'
@@ -280,13 +406,13 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
           ...subjectSnapshot,
           currentApproverName: approverName,
           currentApproverNodeId: nextParty.id,
-          approvalLayer: currentLayer + 1,
+          approvalLayer: nextIndex + 1,
         }
       : undefined,
     approverUserId: approverRef,
     approverName,
     approverNodeId: nextParty.id,
-    approvalLayer: currentLayer + 1,
+    approvalLayer: nextIndex + 1,
     status: 'pending',
     submittedAt: new Date().toISOString(),
     graphVersionId: dbApproval.graph_version_id || undefined,
@@ -357,7 +483,7 @@ function getCandidateNodeIds(projectId: string, nodeId: string): string[] {
   return ordered;
 }
 
-function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): string[] {
+function computeApproverScopeNodeIds(parties: ApprovalDirParty[], viewerNodeId: string): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
   const push = (value?: string | null) => {
@@ -368,7 +494,6 @@ function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): strin
 
   push(viewerNodeId);
 
-  const parties = readApprovalParties(projectId);
   for (const party of parties) {
     if (party.id === viewerNodeId) {
       push(party.id);
@@ -387,6 +512,20 @@ function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): strin
   return ordered;
 }
 
+function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): string[] {
+  return computeApproverScopeNodeIds(readApprovalParties(projectId), viewerNodeId);
+}
+
+async function resolveApproverScopeNodeIds(projectId: string, viewerNodeId: string): Promise<string[]> {
+  const sessionScope = getApproverScopeNodeIds(projectId, viewerNodeId);
+  if (sessionScope.length > 1 || readApprovalParties(projectId).length > 0) {
+    return sessionScope;
+  }
+
+  const loadedParties = await loadApprovalParties(projectId);
+  return computeApproverScopeNodeIds(loadedParties, viewerNodeId);
+}
+
 export async function resolveGraphNodeToUserId(
   projectId: string,
   nodeId?: string,
@@ -395,9 +534,24 @@ export async function resolveGraphNodeToUserId(
   if (isUuid(nodeId)) return nodeId;
   if (!projectId || !nodeId) return fallbackUserId;
 
-  // wg_project_members.project_id is UUID — skip DB lookup for non-UUID project IDs
+  // wg_project_members.project_id is UUID â€” skip DB lookup for non-UUID project IDs
   // (projects created locally before being persisted to DB use a text format ID)
   if (!isUuid(projectId)) return fallbackUserId;
+
+  // Direct JOIN-style lookup is the highest-confidence path.
+  // If we can resolve by scope or graph_node_id, return immediately and skip heuristic scoring.
+  const { data: directMatch, error: directMatchError } = await supabase
+    .from('wg_project_members')
+    .select('user_id')
+    .eq('project_id', projectId)
+    .or(`scope.eq.${nodeId},graph_node_id.eq.${nodeId}`)
+    .not('user_id', 'is', null)
+    .limit(1)
+    .maybeSingle();
+
+  if (!directMatchError && directMatch?.user_id && isUuid(directMatch.user_id)) {
+    return directMatch.user_id;
+  }
 
   const members = (await fetchProjectMembers(projectId)).filter((member) => isUuid(member.user_id));
   if (members.length === 0) return fallbackUserId;
@@ -612,6 +766,42 @@ export async function createApproval(
 
   const createPromise = (async () => {
     try {
+      if (!isUuid(approval.projectId)) {
+        const localApprovals = readLocalApprovals();
+        const existingLocal = localApprovals.find((item) =>
+          item.projectId === approval.projectId &&
+          item.subjectType === approval.subjectType &&
+          item.subjectId === approval.subjectId &&
+          item.approvalLayer === approval.approvalLayer &&
+          item.status === 'pending' &&
+          (approval.approverNodeId ? item.approverNodeId === approval.approverNodeId : true)
+        );
+        if (existingLocal) return existingLocal;
+
+        const now = new Date().toISOString();
+        const localRecord: ApprovalRecord = {
+          id: createLocalApprovalId(),
+          projectId: approval.projectId,
+          subjectType: approval.subjectType,
+          subjectId: approval.subjectId,
+          subjectSnapshot: approval.subjectSnapshot || null,
+          submitterUserId: approval.submitterUserId,
+          approverUserId: approval.approverUserId || approval.approverNodeId || 'unknown',
+          approverName: approval.approverName,
+          approverNodeId: approval.approverNodeId,
+          approvalLayer: approval.approvalLayer,
+          status: approval.status || 'pending',
+          notes: approval.notes,
+          submittedAt: approval.submittedAt || now,
+          decidedAt: approval.decidedAt,
+          graphVersionId: approval.graphVersionId,
+          createdAt: now,
+          updatedAt: now,
+        };
+        writeLocalApprovals([...localApprovals, localRecord]);
+        return localRecord;
+      }
+
       const existing = await findExistingPendingApproval(approval);
       if (existing) return existing;
 
@@ -633,7 +823,7 @@ export async function createApproval(
         }
         console.warn(
           `[Approvals] Could not resolve approver UUID for node ${approval.approverUserId || approval.approverNodeId}. ` +
-          `Using approver reference token as placeholder — project must be saved to DB for UUID routing.`
+          `Using approver reference token as placeholder â€” project must be saved to DB for UUID routing.`
         );
         const attempt = await insertApprovalRecordWithFallback({
           project_id: approval.projectId,
@@ -707,6 +897,25 @@ export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
 ): Promise<ApprovalQueueItem[]> {
   try {
+    if (filters.projectId && !isUuid(filters.projectId)) {
+      const localFiltered = filterLocalApprovals(readLocalApprovals(), filters);
+      return localFiltered.map((record) => ({
+        ...(record as ApprovalQueueItem),
+        projectName: record.projectName || record.projectId,
+        timesheetData: record.subjectType === 'timesheet'
+          ? {
+            weekStart: record.subjectSnapshot?.periodStart || '',
+            weekEnd: record.subjectSnapshot?.periodEnd || '',
+            totalHours: record.subjectSnapshot?.hours || 0,
+            submitterId: record.subjectSnapshot?.submitterId,
+            contractorName: record.subjectSnapshot?.submitterName || record.subjectSnapshot?.submitterId || 'Unknown contractor',
+            billableHours: record.subjectSnapshot?.billableHours,
+            daySummary: record.subjectSnapshot?.daySummary,
+          }
+          : undefined,
+      }));
+    }
+
     let query = supabase
       .from('approval_records')
       .select('*');
@@ -723,7 +932,7 @@ export async function getApprovalQueue(
       query = query.eq('project_id', filters.projectId);
     }
 
-    if (filters.submitterUserId) {
+    if (filters.submitterUserId && !filters.submitterGraphNodeId) {
       query = query.eq('submitter_user_id', filters.submitterUserId);
     }
 
@@ -734,7 +943,7 @@ export async function getApprovalQueue(
       try {
         if (filters.projectId) {
           resolvedApproverUserId = await resolveGraphNodeToUserId(filters.projectId, filters.approverNodeId);
-          approverNodeCandidates = getApproverScopeNodeIds(filters.projectId, filters.approverNodeId);
+          approverNodeCandidates = await resolveApproverScopeNodeIds(filters.projectId, filters.approverNodeId);
         }
       } catch (error) {
         console.warn('[approvals] Failed to resolve approver node for queue filter', error);
@@ -883,8 +1092,11 @@ export async function getApprovalQueue(
       }
     }
 
-    const approvalRecords = data.map((dbItem: any) => transformApproval(dbItem));
+    const approvalRecords = data
+      .map((dbItem: any) => transformApproval(dbItem))
+      .filter((record) => matchesSubmitterFilters(record, filters));
     const subjectHistoryMap = new Map<string, ApprovalRecord[]>();
+    const hasSubmitterFilter = Boolean(filters.submitterUserId || filters.submitterGraphNodeId);
 
     for (const record of approvalRecords) {
       const list = subjectHistoryMap.get(record.subjectId) || [];
@@ -898,7 +1110,7 @@ export async function getApprovalQueue(
       left.createdAt.localeCompare(right.createdAt)
     );
 
-    const recordsToRender = filters.submitterUserId
+    const recordsToRender = hasSubmitterFilter
       ? [...subjectHistoryMap.values()]
           .map((history) => {
             const sorted = sortHistory(history);
@@ -914,7 +1126,7 @@ export async function getApprovalQueue(
       approval.subjectSnapshot = dbItem.subject_snapshot || null;
       approval.submitterUserId = dbItem.submitter_user_id || record.submitterUserId;
 
-      if (filters.submitterUserId) {
+      if (hasSubmitterFilter) {
         const history = sortHistory(subjectHistoryMap.get(record.subjectId) || []);
         approval.approvalTrail = history.map((entry) => ({
           approvalLayer: entry.approvalLayer,
@@ -994,6 +1206,11 @@ export async function getLatestPendingApproval(
   subjectId: string
 ): Promise<ApprovalRecord | null> {
   try {
+    const localPending = readLocalApprovals()
+      .filter((record) => record.subjectType === subjectType && record.subjectId === subjectId && record.status === 'pending')
+      .sort((a, b) => (a.approvalLayer - b.approvalLayer) || b.createdAt.localeCompare(a.createdAt))[0];
+    if (localPending) return localPending;
+
     const { data, error } = await supabase
       .from('approval_records')
       .select('*')
@@ -1021,6 +1238,50 @@ export async function approveItem(
   data?: { approvedBy?: string; notes?: string }
 ): Promise<ApprovalRecord & { spawnedNextLayer: boolean }> {
   try {
+    if (approvalId.startsWith('local-')) {
+      const localApprovals = readLocalApprovals();
+      const idx = localApprovals.findIndex((record) => record.id === approvalId);
+      if (idx < 0) throw new Error(`Approval ${approvalId} was not found`);
+      const existing = localApprovals[idx];
+      // Self-approval guard (local store)
+      if (
+        data?.approvedBy &&
+        existing.submitterUserId &&
+        data.approvedBy === existing.submitterUserId
+      ) {
+        throw new Error('You cannot approve your own submission.');
+      }
+      const now = new Date().toISOString();
+      const updated: ApprovalRecord = {
+        ...existing,
+        status: 'approved',
+        decidedAt: now,
+        notes: data?.notes || existing.notes,
+        updatedAt: now,
+      };
+      localApprovals[idx] = updated;
+      writeLocalApprovals(localApprovals);
+      return { ...updated, spawnedNextLayer: false };
+    }
+
+    // Self-approval guard (Supabase): reject if the acting user is the submitter.
+    if (data?.approvedBy) {
+      const { data: existingRecord, error: fetchErr } = await supabase
+        .from('approval_records')
+        .select('submitter_user_id, status')
+        .eq('id', approvalId)
+        .maybeSingle();
+      if (fetchErr) {
+        throw new Error(`Failed to load approval for self-approval check: ${fetchErr.message}`);
+      }
+      if (existingRecord?.submitter_user_id && existingRecord.submitter_user_id === data.approvedBy) {
+        throw new Error('You cannot approve your own submission.');
+      }
+      if (existingRecord?.status && existingRecord.status !== 'pending') {
+        throw new Error(`Approval is already ${existingRecord.status}.`);
+      }
+    }
+
     const { data: result, error } = await supabase
       .from('approval_records')
       .update({
@@ -1053,6 +1314,23 @@ export async function rejectItem(
   data?: { rejectedBy?: string; reason?: string }
 ): Promise<ApprovalRecord> {
   try {
+    if (approvalId.startsWith('local-')) {
+      const localApprovals = readLocalApprovals();
+      const idx = localApprovals.findIndex((record) => record.id === approvalId);
+      if (idx < 0) throw new Error(`Approval ${approvalId} was not found`);
+      const now = new Date().toISOString();
+      const updated: ApprovalRecord = {
+        ...localApprovals[idx],
+        status: 'rejected',
+        decidedAt: now,
+        notes: data?.reason || localApprovals[idx].notes,
+        updatedAt: now,
+      };
+      localApprovals[idx] = updated;
+      writeLocalApprovals(localApprovals);
+      return updated;
+    }
+
     const { data: result, error } = await supabase
       .from('approval_records')
       .update({
@@ -1111,6 +1389,27 @@ export async function bulkApprove(data: {
   notes?: string;
 }): Promise<ApprovalRecord[]> {
   try {
+    if (data.itemIds.every((id) => id.startsWith('local-'))) {
+      const localApprovals = readLocalApprovals();
+      const idSet = new Set(data.itemIds);
+      const now = new Date().toISOString();
+      const updatedRecords: ApprovalRecord[] = [];
+      const next = localApprovals.map((record) => {
+        if (!idSet.has(record.id)) return record;
+        const updated: ApprovalRecord = {
+          ...record,
+          status: 'approved',
+          decidedAt: now,
+          notes: data.notes || record.notes,
+          updatedAt: now,
+        };
+        updatedRecords.push(updated);
+        return updated;
+      });
+      writeLocalApprovals(next);
+      return updatedRecords;
+    }
+
     const { data: result, error } = await supabase
       .from('approval_records')
       .update({
@@ -1186,6 +1485,11 @@ export async function getApprovalHistory(
 
 export async function getPendingCount(approverUserId: string): Promise<number> {
   try {
+    const localPending = readLocalApprovals().filter((record) =>
+      record.approverUserId === approverUserId && record.status === 'pending'
+    ).length;
+    if (localPending > 0) return localPending;
+
     const { count, error } = await supabase
       .from('approval_records')
       .select('*', { count: 'exact', head: true })

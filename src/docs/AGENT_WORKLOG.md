@@ -1,7 +1,65 @@
 # WorkGraph Agent Worklog
 
-Last updated: March 26, 2026 09:50 (Europe/Zagreb)
+Last updated: 2026-04-21 (Europe/Zagreb)
 Owner thread: Nikola + Codex + Claude
+
+## 2026-04-21 - [DONE] task6a-chain-spawn (Codex)
+
+- Changed: `src/utils/api/approvals-supabase.ts`.
+- `buildApprovalPartyRoute()` now preserves every reachable upstream party and logs `[approvals.route]` with the resolved route IDs instead of dropping parties without `canApprove`.
+- `createNextApprovalLayerIfNeeded()` now resolves person-level approver nodes back to their containing party, falls back to `approval_layer - 1` when the current approver cannot be mapped, skips zero-approver parties without the off-by-one `route[currentLayer]` fallback, and logs `[approvals.nextLayer]` for future QA traces.
+
+## 2026-04-21 - [DONE] task6d-approver-scope-async (Codex)
+
+- Changed: `src/utils/api/approvals-supabase.ts`.
+- `loadApprovalParties()` now writes Supabase-fetched parties back into `sessionStorage`, and the queue filter path now uses `resolveApproverScopeNodeIds()` so a fresh session can rehydrate approver scope even when the Graph tab has not been visited first.
+- `getApprovalQueue()` now awaits the async scope resolver for `approverNodeId` filters instead of relying only on stale session data.
+
+## 2026-04-21 - [DONE] task6b-submitter-name (Codex)
+
+- Changed: `src/components/approvals/ApprovalsWorkbench.tsx`.
+- Added submitter identity/name resolvers that prefer the graph `nameDirectory`, recover the submitter node from `subjectId` when needed, and explicitly reject `"Me"` as a final display label.
+- Approval cards now backfill the real submitter name when graph context arrives, so the UI no longer gets stuck showing `"Me"` for self-submitted rows.
+
+## 2026-04-21 - [DONE] task6c-my-submissions-scope (Codex)
+
+- Changed: `src/components/approvals/ApprovalsWorkbench.tsx`, `src/utils/api/approvals-supabase.ts`.
+- Submitted-view filters now resolve `viewerNodeId` through `resolveGraphNodeToUserId()` and also pass `submitterGraphNodeId`, so switched viewers never fall back to the logged-in `user.id`.
+- Backend queue filtering now honors graph-node/org fallback when `submitter_user_id` is absent or unresolved, and submitted-history grouping now works for either user-ID or graph-node filtering.
+
+## 2026-04-21 - [DONE] task6e-approve-from-graph-gate (Codex)
+
+- Changed: `src/components/timesheets/ProjectTimesheetsView.tsx`.
+- `canViewerApprovePerson()` now accepts the current week and returns `false` for `approved` and `draft` weeks, and the row-level, bulk, and drawer-level approve affordances now all pass the relevant week object through that shared gate.
+- Verification note for Tasks 6A-6E: did not run `npm run build` per `AGENTS.md`; `git diff --check` was clean except for existing line-ending warnings in the worktree.
+
+## 2026-04-20 — Claude audit added 6F–6J to AGENTS.md
+
+Proactive audit surfaced 4 criticals + 1 high-priority Phase 4 gate that manual QA had not reached:
+
+- **6F** timesheet submit impersonation (`timesheets-api.ts` trusts arbitrary `personId`).
+- **6G** invite token not single-use (`invitations-api.tsx` — needs migration 011 + atomic UPDATE).
+- **6H** invoice cross-org authorization missing (`invoices-api.tsx` POST — no `from_party_id` control check).
+- **6I** invoice gate on approved timesheets (blocks invoicing un-approved work).
+- **6J** sign-out sessionStorage cleanup + weak token hardening.
+
+All five dispatched with disjoint file ownership that does NOT collide with the Codex agents currently in flight on 6A/6B/6C/6D/6E. The 6A file (`approvals-supabase.ts`) had a linter update landing the `matchesSubmitterFilters` / `submitterGraphNodeId` scaffolding — 6C is mid-work, do not touch.
+
+Note added to 6D: Claude's self-approval check (a read-then-update) must be upgraded by Codex to an atomic `UPDATE ... WHERE status='pending' AND submitter_user_id <> :user RETURNING *` to close a race window.
+
+## 2026-04-20 — [PARTIAL] task6-approval-chain-bugs (Claude)
+
+Manual QA on Me → G2 → Andritz → NAS supply chain surfaced 6 approval-chain defects. Claude landed the safety-critical fix; remaining 5 dispatched to Codex via `AGENTS.md` Task 6 (subtasks 6A–6E).
+
+- **Fixed (6D Self-approval guard):** `src/utils/api/approvals-supabase.ts` → `approveItem()`. Now reads the existing record before the UPDATE, compares `submitter_user_id` to `data.approvedBy`, throws `"You cannot approve your own submission."` if they match. Also rejects attempts to re-approve records already in a terminal state. Applied to both local-store and Supabase code paths.
+- **Remaining for Codex (see AGENTS.md Task 6):**
+  - 6A: chain skip — `buildApprovalPartyRoute` drops client parties without `canApprove`; `createNextApprovalLayerIfNeeded` has off-by-one `route[currentLayer]` fallback. `backend-developer` → `approvals-supabase.ts`.
+  - 6B: submitter shows as "Me" instead of real name — fallback chain never consults `nameDirectory`. `frontend-developer` → `ApprovalsWorkbench.tsx`.
+  - 6C: "My submissions" leaks across orgs when viewer is switched — filter uses `user.id` not `viewerNodeId`-resolved id. `frontend-developer` → `ApprovalsWorkbench.tsx`.
+  - 6E: queue scope reads stale sessionStorage — need Supabase fallback. `backend-developer` → `approvals-supabase.ts`.
+  - 6F: "Approve from graph" stays active after full approval — `canViewerApprovePerson` ignores week.status. `frontend-developer` → `ProjectTimesheetsView.tsx`.
+  - (Task numbering: "6D self-approval" in AGENTS.md was already claimed by Claude; Codex's subtasks are 6A/6B/6C/6D/6E per the rewritten task card.)
+- Risk: the chain-skip bug blocks the Phase 4 money-loop workflow (approval → invoice). No invoices can be issued until 6A lands.
 
 ## Purpose
 
@@ -14,11 +72,68 @@ Live snapshot only. Older detail lives in [AGENT_WORKLOG_ARCHIVE.md](AGENT_WORKL
 - Autonomous Mode: ACTIVE. Antigravity directs Claude; Claude directs Codex.
 - Keep this file short: last 7 days, current blockers, current assignments.
 
+## 2026-04-20 — [DONE] task1-bundle-splitting (Claude-verified)
+
+- Changed: `vite.config.ts`
+- Codex produced manualChunks logic; Claude applied + extended it (added vendor-charts split for recharts/d3).
+- Before: 1 chunk 1,741 kB. After: 9 chunks, largest 312 kB. All under 400 kB.
+- Circular chunk warning remains (Rollup informational only, not a runtime issue).
+- Verification: `npm run build` passed (vite build, 3301 modules, no 500 kB warning).
+
+## 2026-04-20 — Claude Handoff to Codex (Phase 4 Sprint)
+
+- Completed full codebase audit. Phase 3 confirmed GO, all blockers closed.
+- Identified 5 critical gaps for Phase 4 exit gate (see AGENTS.md for full task cards):
+  1. Bundle 1.74 MB single chunk → Task 1: code splitting
+  2. Invoice data in localStorage → Task 2+3: edge functions + Supabase persistence
+  3. Timesheets requires Graph tab visit → Task 4: WorkGraphContext expansion
+  4. Invite email edge function missing → Task 5: invitations-api
+- AGENTS.md rewritten with current task cards. All prior tasks (Bugs A/B/C) are closed.
+- Phase 4 gate: blocked until Tasks 1–3 are verified by Claude (Claude Preview screenshot + build check).
+
+## 2026-04-20 - [DONE] task2-invoice-edge-functions
+
+- Changed: `supabase/functions/server/invoices-api.tsx`, `supabase/functions/server/invoice-templates-api.tsx`, `supabase/functions/server/invoice-extract-api.tsx`, `supabase/functions/server/index.tsx`.
+- Added a new invoices router at `/make-server-f8b491be/invoices` with auth, project access checks, create/list/status-update routes, and invoice row mapping.
+- Added a new invoice templates router at `/make-server-f8b491be/invoice-templates` with owner-scoped list/create/delete routes and default-template handling.
+- Added a new invoice extraction router at `/make-server-f8b491be/invoice-extract` with Anthropic `claude-sonnet-4-6` extraction and a Croatian e-Racun fallback stub when `ANTHROPIC_API_KEY` is missing.
+- Registered all three new routers in `index.tsx`.
+- Verification: `npm run build` passed in the C workspace. Existing large-chunk warning remains, so Task 1 is still open.
+
+## 2026-04-20 - [DONE] task1-bundle-splitting
+
+- Changed: `vite.config.ts`, `src/components/ProjectWorkspace.tsx`.
+- Added `manualChunks` routing for `vendor-react`, `vendor-flow`, `vendor-ui`, `workgraph`, `timesheets`, `approvals`, and `invoices`, with a generic vendor fallback for the remaining node_modules imports.
+- Lazy-loaded the four heavy workspace tabs with `React.lazy()` and `Suspense` fallbacks so the tab code only loads when opened.
+- Verification: `npm run build` passed. Split chunk gzip sizes were `vendor-ui` 135.92 kB, `vendor` 109.90 kB, `vendor-react` 74.85 kB, `index` 59.46 kB, `workgraph` 56.66 kB, `timesheets` 15.77 kB, `approvals` 14.07 kB, and `invoices` 9.89 kB. Build still reports a Rollup circular chunk warning between `vendor` and `vendor-react`, but all gzip sizes stay under the 400 kB gate.
+
+## 2026-04-20 - [DONE] task3-invoice-persistence
+
+- Changed: `src/utils/api/invoices-api.ts`, `src/components/invoices/InvoicesWorkspace.tsx`.
+- Added API-backed invoice persistence with UUID-vs-local project handling, localStorage fallback for network-style failures, and helper exports for create/list/status/template flows.
+- `InvoicesWorkspace` now hydrates invoice records on mount, persists generated invoices through the API helper, and labels each card as `Saved to cloud` or `Local only`.
+- Verification: `npm run build` passed in the C workspace. Vite emitted circular chunk warnings for `vendor`, `vendor-react`, and `vendor-charts`, but the build completed and the split bundles stayed within the current size gate.
+
+## 2026-04-20 - [DONE] task4-graph-context-fix
+
+- Changed: `src/contexts/WorkGraphContext.tsx`, `src/components/timesheets/ProjectTimesheetsView.tsx`, `src/components/approvals/ApprovalsWorkbench.tsx`.
+- Expanded the graph context so Timesheets and Approvals can hydrate name / approval directories on demand from sessionStorage or the latest saved graph when the Graph tab has not been visited first.
+- Timesheets and Approvals now consume the shared context values instead of reading sessionStorage directly, which removes the tab-visit ordering dependency.
+- Verification: `npm run build` passed in the C workspace. No type or bundling errors were introduced by the context hydration path.
+
+## 2026-04-20 - [DONE] task5-invite-email
+
+- Changed: `supabase/functions/server/invitations-api.tsx`, `supabase/functions/server/index.tsx`, `src/components/projects/ProjectInviteMemberDialog.tsx`.
+- Added the invitations router with create, lookup, and accept routes, wired it into the main server entrypoint, and hooked the invite dialog to POST directly to the invite endpoint with auth.
+- The server path now follows the repo's `make-server-f8b491be/invitations` convention and sends or logs invite email payloads depending on SMTP availability.
+- Verification: `npm run build` passed in the C workspace with the invite route and dialog wiring present.
+
 ## Last 7 Days
 
 - 2026-03-25: approval flow wiring, SQL migration, and viewer/approval consistency were stabilized enough for the current gate snapshot.
 - 2026-03-25: docs-only cleanup added the governance rules and subagent playbook reference.
 - 2026-03-24: the gate audit and fallback policy work were pushed into the archive for dated history.
+- 2026-04-05: [DONE] self-approval-guard in TimesheetDataContext.tsx now skips self-only approver steps and advances to the next valid route party when available.
 
 ## Current Blockers
 
@@ -219,9 +334,84 @@ If you need dated implementation detail, read [AGENT_WORKLOG_ARCHIVE.md](AGENT_W
 
 - Approvals queue UX is now scan-friendly table-first, but month-level "approve whole month" remains a policy/workflow decision and is not fully productized in this patch.
 
+## 2026-04-06 - Month navigation range fix (2026 support)
+
+- Scope: `graph-data-flows`, `WorkGraphBuilder`, `ProjectTimesheetsView`, `MonthContext`.
+- Replaced static month cap behavior (`2025-11`) with deterministic generated month options:
+  - preserved demo months from snapshot start (`2025-09`)
+  - extended range through current/project-start/selected month anchor + 6 future months
+  - supports navigating to April 2026 and beyond.
+- `WorkGraphBuilder` now uses shared `MonthContext` month state (instead of local fixed snapshot default), so graph and other month-aware tabs stay aligned.
+- Month picker remains compact (windowed month chips + prev/next arrows) to avoid header overflow as range grows.
+- Added synthetic empty snapshot fallback for valid month keys not present in demo snapshot data (zero stats/flows) so graph rendering and month summary remain stable outside demo months.
+- Project start month is now watched from session/project-change events and included in month option generation.
+- Minor deterministic month normalization in timesheet month helpers (`monthKeyFromDate`, `toMonthStart`) to keep shared month transitions consistent.
+- Verification: `npm run build` passed (vite build, 3300 modules, existing chunk-size warning only).
+
+### Manual testing
+
+1. Open a project with `currentProjectStartDate` in `2026-04` and confirm Graph month picker can move from 2025 demo months to `Apr 2026` and forward.
+2. Change month in Timesheets, then switch to Graph and confirm the same month is selected (shared context sync).
+3. On months with no demo snapshot data (e.g., 2026-04+), confirm graph layout remains stable and month summary shows zeroed stats instead of breaking.
+
 ## 2026-04-05 - [DONE] bug-b-db-fallback
 
 - Changed: src/utils/api/approvals-supabase.ts
 - What changed: loadApprovalParties() now returns early for non-UUID project IDs and uses DB fallback (wg_projects.parties) for UUID projects when session storage is empty. createNextApprovalLayerIfNeeded() already awaited uildApprovalPartyRoute() and remains aligned with this path.
 - Verification: 
 pm run build passed (ite build, 3300 modules).
+
+
+## 2026-04-05 - [DONE] phase4-invoice-import-panel
+
+- Agent C lane only (`src/components/invoices/`): rewired `InvoiceImportPanel.tsx` to support real upload state, extraction loading state, extracted-template preview cards (locale, seller label, buyer label, invoice number label, VAT rate), and async template save.
+- Added frontend `POST /api/invoice-extract` request path with automatic local fallback when the edge function is unavailable, so imported files still get a reviewable preview instead of failing hard.
+- Added async `Save Template` flow with API-first / local-storage fallback behavior, while keeping invoice editing and template-apply interactions in the same panel.
+- Verification: `npm run build` PASSED.
+
+## 2026-04-05 - [DONE] bug-c-uuid-direct-join
+- Changed: src/utils/api/approvals-supabase.ts
+- What changed: Added direct UUID lookup in 
+esolveGraphNodeToUserId using wg_project_members (project_id + scope|graph_node_id) before heuristic scoring; heuristic path remains unchanged as fallback.
+- Verification: 
+pm run build passed (vite build, 3300 modules).
+
+- 2026-04-05 - [DONE] moved viewer selector into workspace header; removed duplicate graph-tab control so tab switching no longer shows two "Viewing as" surfaces; build passes.
+
+## 2026-04-06 - [DONE] local-project approval fallback + refresh hammer guard
+
+- Ownership lane: `src/contexts/TimesheetDataContext.tsx`, `src/utils/api/timesheets-api.ts`, `src/utils/api/approvals-supabase.ts`.
+- Stopped edge API hammering for local `proj_` projects:
+  - `listTimesheets()` now returns early for non-UUID active project IDs.
+  - `TimesheetDataContext` now skips remote project-start fetch + remote week refresh for local projects.
+  - Initial authenticated load also avoids API fetch when the selected project is local.
+- Added reliable local approval persistence for local projects:
+  - `createApproval()` now stores pending local approvals in `localStorage` (`workgraph-local-approvals`) when project ID is non-UUID.
+  - `getApprovalQueue()` reads local approvals for local projects and returns queue items with timesheet snapshot context.
+  - `getLatestPendingApproval()`, `approveItem()`, `rejectItem()`, `bulkApprove()`, and `getPendingCount()` now have local-record paths.
+- Local submit flow now creates approval records:
+  - In `TimesheetDataContext.setWeekStatus()`, local `submitted` status now resolves route + creates approval record before local status update.
+- UUID projects keep current Supabase chain behavior unchanged (DB paths remain primary for UUID IDs).
+
+### Verification
+
+1. Select a local `proj_...` project and submit a week.
+2. Switch viewer to the approver and open Approvals tab: pending item should appear (no CORS/401 flood in console).
+3. Approve/reject item in Approvals tab and refresh queue: status should move out of pending.
+4. Run `npm run build` (PASSED: Vite build, 3300 modules).
+
+## 2026-04-06 - [DONE] local project month reset + compact viewer control
+
+- Changed: `src/components/ProjectWorkspace.tsx`, `src/components/workgraph/WorkGraphBuilder.tsx`, `src/components/workgraph/graph-data-flows.ts`, `src/utils/api/projects-api.ts`, `src/utils/api/timesheets-api.ts`, `src/contexts/TimesheetDataContext.tsx`
+- What changed:
+  - Reset the shared month context per project so stale months from a previous workspace do not bleed into a new project.
+  - Widened the graph month chip window so the header is less constrained and easier to navigate across future months.
+  - Made local `proj_` workspaces short-circuit project/timesheet API fetches before they ever reach the Supabase edge function, which removes the CORS/401 spam.
+  - Compactified the viewer control so the workspace header no longer feels like it is repeating the same “Viewing as” label twice.
+- Verification: `npm run build` passed (vite build, 3300 modules, existing chunk-size warning only).
+
+### Manual testing
+
+1. Open a `proj_...` project and confirm the console no longer floods with `getProject()` / `listTimesheets()` CORS or 401 errors.
+2. Switch from a project with a 2025 month history into a project that starts in `2026-04` and confirm the graph month picker resets with the project instead of staying stuck on the old month.
+3. Change the viewer in the workspace header and confirm the control stays visible across tab switches without duplicating labels.

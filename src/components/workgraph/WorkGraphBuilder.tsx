@@ -25,11 +25,13 @@ import {
   Receipt,
   UserCheck,
   X,
+  MoreHorizontal,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Separator } from '../ui/separator';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../ui/dropdown-menu';
 import { toast } from 'sonner';
 import { TEMPLATES } from './templates';
 import { useGraphPersistence } from '../hooks/useGraphPersistence';
@@ -42,11 +44,14 @@ import {
   type VisibleEdge,
 } from './graph-visibility';
 import {
-  MONTHLY_SNAPSHOTS,
   getSnapshotForMonth,
   getActivePeopleIds,
   getPersonMonthlyActivity,
   computeEdgeFlows,
+  resolveGraphMonthOptions,
+  formatMonthKey,
+  parseMonthKey,
+  type MonthOption,
   type MonthlySnapshot,
   type EdgeFlowSummary,
 } from './graph-data-flows';
@@ -59,6 +64,7 @@ import type {
 import type { PartyEntry } from '../../utils/graph/auto-generate';
 import { getProject, updateProject } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
 
 // ============================================================================
@@ -741,11 +747,9 @@ export function ViewerSelector({
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted/50 transition-colors text-sm"
+        aria-label={`Viewing as ${current.name}`}
       >
         <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-foreground">
-          Viewing as:
-        </span>
         <span className="flex items-center gap-1.5">
           {getIcon(current)}
           <span className="text-xs font-semibold text-foreground max-w-[140px] truncate">
@@ -785,28 +789,32 @@ export function ViewerSelector({
 // ============================================================================
 
 function MonthNavigator({
-  snapshots,
+  months,
   selectedMonth,
   onChange,
 }: {
-  snapshots: MonthlySnapshot[];
+  months: MonthOption[];
   selectedMonth: string;
   onChange: (month: string) => void;
 }) {
-  const currentIdx = snapshots.findIndex((s) => s.month === selectedMonth);
+  const currentIdx = months.findIndex((s) => s.month === selectedMonth);
+  const safeCurrentIdx = currentIdx >= 0 ? currentIdx : Math.max(months.length - 1, 0);
+  const windowSize = 5;
+  const startIdx = Math.max(0, Math.min(safeCurrentIdx - 1, Math.max(months.length - windowSize, 0)));
+  const visibleMonths = months.slice(startIdx, startIdx + windowSize);
 
   return (
     <div className="flex items-center gap-1.5">
       <button
-        onClick={() => currentIdx > 0 && onChange(snapshots[currentIdx - 1].month)}
-        disabled={currentIdx <= 0}
+        onClick={() => safeCurrentIdx > 0 && onChange(months[safeCurrentIdx - 1].month)}
+        disabled={safeCurrentIdx <= 0}
         className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-muted/50 disabled:opacity-30 transition-colors"
       >
         <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground" />
       </button>
 
       <div className="flex items-center gap-1 bg-muted/50 rounded-lg px-1 py-0.5">
-        {snapshots.map((s, i) => (
+        {visibleMonths.map((s) => (
           <button
             key={s.month}
             onClick={() => onChange(s.month)}
@@ -823,8 +831,8 @@ function MonthNavigator({
       </div>
 
       <button
-        onClick={() => currentIdx < snapshots.length - 1 && onChange(snapshots[currentIdx + 1].month)}
-        disabled={currentIdx >= snapshots.length - 1}
+        onClick={() => safeCurrentIdx < months.length - 1 && onChange(months[safeCurrentIdx + 1].month)}
+        disabled={safeCurrentIdx >= months.length - 1}
         className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-muted/50 disabled:opacity-30 transition-colors"
       >
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1466,7 +1474,12 @@ export function WorkGraphBuilder({
 }: WorkGraphBuilderProps) {
   const projectId = propProjectId || sessionStorage.getItem('currentProjectId') || '';
   const { accessToken, user } = useAuth();
+  const { selectedMonth: sharedSelectedMonth, setSelectedMonth: setSharedSelectedMonth } = useMonthContextSafe();
   const isDemoProject = projectId === 'proj-alpha';
+  const [projectStartDate, setProjectStartDate] = useState<string | null>(() => {
+    if (typeof sessionStorage === 'undefined') return null;
+    return sessionStorage.getItem('currentProjectStartDate');
+  });
 
   const defaultTemplate = TEMPLATES[0];
   const [allNodes, setAllNodes] = useState<BaseNode[]>(() => {
@@ -1494,6 +1507,11 @@ export function WorkGraphBuilder({
       try {
         const data = await getProject(projectId, accessToken);
         if (cancelled) return;
+        const fetchedStartDate = data?.project?.startDate || data?.project?.start_date || null;
+        if (fetchedStartDate) {
+          setProjectStartDate(fetchedStartDate);
+          sessionStorage.setItem('currentProjectStartDate', fetchedStartDate);
+        }
         if (data?.project?.graph?.nodes?.length > 0) {
           setAllNodes(data.project.graph.nodes);
           setAllEdges(data.project.graph.edges || []);
@@ -1578,7 +1596,9 @@ export function WorkGraphBuilder({
         dir[n.id] = { name: n.data.name, type: 'party' };
       }
     });
-    sessionStorage.setItem(`workgraph-name-dir:${projectId}`, JSON.stringify(dir));
+    const nameDirPayload = JSON.stringify(dir);
+    sessionStorage.setItem(`workgraph-name-dir:${projectId}`, nameDirPayload);
+    try { localStorage.setItem(`workgraph-name-dir:${projectId}`, nameDirPayload); } catch { /* quota */ }
     // Notify ProjectWorkspace that the name directory is available/updated
     window.dispatchEvent(new CustomEvent('workgraph-namedir-updated', { detail: { projectId } }));
 
@@ -1698,8 +1718,46 @@ export function WorkGraphBuilder({
     }));
   }, [currentViewer, viewerStorageKey, viewerMetaStorageKey, projectId]);
 
+  useEffect(() => {
+    const syncProjectStartDate = (event?: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; projectStartDate?: string | null }>)?.detail;
+      if (detail?.projectId && detail.projectId !== projectId) return;
+      const nextStartDate = detail?.projectStartDate ?? sessionStorage.getItem('currentProjectStartDate');
+      setProjectStartDate(nextStartDate || null);
+    };
+
+    syncProjectStartDate();
+    window.addEventListener('workgraph-project-selected', syncProjectStartDate as EventListener);
+    window.addEventListener('workgraph-project-changed', syncProjectStartDate as EventListener);
+    return () => {
+      window.removeEventListener('workgraph-project-selected', syncProjectStartDate as EventListener);
+      window.removeEventListener('workgraph-project-changed', syncProjectStartDate as EventListener);
+    };
+  }, [projectId]);
+
   // Month
-  const [selectedMonth, setSelectedMonth] = useState(MONTHLY_SNAPSHOTS[MONTHLY_SNAPSHOTS.length - 1].month);
+  const selectedMonth = useMemo(() => {
+    const base = sharedSelectedMonth instanceof Date ? sharedSelectedMonth : new Date(sharedSelectedMonth);
+    return formatMonthKey(new Date(base.getFullYear(), base.getMonth(), 1));
+  }, [sharedSelectedMonth]);
+
+  const setSelectedMonth = useCallback((month: string) => {
+    const parsed = parseMonthKey(month);
+    if (!parsed) return;
+    setSharedSelectedMonth(parsed);
+  }, [setSharedSelectedMonth]);
+
+  const monthOptions = useMemo(
+    () => resolveGraphMonthOptions(projectStartDate, selectedMonth),
+    [projectStartDate, selectedMonth]
+  );
+
+  useEffect(() => {
+    if (monthOptions.length === 0) return;
+    if (monthOptions.some((option) => option.month === selectedMonth)) return;
+    setSelectedMonth(monthOptions[monthOptions.length - 1].month);
+  }, [monthOptions, selectedMonth, setSelectedMonth]);
+
   const currentSnapshot = useMemo(() => getSnapshotForMonth(selectedMonth), [selectedMonth]);
 
   // Layout mode
@@ -1944,7 +2002,7 @@ export function WorkGraphBuilder({
 
           <Separator orientation="vertical" className="h-5" />
 
-          <MonthNavigator snapshots={MONTHLY_SNAPSHOTS} selectedMonth={selectedMonth} onChange={setSelectedMonth} />
+          <MonthNavigator months={monthOptions} selectedMonth={selectedMonth} onChange={setSelectedMonth} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -1984,16 +2042,6 @@ export function WorkGraphBuilder({
           <Button
             variant="outline"
             size="sm"
-            onClick={runGraphMigration}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <AlertCircle className="h-3.5 w-3.5" />
-            Repair Graph
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
             onClick={() => setIsEditSupplyChainOpen(true)}
             className="h-8 gap-1.5 text-xs"
           >
@@ -2012,15 +2060,23 @@ export function WorkGraphBuilder({
             Save
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={openHistoryPanel}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <Clock className="h-3.5 w-3.5" />
-            History
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={openHistoryPanel}>
+                <Clock className="h-3.5 w-3.5 mr-2" />
+                Version History
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={runGraphMigration}>
+                <AlertCircle className="h-3.5 w-3.5 mr-2" />
+                Repair Graph
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

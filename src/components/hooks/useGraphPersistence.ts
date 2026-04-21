@@ -22,6 +22,15 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 const SUPABASE_URL = `https://${projectId}.supabase.co`;
 const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-f8b491be`;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Local projects don't have a server-side graph versioning endpoint. */
+const isLocalProject = (id: string) => !UUID_RE.test(id);
+
+/** Safely parse JSON from a fetch response, returning null on parse failure. */
+async function safeJson(response: Response): Promise<any> {
+  try { return await response.json(); } catch { return null; }
+}
+
 interface GraphVersion {
   id: string;
   project_id: string;
@@ -197,6 +206,14 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
     edges: Edge[],
     changeSummary?: string
   ): Promise<GraphVersion | null> => {
+    // Local projects save via projects-api (localUpdateProject) — no versioning endpoint
+    if (isLocalProject(pid)) {
+      setHasUnsavedChanges(false);
+      pendingChangesRef.current = null;
+      // The graph is saved via updateProject in WorkGraphBuilder — just acknowledge
+      return null;
+    }
+
     setIsSaving(true);
     try {
       const graphData = {
@@ -224,22 +241,23 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save graph version');
+        const errorData = await safeJson(response);
+        throw new Error(errorData?.error || 'Failed to save graph version');
       }
 
-      const { graphVersion, message } = await response.json();
-      
-      setCurrentVersion(graphVersion);
+      const data = await safeJson(response);
+      if (!data?.graphVersion) throw new Error('Invalid response from graph-versions endpoint');
+
+      setCurrentVersion(data.graphVersion);
       setHasUnsavedChanges(false);
       pendingChangesRef.current = null;
-      
-      onSaveSuccess?.(graphVersion);
-      toast.success(`${message} (v${graphVersion.version_number})`);
-      
-      console.log(`✅ Saved graph version ${graphVersion.version_number}`);
-      
-      return graphVersion;
+
+      onSaveSuccess?.(data.graphVersion);
+      toast.success(`${data.message} (v${data.graphVersion.version_number})`);
+
+      console.log(`✅ Saved graph version ${data.graphVersion.version_number}`);
+
+      return data.graphVersion;
     } catch (error) {
       console.error('Error saving graph version:', error);
       const err = error instanceof Error ? error : new Error(String(error));
@@ -253,6 +271,7 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
 
   // Load version by ID
   const loadVersionById = useCallback(async (versionId: string): Promise<GraphVersion | null> => {
+    if (isLocalProject(pid)) return null;
     setIsLoading(true);
     try {
       const response = await fetch(
@@ -265,18 +284,18 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to load version');
+        const errorData = await safeJson(response);
+        throw new Error(errorData?.error || 'Failed to load version');
       }
 
-      const { graphVersion } = await response.json();
-      
-      if (graphVersion) {
-        setCurrentVersion(graphVersion);
-        onLoadSuccess?.(graphVersion);
-        return graphVersion;
+      const data = await safeJson(response);
+
+      if (data?.graphVersion) {
+        setCurrentVersion(data.graphVersion);
+        onLoadSuccess?.(data.graphVersion);
+        return data.graphVersion;
       }
-      
+
       return null;
     } catch (error) {
       console.error('Error loading graph version by ID:', error);
@@ -286,10 +305,11 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
     } finally {
       setIsLoading(false);
     }
-  }, [onLoadSuccess, onLoadError]);
+  }, [pid, onLoadSuccess, onLoadError]);
 
   // Get version history
   const getVersionHistory = useCallback(async (): Promise<GraphVersion[]> => {
+    if (isLocalProject(pid)) return [];
     try {
       const response = await fetch(
         `${API_BASE}/graph-versions?projectId=${pid}`,
@@ -300,13 +320,10 @@ export function useGraphPersistence(options: UseGraphPersistenceOptions): UseGra
         }
       );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to load version history');
-      }
+      if (!response.ok) return [];
 
-      const { graphVersions } = await response.json();
-      return graphVersions || [];
+      const data = await safeJson(response);
+      return data?.graphVersions || [];
     } catch (error) {
       console.error('Error loading version history:', error);
       return [];

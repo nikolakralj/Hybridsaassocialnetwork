@@ -1,11 +1,18 @@
 import { useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
+import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { createClient } from '../../utils/supabase/client';
+import { projectId as supabaseProjectId } from '../../utils/supabase/info';
 import type { ProjectRole } from '../../types/collaboration';
+
+const supabase = createClient();
+const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be`;
+const INVITATIONS_ENDPOINT = `${BASE}/invitations`;
 
 interface ProjectInviteMemberDialogProps {
   open: boolean;
@@ -28,6 +35,10 @@ export function ProjectInviteMemberDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Legacy callback is retained for existing callers, but this dialog now owns
+  // the submission flow directly.
+  void onInvite;
+
   function resetForm() {
     setUserName('');
     setUserEmail('');
@@ -39,23 +50,61 @@ export function ProjectInviteMemberDialog({
     e.preventDefault();
     setError('');
 
+    const trimmedProjectName = projectName?.trim();
     const normalizedEmail = userEmail.trim().toLowerCase();
+    if (!trimmedProjectName) {
+      const message = 'Project name is required to send invitations.';
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
-      setError('Enter a valid email address.');
+      const message = 'Enter a valid email address.';
+      setError(message);
+      toast.error(message);
       return;
     }
 
     setLoading(true);
     try {
-      await onInvite({
-        userName: userName.trim() || undefined,
-        userEmail: normalizedEmail,
-        role,
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        throw new Error('Please sign in again to send invitations.');
+      }
+
+      const response = await fetch(INVITATIONS_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          projectName: trimmedProjectName,
+          userName: userName.trim() || undefined,
+          userEmail: normalizedEmail,
+          role,
+        }),
       });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to send invitation.');
+      }
+
       resetForm();
       onOpenChange(false);
+      toast.success('Invitation sent', {
+        description:
+          data?.emailStatus === 'logged'
+            ? 'Email was logged locally because SMTP is not configured yet.'
+            : `${normalizedEmail} will receive the invite for ${trimmedProjectName}.`,
+      });
     } catch (err: any) {
-      setError(err?.message || 'Failed to send invitation.');
+      const message = err?.message || 'Failed to send invitation.';
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }

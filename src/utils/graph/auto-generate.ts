@@ -16,7 +16,7 @@ import type {
   PartyType,
   EdgeType,
 } from '../../types/workgraph';
-import { getApprovalStepsForParty } from './approval-fallback';
+import { getApprovalStepsForParty, suppressApprovalLogs } from './approval-fallback';
 
 // ============================================================================
 // Input Types (from wizard)
@@ -256,6 +256,8 @@ export function generateGraphFromWizard(
   // same-company approver -> nearest upstream billTo approver -> project owner
   // The shared helper resolves a single route tier at a time, so the graph
   // stays backward-compatible while the fallback chain remains deterministic.
+  // Suppress log noise during wizard preview (fires on every keystroke).
+  suppressApprovalLogs(true);
   parties.forEach((submitterParty) => {
     const steps = getApprovalStepsForParty(submitterParty.id, parties);
 
@@ -278,6 +280,7 @@ export function generateGraphFromWizard(
       });
     });
   });
+  suppressApprovalLogs(false);
 
   return { nodes, edges };
 }
@@ -324,6 +327,8 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
   });
 
   // Check fallback approval coverage for each party with people.
+  // Suppress log noise — this runs on every keystroke in the wizard.
+  suppressApprovalLogs(true);
   parties.forEach((party) => {
     if (party.people.length === 0) return;
     const steps = getApprovalStepsForParty(party.id, parties);
@@ -331,6 +336,7 @@ export function validatePartyChain(parties: PartyEntry[]): string[] {
       errors.push(`"${party.name || party.partyType}" has no approver path (same-company, upstream, or project owner)`);
     }
   });
+  suppressApprovalLogs(false);
 
   return errors;
 }
