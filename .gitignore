@@ -8,3 +8,5 @@ build/
 vite-dev.log
 vite-dev.err
 supabase/.temp/
+.agents/skills/
+.windsurf/skills/

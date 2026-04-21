@@ -25,6 +25,7 @@ import {
   deleteProject as deleteProjectApi,
   getProjectMembers,
   isLocalProjectFallbackEnabled,
+  type ProjectStorageSource,
   type StoredProjectInvitation,
 } from '../../utils/api/projects-api';
 import { clearProjectData } from '../../contexts/TimesheetDataContext';
@@ -42,6 +43,23 @@ interface ProjectConfiguration {
   status: 'active' | 'archived' | 'draft';
 }
 
+type ProjectListItem = {
+  id: string;
+  name?: string;
+  description?: string;
+  status?: string;
+  region?: string;
+  currency?: string;
+  startDate?: string;
+  start_date?: string;
+  endDate?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  workWeek?: Record<string, boolean>;
+  storageSource?: ProjectStorageSource;
+  isLocalOnly?: boolean;
+};
+
 export function ProjectsListView() {
   const navigate = useNavigate();
   const { accessToken } = useAuth();
@@ -51,7 +69,7 @@ export function ProjectsListView() {
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [inviteProject, setInviteProject] = useState<any | null>(null);
   
-  const [projects, setProjects] = useState<any[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [invitations, setInvitations] = useState<StoredProjectInvitation[]>([]);
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -70,7 +88,7 @@ export function ProjectsListView() {
       // Load member counts in parallel
       const memberCounts: Record<string, number> = {};
       await Promise.all(
-        userProjects.map(async (project: any) => {
+        userProjects.map(async (project: ProjectListItem) => {
           try {
             const members = await getProjectMembers(project.id, accessToken);
             memberCounts[project.id] = members.length;
@@ -96,7 +114,12 @@ export function ProjectsListView() {
     setIsWizardOpen(true);
   };
 
-  const syncCurrentProjectSession = (project: { id: string; name?: string; startDate?: string | null }) => {
+  const syncCurrentProjectSession = (project: {
+    id: string;
+    name?: string;
+    startDate?: string | null;
+    storageSource?: ProjectStorageSource;
+  }) => {
     sessionStorage.setItem('currentProjectId', project.id);
     if (project.name) {
       sessionStorage.setItem('currentProjectName', project.name);
@@ -106,11 +129,17 @@ export function ProjectsListView() {
     } else {
       sessionStorage.removeItem('currentProjectStartDate');
     }
+    if (project.storageSource) {
+      sessionStorage.setItem('currentProjectSource', project.storageSource);
+    } else {
+      sessionStorage.removeItem('currentProjectSource');
+    }
     if (typeof window !== 'undefined') {
       const detail = {
         projectId: project.id,
         projectName: project.name || null,
         projectStartDate: project.startDate || null,
+        projectSource: project.storageSource || null,
       };
       window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
       window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
@@ -124,13 +153,12 @@ export function ProjectsListView() {
     loadProjects(); // Refresh list
   };
   
-  const handleOpenProject = (projectId: string) => {
-    // Store name for workspace header
-    const proj = projects.find(p => p.id === projectId);
+  const handleOpenProject = (project: ProjectListItem) => {
     syncCurrentProjectSession({
-      id: projectId,
-      name: proj?.name,
-      startDate: proj?.startDate || proj?.start_date || null,
+      id: project.id,
+      name: project.name,
+      startDate: project.startDate || project.start_date || null,
+      storageSource: project.storageSource,
     });
     navigate('/app/project-workspace');
   };
@@ -198,6 +226,26 @@ export function ProjectsListView() {
     project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     project.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const getSourceBadge = (project: ProjectListItem) => {
+    if (project.storageSource === 'cloud') {
+      return (
+        <Badge variant="outline" className="text-[11px] border-sky-200 text-sky-700 bg-sky-50">
+          Cloud
+        </Badge>
+      );
+    }
+
+    if (project.storageSource === 'local') {
+      return (
+        <Badge variant="outline" className="text-[11px] border-amber-200 text-amber-800 bg-amber-50">
+          Local
+        </Badge>
+      );
+    }
+
+    return null;
+  };
 
   const getStatusBadge = (status?: string) => {
     switch (status) {
@@ -293,7 +341,7 @@ export function ProjectsListView() {
             <div
               key={project.id}
               className="bg-card border border-border/60 rounded-xl p-5 hover:shadow-md transition-all duration-200 cursor-pointer shadow-[0_1px_3px_0_rgb(0_0_0/0.04)]"
-              onClick={() => handleOpenProject(project.id)}
+              onClick={() => handleOpenProject(project)}
             >
               {/* Project Header */}
               <div className="flex items-start justify-between mb-3">
@@ -310,7 +358,7 @@ export function ProjectsListView() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleOpenProject(project.id); }}>
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleOpenProject(project); }}>
                       <Eye className="mr-2 h-4 w-4" />
                       Open in Builder
                     </DropdownMenuItem>
@@ -338,6 +386,7 @@ export function ProjectsListView() {
               {/* Status & Region */}
               <div className="mb-4 flex items-center gap-1.5 flex-wrap">
                 {getStatusBadge(project.status)}
+                {getSourceBadge(project)}
                 <Badge variant="secondary" className="text-[11px]">
                   {project.region}
                 </Badge>
@@ -386,7 +435,7 @@ export function ProjectsListView() {
                   variant="default"
                   size="sm"
                   className="w-full bg-foreground text-background hover:bg-foreground/90 rounded-lg h-8 text-xs gap-1.5"
-                  onClick={(e) => { e.stopPropagation(); handleOpenProject(project.id); }}
+                  onClick={(e) => { e.stopPropagation(); handleOpenProject(project); }}
                 >
                   Open in Builder
                   <ArrowRight className="h-3 w-3" />

@@ -11,6 +11,26 @@ const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
 const ENABLE_LOCAL_FALLBACK = import.meta.env.VITE_ENABLE_LOCAL_FALLBACK === 'true';
 export const isLocalProjectFallbackEnabled = ENABLE_LOCAL_FALLBACK;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export type ProjectStorageSource = 'cloud' | 'local';
+
+function withProjectSource(project: Record<string, any>, storageSource: ProjectStorageSource) {
+  return {
+    ...project,
+    storageSource,
+    isLocalOnly: storageSource === 'local',
+  };
+}
+
+function sortProjects(a: any, b: any) {
+  const sourceRank = (project: any) => (project?.storageSource === 'cloud' ? 0 : 1);
+  const rankDiff = sourceRank(a) - sourceRank(b);
+  if (rankDiff !== 0) return rankDiff;
+
+  return (
+    new Date(b.updatedAt || b.createdAt || 0).getTime() -
+    new Date(a.updatedAt || a.createdAt || 0).getTime()
+  );
+}
 
 function getHeaders(accessToken?: string | null): HeadersInit {
   return {
@@ -74,6 +94,7 @@ function readLocalProjects(): LocalProjectRecord[] {
 function readLocalProjectList() {
   return readLocalProjects()
     .map((record) => record.project)
+    .map((project) => withProjectSource(project, 'local'))
     .filter(Boolean);
 }
 
@@ -87,11 +108,7 @@ function mergeProjectsById(primary: any[], secondary: any[]) {
     if (!project?.id) return;
     merged.set(project.id, project);
   });
-  return [...merged.values()].sort(
-    (a, b) =>
-      new Date(b.updatedAt || b.createdAt || 0).getTime() -
-      new Date(a.updatedAt || a.createdAt || 0).getTime()
-  );
+  return [...merged.values()].sort(sortProjects);
 }
 
 function writeLocalProjects(records: LocalProjectRecord[]) {
@@ -102,7 +119,8 @@ function writeLocalProjects(records: LocalProjectRecord[]) {
 function localListProjects() {
   return readLocalProjects()
     .map((record) => record.project)
-    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime());
+    .map((project) => withProjectSource(project, 'local'))
+    .sort(sortProjects);
 }
 
 function localGetProject(projectId: string) {
@@ -337,7 +355,15 @@ export async function listProjects(accessToken?: string | null) {
       console.error('listProjects error:', data);
       throw new Error(data.error || 'Failed to list projects');
     }
-    return mergeProjectsById(data.projects || [], readLocalProjectList());
+    const cloudProjects = (data.projects || []).map((project: Record<string, any>) =>
+      withProjectSource(project, 'cloud')
+    );
+
+    if (!ENABLE_LOCAL_FALLBACK) {
+      return cloudProjects.sort(sortProjects);
+    }
+
+    return mergeProjectsById(cloudProjects, readLocalProjectList());
   } catch (error) {
     if (canUseResilientFallback(undefined, accessToken)) {
       return localListProjects();
