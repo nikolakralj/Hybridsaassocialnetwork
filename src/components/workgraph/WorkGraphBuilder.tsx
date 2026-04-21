@@ -1643,6 +1643,34 @@ export function WorkGraphBuilder({
         };
       });
 
+    // Orphan recovery: any person node not attributed to any party above gets bucketed
+    // into the isCreator party (fallback to first non-client party). Without this,
+    // orphaned submitters have empty approval routes and their timesheets never enter
+    // any approver's queue.
+    const attributedPersonIds = new Set<string>();
+    parties.forEach((p) => p.people.forEach((person) => attributedPersonIds.add(person.id)));
+    const orphanPersonNodes = allNodes.filter(
+      (n) => n.type === 'person' && !attributedPersonIds.has(n.id)
+    );
+    if (orphanPersonNodes.length > 0) {
+      const host =
+        parties.find((p) => {
+          const node = allNodes.find((n) => n.id === p.id);
+          return node?.data?.isCreator === true;
+        }) || parties.find((p) => p.partyType !== 'client') || parties[0];
+      if (host) {
+        orphanPersonNodes.forEach((personNode) => {
+          host.people.push({
+            id: personNode.id,
+            name: personNode.data?.name || personNode.id,
+            canApprove: personNode.data?.canApprove === true,
+          });
+        });
+        console.warn('[workgraph.approval-dir] bucketed orphan person nodes into host party',
+          { hostPartyId: host.id, orphanIds: orphanPersonNodes.map((n) => n.id) });
+      }
+    }
+
     const approvalDirPayload = JSON.stringify({ parties });
     sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload);
     try { localStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload); } catch { /* quota */ }

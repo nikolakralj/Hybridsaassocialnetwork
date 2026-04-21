@@ -302,8 +302,33 @@ async function buildApprovalPartyRoute(projectId: string, submitterPersonId: str
   if (parties.length === 0) return [];
 
   const partyMap = new Map(parties.map((party) => [party.id, party]));
-  const submitterParty = parties.find((party) => (party.people || []).some((person) => person.id === submitterPersonId));
-  if (!submitterParty) return [];
+  let submitterParty = parties.find((party) => (party.people || []).some((person) => person.id === submitterPersonId));
+
+  if (!submitterParty) {
+    const nameDir = readNameDir(projectId);
+    const orgIdFromDir = nameDir[submitterPersonId]?.orgId;
+    if (orgIdFromDir) {
+      submitterParty = partyMap.get(orgIdFromDir);
+      if (submitterParty) {
+        console.warn('[approvals.route] submitter orphaned from parties; recovered via nameDir.orgId',
+          { submitterPersonId, orgId: orgIdFromDir });
+      }
+    }
+  }
+
+  if (!submitterParty) {
+    submitterParty = parties.find((p) => (p.billsTo || []).length > 0 && p.partyType !== 'client');
+    if (submitterParty) {
+      console.warn('[approvals.route] submitter orphaned; falling back to first upstream-billing party',
+        { submitterPersonId, partyId: submitterParty.id });
+    }
+  }
+
+  if (!submitterParty) {
+    console.error('[approvals.route] no submitter party could be resolved; approval route empty',
+      { submitterPersonId, knownPartyIds: parties.map((p) => p.id) });
+    return [];
+  }
 
   const visited = new Set<string>([submitterParty.id]);
   const queue: string[] = [...(submitterParty.billsTo || [])];

@@ -1122,6 +1122,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       if (status === 'submitted') {
         const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
         if (!approvalRoute) {
+          const description = 'No approver could be resolved from the project graph. Open the Project Graph tab, make sure this person is inside an organization that bills upstream, then try again.';
+          toast.error('Cannot submit timesheet', { description });
           throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
         }
 
