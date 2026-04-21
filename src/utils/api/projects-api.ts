@@ -651,6 +651,37 @@ export async function createProject(
   }
 }
 
+async function supabaseUpdateProject(projectId: string, updates: Record<string, any>) {
+  const dbUpdates: Record<string, any> = { updated_at: new Date().toISOString() };
+  const columnMap: Record<string, string> = {
+    name: 'name',
+    description: 'description',
+    region: 'region',
+    currency: 'currency',
+    startDate: 'start_date',
+    endDate: 'end_date',
+    workWeek: 'work_week',
+    status: 'status',
+    supplyChainStatus: 'supply_chain_status',
+    parties: 'parties',
+    graph: 'graph',
+  };
+  for (const [key, col] of Object.entries(columnMap)) {
+    if (updates[key] !== undefined) dbUpdates[col] = updates[key];
+  }
+
+  const { data, error } = await supabase
+    .from('wg_projects')
+    .update(dbUpdates)
+    .eq('id', projectId)
+    .select()
+    .single();
+  if (error) throw new Error(`Failed to update project in DB: ${error.message}`);
+  const mapped = mapSupabaseProjectRow(data);
+  cacheCloudProjectList([mapped]);
+  return mapped;
+}
+
 export async function updateProject(
   projectId: string,
   updates: Record<string, any>,
@@ -662,6 +693,21 @@ export async function updateProject(
       return localUpdateProject(projectId, updates);
     }
     throw new Error('Project not found');
+  }
+
+  // Primary path: direct Supabase (edge function not deployed)
+  if (accessToken) {
+    try {
+      return await supabaseUpdateProject(projectId, updates);
+    } catch (dbError: any) {
+      console.error('[updateProject] Direct Supabase update failed:', {
+        message: dbError?.message,
+        code: dbError?.code,
+        details: dbError?.details,
+        hint: dbError?.hint,
+      });
+      // Fall through to edge function attempt below, then to local fallback.
+    }
   }
 
   try {
