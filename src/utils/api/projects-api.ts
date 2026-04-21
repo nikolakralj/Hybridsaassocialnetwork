@@ -13,11 +13,16 @@ export const isLocalProjectFallbackEnabled = ENABLE_LOCAL_FALLBACK;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type ProjectStorageSource = 'cloud' | 'local';
 
+function resolveStoredProjectSource(project: Record<string, any>, fallback: ProjectStorageSource): ProjectStorageSource {
+  return project?.storageSource === 'cloud' ? 'cloud' : fallback;
+}
+
 function withProjectSource(project: Record<string, any>, storageSource: ProjectStorageSource) {
+  const resolvedSource = resolveStoredProjectSource(project, storageSource);
   return {
     ...project,
-    storageSource,
-    isLocalOnly: storageSource === 'local',
+    storageSource: resolvedSource,
+    isLocalOnly: resolvedSource === 'local',
   };
 }
 
@@ -94,12 +99,31 @@ function readLocalProjects(): LocalProjectRecord[] {
 function readLocalProjectList() {
   return readLocalProjects()
     .map((record) => record.project)
-    .map((project) => withProjectSource(project, 'local'))
+    .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .filter(Boolean);
 }
 
 function hasLocalProject(projectId: string): boolean {
   return readLocalProjects().some((record) => record.project?.id === projectId);
+}
+
+function getCachedProjectSource(projectId: string): ProjectStorageSource | null {
+  const project = readLocalProjects().find((record) => record.project?.id === projectId)?.project;
+  return project?.storageSource === 'cloud' ? 'cloud' : null;
+}
+
+function isCloudProjectId(projectId?: string | null): projectId is string {
+  if (!projectId) return false;
+  if (isUuid(projectId)) return true;
+  if (getCachedProjectSource(projectId) === 'cloud') return true;
+  if (typeof sessionStorage !== 'undefined') {
+    const selectedId = sessionStorage.getItem('currentProjectId');
+    const selectedSource = sessionStorage.getItem('currentProjectSource');
+    if (selectedId === projectId && selectedSource === 'cloud') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function mergeProjectsById(primary: any[], secondary: any[]) {
@@ -119,7 +143,7 @@ function writeLocalProjects(records: LocalProjectRecord[]) {
 function localListProjects() {
   return readLocalProjects()
     .map((record) => record.project)
-    .map((project) => withProjectSource(project, 'local'))
+    .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .sort(sortProjects);
 }
 
@@ -295,6 +319,45 @@ interface SupabaseProjectInput {
   }>;
 }
 
+function mapSupabaseProjectRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    region: row.region,
+    currency: row.currency,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    workWeek: row.work_week,
+    status: row.status,
+    supplyChainStatus: row.supply_chain_status,
+    ownerId: row.owner_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    storageSource: 'cloud' as const,
+  };
+}
+
+function cacheCloudProjectList(projects: Record<string, any>[]) {
+  const existing = readLocalProjects();
+  const byId = new Map<string, LocalProjectRecord>();
+
+  existing.forEach((record) => {
+    if (!record.project?.id) return;
+    byId.set(record.project.id, record);
+  });
+
+  projects.forEach((project) => {
+    const prior = byId.get(project.id);
+    byId.set(project.id, {
+      project: { ...(prior?.project || {}), ...project, storageSource: 'cloud' as const },
+      members: prior?.members || [],
+    });
+  });
+
+  writeLocalProjects([...byId.values()]);
+}
+
 async function supabaseCreateProject(input: SupabaseProjectInput) {
   const now = new Date().toISOString();
 
@@ -342,7 +405,81 @@ async function supabaseCreateProject(input: SupabaseProjectInput) {
   return project;
 }
 
+async function supabaseListProjects(accessToken?: string | null) {
+  const authResult = accessToken
+    ? await supabase.auth.getUser(accessToken)
+    : await supabase.auth.getUser();
+
+  if (authResult.error || !authResult.data.user?.id) {
+    throw new Error(authResult.error?.message || 'Failed to resolve current user');
+  }
+
+  const userId = authResult.data.user.id;
+  const projectIds = new Set<string>();
+
+  const { data: ownedProjects, error: ownedError } = await supabase
+    .from('wg_projects')
+    .select('*')
+    .eq('owner_id', userId)
+    .order('updated_at', { ascending: false });
+
+  if (ownedError) {
+    throw new Error(`Failed to list owned projects: ${ownedError.message}`);
+  }
+
+  (ownedProjects || []).forEach((project: any) => {
+    if (project?.id) projectIds.add(project.id);
+  });
+
+  const { data: membershipRows, error: membersError } = await supabase
+    .from('wg_project_members')
+    .select('project_id')
+    .eq('user_id', userId)
+    .not('accepted_at', 'is', null);
+
+  if (membersError) {
+    throw new Error(`Failed to list project memberships: ${membersError.message}`);
+  }
+
+  (membershipRows || []).forEach((row: any) => {
+    if (row?.project_id) projectIds.add(row.project_id);
+  });
+
+  const ids = [...projectIds];
+  if (ids.length === 0) return [];
+
+  const { data: projects, error: projectsError } = await supabase
+    .from('wg_projects')
+    .select('*')
+    .in('id', ids)
+    .order('updated_at', { ascending: false });
+
+  if (projectsError) {
+    throw new Error(`Failed to fetch project rows: ${projectsError.message}`);
+  }
+
+  const mapped = (projects || []).map(mapSupabaseProjectRow);
+  cacheCloudProjectList(mapped);
+  return mapped;
+}
+
 export async function listProjects(accessToken?: string | null) {
+  if (accessToken) {
+    try {
+      const cloudProjects = await supabaseListProjects(accessToken);
+      const cachedProjects = readLocalProjectList();
+      const cachedCloudProjects = cachedProjects.filter((project) => project.storageSource === 'cloud');
+
+      if (!ENABLE_LOCAL_FALLBACK) {
+        return mergeProjectsById(cloudProjects, cachedCloudProjects);
+      }
+
+      return mergeProjectsById(cloudProjects, cachedProjects);
+    } catch (dbError) {
+      console.warn('Direct Supabase project list failed, falling back to API route:', dbError);
+    }
+  }
+
   try {
     const res = await fetch(`${BASE}/projects`, {
       headers: getHeaders(accessToken),
@@ -358,12 +495,14 @@ export async function listProjects(accessToken?: string | null) {
     const cloudProjects = (data.projects || []).map((project: Record<string, any>) =>
       withProjectSource(project, 'cloud')
     );
+    const cachedProjects = readLocalProjectList();
+    const cachedCloudProjects = cachedProjects.filter((project) => project.storageSource === 'cloud');
 
     if (!ENABLE_LOCAL_FALLBACK) {
-      return cloudProjects.sort(sortProjects);
+      return mergeProjectsById(cloudProjects, cachedCloudProjects);
     }
 
-    return mergeProjectsById(cloudProjects, readLocalProjectList());
+    return mergeProjectsById(cloudProjects, cachedProjects);
   } catch (error) {
     if (canUseResilientFallback(undefined, accessToken)) {
       return localListProjects();
@@ -373,7 +512,7 @@ export async function listProjects(accessToken?: string | null) {
 }
 
 export async function getProject(projectId: string, accessToken?: string | null) {
-  if (!isUuid(projectId)) {
+  if (!isCloudProjectId(projectId)) {
     if (hasLocalProject(projectId)) {
       return localGetProject(projectId);
     }
@@ -457,16 +596,26 @@ export async function createProject(
         ownerId: dbProject.owner_id,
         createdAt: dbProject.created_at,
         updatedAt: dbProject.updated_at,
+        storageSource: 'cloud' as const,
       };
       // Cache locally too
       const records = readLocalProjects().filter((r) => r.project?.id !== localId);
       records.push({ project: createdProject, members: [] });
       writeLocalProjects(records);
       return { project: createdProject, members: [] };
-    } catch (dbError) {
-      console.warn('Direct Supabase create failed, falling back to local:', dbError);
-      // Don't fall through to the edge function — go straight to local fallback
-      return localCreateProject(project);
+    } catch (dbError: any) {
+      // Surface the real DB error instead of silently creating a local-only project.
+      // The user needs to know *why* the cloud write failed (RLS? schema? auth?) so
+      // they can fix it rather than end up with a ghost project on refresh.
+      console.error('[createProject] Direct Supabase write failed:', {
+        message: dbError?.message,
+        code: dbError?.code,
+        details: dbError?.details,
+        hint: dbError?.hint,
+        raw: dbError,
+      });
+      const msg = dbError?.message || String(dbError);
+      throw new Error(`Failed to save project to the database: ${msg}`);
     }
   }
 
@@ -487,7 +636,10 @@ export async function createProject(
     // always has a fallback copy even if the API later returns empty due to RLS/session issues.
     if (data?.project?.id) {
       const records = readLocalProjects().filter((r) => r.project?.id !== data.project.id);
-      records.push({ project: data.project, members: data.members || [] });
+      records.push({
+        project: { ...data.project, storageSource: 'cloud' as const },
+        members: data.members || [],
+      });
       writeLocalProjects(records);
     }
     return data;
@@ -505,7 +657,7 @@ export async function updateProject(
   accessToken?: string | null
 ) {
   // Local projects never hit the network
-  if (!isUuid(projectId)) {
+  if (!isCloudProjectId(projectId)) {
     if (hasLocalProject(projectId)) {
       return localUpdateProject(projectId, updates);
     }
@@ -541,7 +693,7 @@ export async function updateProject(
 }
 
 export async function deleteProject(projectId: string, accessToken?: string | null) {
-  if (!isUuid(projectId)) {
+  if (!isCloudProjectId(projectId)) {
     localDeleteProject(projectId);
     return true;
   }
@@ -580,7 +732,7 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
 // ---------- Members ----------
 
 export async function getProjectMembers(projectId: string, accessToken?: string | null) {
-  if (!isUuid(projectId)) {
+  if (!isCloudProjectId(projectId)) {
     return hasLocalProject(projectId) ? localGetProjectMembers(projectId) : [];
   }
 

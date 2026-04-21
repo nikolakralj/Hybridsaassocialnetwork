@@ -3,6 +3,14 @@
 Last updated: 2026-04-21 (Europe/Zagreb)
 Owner thread: Nikola + Codex + Claude
 
+## 2026-04-21 - [DONE] project-cloud-refresh-persistence (Codex)
+
+- Changed: `src/utils/api/projects-api.ts`, `src/components/projects/ProjectsListView.tsx`, `src/components/workgraph/ProjectCreateWizard.tsx`.
+- Fixed the create/read asymmetry that caused newly created cloud projects with `proj_...` IDs to disappear after refresh: `createProject()` was already writing directly to `wg_projects`, but `listProjects()` still depended on the `/projects` edge route. `projects-api.ts` now has a direct `supabaseListProjects()` path against `wg_projects` / `wg_project_members`, caches those rows locally as `storageSource: 'cloud'`, and merges cached cloud rows back into the list result even when local fallback mode is off.
+- Non-UUID cloud projects now follow the cloud fetch/update/delete/member paths instead of being treated as browser-local, so `proj_...` IDs created through the direct Supabase path no longer disappear or downgrade into local-only behavior.
+- Projects now wait for auth loading to settle before the initial list fetch, and project creation/open flows persist `currentProjectSource` so the workspace can keep treating non-UUID cloud projects as cloud-backed after navigation.
+- Residual risk: some older approval/invoice helpers still use raw UUID checks elsewhere in the repo, so this fixes the Projects flow first but does not yet normalize every cloud/local decision globally.
+
 ## 2026-04-21 - [DONE] task6a-chain-spawn (Codex)
 
 - Changed: `src/utils/api/approvals-supabase.ts`.

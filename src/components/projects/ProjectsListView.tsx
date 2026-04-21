@@ -62,7 +62,7 @@ type ProjectListItem = {
 
 export function ProjectsListView() {
   const navigate = useNavigate();
-  const { accessToken } = useAuth();
+  const { accessToken, loading: authLoading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -107,8 +107,9 @@ export function ProjectsListView() {
   };
 
   useEffect(() => {
+    if (authLoading) return;
     loadProjects();
-  }, [accessToken]);
+  }, [accessToken, authLoading]);
 
   const handleCreateProject = () => {
     setIsWizardOpen(true);
@@ -146,8 +147,16 @@ export function ProjectsListView() {
     }
   };
   
-  const handleProjectCreated = (projectId: string, projectStartDate?: string | null) => {
-    syncCurrentProjectSession({ id: projectId, startDate: projectStartDate || null });
+  const handleProjectCreated = (
+    projectId: string,
+    projectStartDate?: string | null,
+    storageSource?: ProjectStorageSource
+  ) => {
+    syncCurrentProjectSession({
+      id: projectId,
+      startDate: projectStartDate || null,
+      storageSource,
+    });
     // Store project name too (will be fetched from API in workspace)
     navigate('/app/project-workspace');
     loadProjects(); // Refresh list

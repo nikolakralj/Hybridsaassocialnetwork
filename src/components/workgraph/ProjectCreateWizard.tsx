@@ -34,7 +34,7 @@ import { format } from 'date-fns';
 import { Project, ProjectMember, ProjectRole, WorkWeek } from '../../types/collaboration';
 import type { PartyType } from '../../types/workgraph';
 import { CompanySearchDialog } from './CompanySearchDialog';
-import { createProject, updateProject } from '../../utils/api/projects-api';
+import { createProject, updateProject, type ProjectStorageSource } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import {
@@ -55,7 +55,11 @@ export interface ProjectCreateWizardProps {
     nodes: ReturnType<typeof generateGraphFromWizard>['nodes'];
     edges: ReturnType<typeof generateGraphFromWizard>['edges'];
   }) => Promise<void>;
-  onSuccess?: (projectId: string, projectStartDate?: string | null) => void;
+  onSuccess?: (
+    projectId: string,
+    projectStartDate?: string | null,
+    storageSource?: ProjectStorageSource
+  ) => void;
   editMode?: boolean;
   initialParties?: PartyEntry[];
   initialProjectName?: string;
@@ -356,7 +360,13 @@ export function ProjectCreateWizard({
             ? 'You can add more parties and connect the chain later from the workspace.'
             : `${graph.nodes.length} graph nodes generated.`,
         });
-        if (onSuccess) onSuccess(result.project.id, startDate ? startDate.toISOString() : null);
+        if (onSuccess) {
+          onSuccess(
+            result.project.id,
+            startDate ? startDate.toISOString() : null,
+            result.project.storageSource === 'cloud' ? 'cloud' : undefined
+          );
+        }
       }
 
       onClose();
