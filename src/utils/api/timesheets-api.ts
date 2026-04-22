@@ -49,9 +49,53 @@ export async function saveTimesheetWeek(
     projectId?: string;
     contractId?: string;
     notes?: string;
+    personId?: string;
+    totalHours?: number;
   },
   accessToken?: string | null
 ) {
+  // Primary path: direct Supabase write (edge function not deployed)
+  if (accessToken) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const ownerId = isUuid(weekData.personId) ? weekData.personId! : user.id;
+      const rowId = `${ownerId}:${weekStart}`;
+      const now = new Date().toISOString();
+      const totalHours =
+        typeof weekData.totalHours === 'number'
+          ? weekData.totalHours
+          : (weekData.days || []).reduce((sum: number, d: any) => {
+              const h = Number(d?.totalHours ?? d?.hours ?? 0);
+              return sum + (Number.isFinite(h) ? h : 0);
+            }, 0);
+
+      const row: Record<string, any> = {
+        id: rowId,
+        user_id: ownerId,
+        week_start: weekStart,
+        status: weekData.status || 'draft',
+        data: {
+          totalHours,
+          days: weekData.days || [],
+          tasks: weekData.tasks || [],
+          notes: weekData.notes,
+        },
+        updated_at: now,
+      };
+      if (weekData.projectId && !weekData.projectId.startsWith('proj_local_')) {
+        row.project_id = weekData.projectId;
+      }
+      if (weekData.status === 'submitted') row.submitted_at = now;
+
+      const { error } = await supabase
+        .from('wg_timesheet_weeks')
+        .upsert(row, { onConflict: 'id' });
+      if (!error) return { weekStart, ...row };
+      console.warn('[timesheets] Direct Supabase save failed:', error.message);
+    }
+  }
+
+  // Fallback: edge function
   const res = await fetch(`${BASE}/timesheets/${weekStart}`, {
     method: 'PUT',
     headers: getHeaders(accessToken),
@@ -69,6 +113,7 @@ export async function updateTimesheetStatus(
     personId?: string;
     approverName?: string;
     note?: string;
+    projectId?: string;
   },
   accessToken?: string | null
 ) {
@@ -100,19 +145,23 @@ export async function updateTimesheetStatus(
       if (!error && updatedRow) return { weekStart, status };
 
       // Row might not exist yet — upsert it
+      const upsertRow: Record<string, any> = {
+        id: rowId,
+        user_id: ownerId,
+        week_start: weekStart,
+        status,
+        data: { totalHours: 0, days: [], tasks: [] },
+        submitted_at: status === 'submitted' ? now : null,
+        approved_at: status === 'approved' ? now : null,
+        created_at: now,
+        updated_at: now,
+      };
+      if (options?.projectId && !options.projectId.startsWith('proj_local_')) {
+        upsertRow.project_id = options.projectId;
+      }
       const { error: upsertError } = await supabase
         .from('wg_timesheet_weeks')
-        .upsert({
-          id: rowId,
-          user_id: ownerId,
-          week_start: weekStart,
-          status,
-          data: { totalHours: 0, days: [], tasks: [] },
-          submitted_at: status === 'submitted' ? now : null,
-          approved_at: status === 'approved' ? now : null,
-          created_at: now,
-          updated_at: now,
-        }, { onConflict: 'id' });
+        .upsert(upsertRow, { onConflict: 'id' });
 
       if (!upsertError) return { weekStart, status };
       console.warn('[timesheets] Direct Supabase status update failed:', upsertError.message);

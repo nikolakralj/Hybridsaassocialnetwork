@@ -29,11 +29,12 @@ export function ProjectApprovalsTab({
 }: ProjectApprovalsTabProps) {
   const [viewMode, setViewMode] = useState<"queue" | "history" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<QueueStatus>("pending");
+  const showWorkspaceSummary = viewMode !== "history";
 
   return (
     <Tabs
       value={viewMode}
-      onValueChange={(value) => setViewMode(value as "queue" | "analytics")}
+      onValueChange={(value) => setViewMode(value as "queue" | "history" | "analytics")}
       className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-[0_1px_3px_0_rgb(0_0_0/0.05)]"
     >
       <div className="border-b border-border/60 px-4 py-4 sm:px-6 sm:py-5">
@@ -49,14 +50,16 @@ export function ProjectApprovalsTab({
               </Badge>
             </div>
 
-            <div className="space-y-1">
-              <h2 className="m-0 text-2xl font-semibold tracking-tight text-foreground">
-                Approval workspace
-              </h2>
-              <p className="m-0 max-w-3xl text-sm text-muted-foreground">
-                Manage approval requests for {projectName} with pending items kept at the front of the queue.
-              </p>
-            </div>
+            {showWorkspaceSummary ? (
+              <div className="space-y-1">
+                <h2 className="m-0 text-2xl font-semibold tracking-tight text-foreground">
+                  Approval workspace
+                </h2>
+                <p className="m-0 max-w-3xl text-sm text-muted-foreground">
+                  Manage approval requests for {projectName} with pending items kept at the front of the queue.
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between xl:justify-end">
@@ -103,10 +106,6 @@ export function ProjectApprovalsTab({
       </TabsContent>
 
       <TabsContent value="history" className="m-0 p-4 sm:p-6">
-        <div className="mb-3 rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-          Submission history keeps the audit trail visible even after decisions are made. Use this view to review what
-          you submitted and how each approval step resolved.
-        </div>
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter="all"

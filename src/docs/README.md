@@ -1,37 +1,47 @@
 # Docs Index
 
-Start here when you need to find the right doc fast.
+Start here when you need the right doc fast.
 
-## Active Docs
+## Layout
 
-| Doc | Owner | Purpose | Status | When to Use |
-|---|---|---|---|---|
-| [README.md](README.md) | Docs Governance Owner | Docs index and navigation hub | active | Start here when you need to find a doc |
-| [AGENT_REGISTRY.md](AGENT_REGISTRY.md) | Docs Governance Owner | Agent naming, ownership, and coordination rules | active | Before assigning or claiming work |
-| [AGENT_WORKLOG.md](AGENT_WORKLOG.md) | Docs Governance Owner | Live blockers, current assignments, recent 7-day summary | active | For current phase state and handoff context |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Project Architecture | System-level architecture notes | active | For design decisions and repo structure |
-| [CLAUDE_BOSS_BRIEF_2026-03-25.md](CLAUDE_BOSS_BRIEF_2026-03-25.md) | Claude | Boss-level summary and priorities snapshot | active | For a quick leadership-style status read |
-| [CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) | Claude | Current sprint tasks and instructions | active | Before doing sprint work |
-| [CODEX_SUBAGENT_PLAYBOOK.md](CODEX_SUBAGENT_PLAYBOOK.md) | Docs Governance Owner | Safe subagent patterns and file ownership discipline | active | When spawning or coordinating subagents |
-| [DOCS_GOVERNANCE.md](DOCS_GOVERNANCE.md) | Docs Governance Owner | Hard rules for docs size, naming, archive, and handoff format | active | Before creating or expanding docs |
-| [PHASE3_GATE_CHECKLIST.md](PHASE3_GATE_CHECKLIST.md) | Reviewer / Claude | Gate checks for Phase 3 readiness | active | To verify whether the gate can flip to GO |
-| [PHASE4_INVOICE_SPEC.md](PHASE4_INVOICE_SPEC.md) | Product / Claude | Invoice engine specification | active | Only after Phase 3 gate passes |
-| [ROADMAP.md](ROADMAP.md) | Product Owner | Ordered product priorities | active | When deciding what comes next |
-| [SQL_SCHEMA_MIGRATION.md](SQL_SCHEMA_MIGRATION.md) | Backend / DB Owner | Database migration and schema notes | active | For schema or migration decisions |
-| [TIMESHEET_STRATEGY.md](TIMESHEET_STRATEGY.md) | Product / UX Owner | Timesheet workflow and policy notes | active | For timesheet behavior and rollout choices |
-| [WORKGRAPH.md](WORKGRAPH.md) | Architecture Owner | WorkGraph-specific model and flow notes | active | For WorkGraph domain context |
+- Root: live coordination and canonical product docs.
+- `specs/`: active reference specs and domain notes.
+- `archive/`: dated snapshots, old handoffs, and completed historical material.
 
-## Archive And Reference Docs
+This keeps the docs root small so day-to-day work is easier to scan.
 
-| Doc | Owner | Purpose | Status | When to Use |
-|---|---|---|---|---|
-| [AGENT_WORKLOG_ARCHIVE.md](AGENT_WORKLOG_ARCHIVE.md) | Docs Governance Owner | Historical worklog detail and dated handoffs | archive | When you need older decisions or full history |
-| [PHASE3_GATE_RESULTS_2026-03-26.md](PHASE3_GATE_RESULTS_2026-03-26.md) | Reviewer / Claude | Recorded gate verdict and evidence snapshot | archive | When you need the formal gate result |
+## Root Docs
 
-## For Claude Boss
+| Doc | Purpose | When to Use |
+|---|---|---|
+| [AGENT_WORKLOG.md](AGENT_WORKLOG.md) | Live blockers, current assignments, recent handoffs | First stop for current phase state |
+| [AGENT_REGISTRY.md](AGENT_REGISTRY.md) | Agent naming, ownership, coordination rules | Before assigning or claiming work |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System-level architecture notes | For repo structure and design decisions |
+| [CODEX_SUBAGENT_PLAYBOOK.md](CODEX_SUBAGENT_PLAYBOOK.md) | Safe subagent patterns and file ownership discipline | When coordinating multiple Codex agents |
+| [DOCS_GOVERNANCE.md](DOCS_GOVERNANCE.md) | Hard rules for docs size, naming, archive, and handoff format | Before creating or expanding docs |
+| [ROADMAP.md](ROADMAP.md) | Ordered product priorities | When deciding what comes next |
 
-- Phase 3 gate is still NO-GO.
-- Hard blockers remain identity bridge, transactional submit, and state integrity.
-- Soft blockers remain viewer dropdown verification and refresh persistence verification.
-- The active worklog is intentionally short and points to the archive for older detail.
-- Phase 4 invoice work stays parked until the gate flips to GO.
+## Specs
+
+| Doc | Purpose | When to Use |
+|---|---|---|
+| [specs/APPROVAL_SUBMISSIONS_SPEC.md](specs/APPROVAL_SUBMISSIONS_SPEC.md) | My Submissions redesign spec | For approvals UI implementation/review |
+| [specs/PHASE4_INVOICE_SPEC.md](specs/PHASE4_INVOICE_SPEC.md) | Invoice engine specification | For Phase 4 invoice work |
+| [specs/SQL_SCHEMA_MIGRATION.md](specs/SQL_SCHEMA_MIGRATION.md) | Database migration and schema notes | For schema or migration decisions |
+| [specs/TIMESHEET_STRATEGY.md](specs/TIMESHEET_STRATEGY.md) | Timesheet workflow and policy notes | For timesheet behavior and rollout choices |
+| [specs/WORKGRAPH.md](specs/WORKGRAPH.md) | WorkGraph domain model and flow notes | For graph-specific product context |
+
+## Archive
+
+| Doc | Purpose | When to Use |
+|---|---|---|
+| [archive/AGENT_WORKLOG_ARCHIVE.md](archive/AGENT_WORKLOG_ARCHIVE.md) | Historical worklog detail and dated handoffs | When you need older decisions or full history |
+| [archive/PHASE3_GATE_RESULTS_2026-03-26.md](archive/PHASE3_GATE_RESULTS_2026-03-26.md) | Recorded gate verdict and evidence snapshot | When you need the formal gate result |
+| [archive/CLAUDE_BOSS_BRIEF_2026-03-25.md](archive/CLAUDE_BOSS_BRIEF_2026-03-25.md) | Boss-level summary snapshot | For historical leadership context |
+| [archive/CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md](archive/CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26.md) | Prior sprint task card | For historical sprint context |
+| [archive/CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26b.md](archive/CLAUDE_SPRINT_ASSIGNMENTS_2026-03-26b.md) | Follow-up sprint task card | For historical sprint context |
+| [archive/CODEX_SPRINT_2026-04-03.md](archive/CODEX_SPRINT_2026-04-03.md) | Prior Codex sprint notes | For historical implementation context |
+| [archive/ANTIGRAVITY_DIRECTIVE_2026-03-26.md](archive/ANTIGRAVITY_DIRECTIVE_2026-03-26.md) | Historical directive snapshot | For dated governance context |
+| [archive/ANTIGRAVITY_DIRECTIVE_2026-04-03.md](archive/ANTIGRAVITY_DIRECTIVE_2026-04-03.md) | Historical directive snapshot | For dated governance context |
+| [archive/PHASE3_GATE_CHECKLIST.md](archive/PHASE3_GATE_CHECKLIST.md) | Prior gate checklist | For historical gate review context |
+| [archive/monday_research.md](archive/monday_research.md) | Research notes | Only if that research thread becomes relevant again |

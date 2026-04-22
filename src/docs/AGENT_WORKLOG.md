@@ -3,6 +3,64 @@
 Last updated: 2026-04-21 (Europe/Zagreb)
 Owner thread: Nikola + Codex + Claude
 
+## 2026-04-22 - [DONE] cycle1-project-schema-api-correctness (Codex)
+
+- Changed: `src/utils/api/projects-api.ts`, `supabase/migrations/013_graph_node_id_and_invite_link.sql`.
+- `createProject()` / `supabaseCreateProject()` now respect caller-provided `status` and `supplyChainStatus`, persist `description` / `region` / `currency`, and write `graph_node_id`, capability flags, and `invitation_id` into `wg_project_members` instead of dropping them on insert.
+- Added migration `013` to extend `wg_project_members` with `graph_node_id`, `can_approve`, `can_view_rates`, `can_edit_timesheets`, and `visible_to_chain`, plus a contributor-scope SELECT policy and a foreign-key linkage from `invitation_id` to `wg_project_invitations(id)`.
+- Residual risk: the live base schema defines invitation IDs as `TEXT`, not `UUID`, so the FK in `013` keeps that existing type contract rather than forcing a breaking type change.
+
+## 2026-04-22 - [DONE] atomic-project-create-path (Codex)
+
+- Changed: `src/components/workgraph/ProjectCreateWizard.tsx`, `src/utils/api/projects-api.ts`, `supabase/functions/server/projects-api.tsx`.
+- Project creation no longer depends on a second `updateProject()` call to persist the graph. The wizard now sends `graph` with the initial `createProject()` payload so project row, graph snapshot, and party payload land in one create flow.
+- The server create route now inserts invitations before member rows to satisfy the new `invitation_id` foreign key, persists the capability/graph-node fields on member rows, and rolls back the created project on downstream insert failure so we stop leaving zombie projects behind.
+- Residual risk: this is still best-effort rollback inside the edge route rather than a true Postgres transaction/RPC, but it removes the biggest client-side partial-state failure mode immediately.
+
+## 2026-04-21 - [IN PROGRESS] approval-submissions-redesign (Codex)
+
+- Changed: `src/components/approvals/ApprovalsWorkbench.tsx`, `src/components/approvals/SubmissionsView.tsx`, `src/components/approvals/ApprovalTimeline.tsx`, `src/components/approvals/ProjectApprovalsTab.tsx`, `src/components/ui/badge.tsx`, `src/utils/api/approvals-supabase.ts`.
+- Goal: split the `viewScope === "submitted"` route into a drawer-based audit trail view with semantic status chips, URL-hash deep linking, and a vertical approval timeline while leaving the approver queue branch intact.
+- Follow-up: removed the old queue subtitle and the extra history helper banner from `ProjectApprovalsTab.tsx` so the submitted view owns the spec copy instead of inheriting queue-context wrapper text.
+- Verification: build/test still pending at the time of this log entry.
+- Research note: the monday.com official docs review completed via subagent; likely integration surfaces are board views / dashboard-style workflow surfaces, but no product code has been changed yet.
+
+## 2026-04-22 - [DONE] project-delete-owner-guard (Codex)
+
+- Changed: `src/utils/api/projects-api.ts`, `src/components/projects/ProjectsListView.tsx`.
+- Root cause: cloud-project delete still depended on the edge route and could report success by deleting only the cached local copy, so the database row survived and the project reappeared later.
+- `deleteProject()` now uses a direct Supabase delete path for cloud projects, verifies the caller owns the project before deleting, clears the cached copy only after a real delete succeeds, and no longer silently falls back to local-only deletion for cloud records.
+- `ProjectsListView.tsx` now hides the destructive `Delete` action for non-owners so the UI matches the backend permission model. Local-only projects remain deletable in-browser.
+
+## 2026-04-22 - [DONE] docs-structure-cleanup (Codex)
+
+- Changed: `src/docs/README.md`, moved reference docs into `src/docs/specs/`, moved historical snapshots into `src/docs/archive/`.
+- Why: the docs root had too many top-level files, which made the live coordination docs harder to scan during active work.
+- Result: the root now keeps only live coordination/canonical docs, specs are grouped under `specs/`, and dated material lives under `archive/`.
+- Verification: file move + index rewrite only; no app code changed.
+
+## 2026-04-21 - [DONE] task6a-party-hydration-for-proj-projects (Codex)
+
+- Changed: `src/utils/api/approvals-supabase.ts`.
+- Root cause from live DB: the current cloud project `proj_1776799044112_wkxjgie` stores `wg_projects.parties` in a stripped shape (`peopleCount` only), so `createNextApprovalLayerIfNeeded()` could build the route (`Your Organization -> G2 -> NAS`) but had no actual NAS people to assign. The result was exactly what QA saw: James approved layer 1, but no John/NAS pending layer was ever spawned.
+- `readSessionJson()` / `writeSessionJson()` now mirror the durable session+local storage promotion pattern, `loadApprovalParties()` hydrates stripped party payloads with scoped `wg_project_members` + `nameDir` matches, and `resolveApproverScopeNodeIds()` no longer treats “any stored parties exist” as sufficient when those parties have no usable people arrays.
+- `createNextApprovalLayerIfNeeded()` now also fails over to the party shell when the next route stop has no recovered people, so the chain advances instead of stalling.
+- Manual QA assist: after confirming the missing layer in `approval_records`, inserted one pending layer-2 row for the current NAS test submission (`subject_id = 9f782a3c-17eb-42f8-b341-c0635312db23:2026-03-30`) so John can continue testing without resubmitting.
+
+## 2026-04-21 - [DONE] task6a-final-approver-person-routing (Codex)
+
+- Changed: `src/utils/api/approvals-supabase.ts`.
+- Tightened next-layer spawning so pending approval records are now assigned to the selected person node, not just the enclosing party node. This keeps final-layer approvers like John visible in the inbox even when the party-level shell was too ambiguous for viewer filtering.
+- `createNextApprovalLayerIfNeeded()` now falls back to the first deterministic party member when a reachable next party has no `canApprove`-flagged people, and it writes both `currentApproverNodeId` and `currentApproverUserRef` into the subject snapshot for downstream UI gating.
+- Residual risk: if a final party has multiple members but no explicit `canApprove` flags, the fallback still picks the first deterministic member; that matches the existing “single selected approver” behavior, but the graph should still be configured explicitly for production clarity.
+
+## 2026-04-21 - [DONE] task6e-current-pending-approver-gate (Codex)
+
+- Changed: `src/components/timesheets/ProjectTimesheetsView.tsx`.
+- Tightened Timesheets approval affordances so they now follow the live pending approval record for each submitted week instead of the broader `canViewerApproveSubmitter()` chain membership fallback. This closes the case where James could approve in the Approvals tab and still see a green approve action on the same submitted week in Timesheets after the pending layer had already moved on.
+- The view now refreshes pending approver assignments on `workgraph-approvals-updated` / window focus, and the row-level, drawer-level, and person-header approve actions all fail closed unless the viewer matches the current pending approver node/user for that exact week.
+- Also removed the old Timesheets month-header fast path that batch-approved every submitted week via `batchApproveMonth`; the header action now walks only currently approvable weeks through the normal `setWeekStatus(..., 'approved')` path so multi-layer spawning rules still apply.
+
 ## 2026-04-21 - [DONE] project-cloud-refresh-persistence (Codex)
 
 - Changed: `src/utils/api/projects-api.ts`, `src/components/projects/ProjectsListView.tsx`, `src/components/workgraph/ProjectCreateWizard.tsx`.
@@ -72,6 +130,11 @@ Manual QA on Me → G2 → Andritz → NAS supply chain surfaced 6 approval-chai
 ## Purpose
 
 Live snapshot only. Older detail lives in [AGENT_WORKLOG_ARCHIVE.md](AGENT_WORKLOG_ARCHIVE.md).
+
+## 2026-04-22 - monday research handoff
+
+- Added [monday_research.md](monday_research.md) with official-source notes and roadmap-fit comments for HybridSocialApp-run.
+- The note keeps monday.com as a reference model only; it explicitly separates quick wins, later work, and out-of-scope AI / CRM-only features.
 
 ## Current State
 

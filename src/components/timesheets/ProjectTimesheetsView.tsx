@@ -38,6 +38,7 @@ import { useWorkGraphContext } from '../../contexts/WorkGraphContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
 import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
+import { getLatestPendingApproval } from '../../utils/api/approvals-supabase';
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -59,6 +60,10 @@ function getNameDir(): NameDir {
 
 function getApprovalParties(): ApprovalParty[] {
   return cachedApprovalParties;
+}
+
+function buildTimesheetSubjectId(personId: string, weekStart: string): string {
+  return `${personId}:${weekStart}`;
 }
 
 function personName(id: string): string {
@@ -212,6 +217,13 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
   // Viewer picker dropdown
   const [viewerPickerOpen, setViewerPickerOpen] = useState(false);
+  const [pendingApprovalVersion, setPendingApprovalVersion] = useState(0);
+  const [pendingApprovalAssignees, setPendingApprovalAssignees] = useState<Record<string, {
+    approverNodeId?: string;
+    approverUserId?: string;
+    currentApproverNodeId?: string;
+    currentApproverUserRef?: string;
+  }>>({});
   const viewerPickerRef = useRef<HTMLDivElement>(null);
   // Close dropdown on outside click
   useEffect(() => {
@@ -286,6 +298,20 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, loadGraphContext]);
 
+  useEffect(() => {
+    const onApprovalsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId && detail.projectId !== projectId) return;
+      setPendingApprovalVersion((value) => value + 1);
+    };
+    window.addEventListener('workgraph-approvals-updated', onApprovalsUpdated as EventListener);
+    window.addEventListener('focus', onApprovalsUpdated as EventListener);
+    return () => {
+      window.removeEventListener('workgraph-approvals-updated', onApprovalsUpdated as EventListener);
+      window.removeEventListener('focus', onApprovalsUpdated as EventListener);
+    };
+  }, [projectId]);
+
   const authViewerType =
     user?.persona_type === 'company'
       ? 'company'
@@ -357,6 +383,57 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     return { orgGroups: [...byOrg.values()], flatPersonWeeks: flatPW };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir]);
+
+  const submittedWeekRefs = useMemo(() => (
+    flatPersonWeeks.flatMap(([personId, weeks]) =>
+      weeks
+        .filter((week) => week.status === 'submitted')
+        .map((week) => ({
+          key: buildTimesheetSubjectId(personId, week.weekStart),
+          personId,
+          weekStart: week.weekStart,
+        }))
+    )
+  ), [flatPersonWeeks]);
+
+  const submittedWeekSignature = useMemo(
+    () => submittedWeekRefs.map((week) => week.key).sort().join('|'),
+    [submittedWeekRefs]
+  );
+
+  useEffect(() => {
+    if (!submittedWeekRefs.length) {
+      setPendingApprovalAssignees({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const entries = await Promise.all(
+        submittedWeekRefs.map(async ({ key }) => {
+          try {
+            const pending = await getLatestPendingApproval('timesheet', key);
+            return [key, {
+              approverNodeId: pending?.approverNodeId,
+              approverUserId: pending?.approverUserId,
+              currentApproverNodeId: pending?.subjectSnapshot?.currentApproverNodeId,
+              currentApproverUserRef: pending?.subjectSnapshot?.currentApproverUserRef,
+            }] as const;
+          } catch {
+            return [key, {}] as const;
+          }
+        })
+      );
+
+      if (cancelled) return;
+      setPendingApprovalAssignees(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [submittedWeekRefs, submittedWeekSignature, pendingApprovalVersion]);
 
   // Stats
   const totalHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHours(w), 0), 0);
@@ -449,8 +526,33 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     if (week && (week.status === 'approved' || week.status === 'draft')) return false;
     if (isAdmin) return true;
     if (!viewerId) return false;
+    if (week?.status === 'submitted') {
+      const pendingApproval = pendingApprovalAssignees[buildTimesheetSubjectId(personId, week.weekStart)];
+      const pendingTargets = [
+        pendingApproval?.approverNodeId,
+        pendingApproval?.approverUserId,
+        pendingApproval?.currentApproverNodeId,
+        pendingApproval?.currentApproverUserRef,
+      ].filter(Boolean) as string[];
+
+      if (pendingTargets.length === 0) return false;
+
+      const viewerTargets = new Set<string>([
+        viewerId,
+        viewerOrgId,
+        user?.id,
+      ].filter(Boolean) as string[]);
+
+      const matchesPendingTarget = pendingTargets.some((target) => {
+        if (viewerTargets.has(target)) return true;
+        const targetOrgId = personOrgId(target);
+        return Boolean(targetOrgId && viewerTargets.has(targetOrgId));
+      });
+
+      return matchesPendingTarget;
+    }
     return canViewerApproveSubmitter(viewerId, personId, approvalParties);
-  }, [viewerId, approvalParties, isAdmin]);
+  }, [viewerId, viewerOrgId, user?.id, pendingApprovalAssignees, approvalParties, isAdmin]);
 
   const handleDayClick = useCallback((e: React.MouseEvent, personId: string, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => {
     e.stopPropagation();
@@ -786,11 +888,13 @@ function PersonSection({
   dragOverDay: number | null;
 }) {
   const isOwn = viewerId === personId;
-  const hasPendingApprovalActions = weeks.some((week) => canApprovePerson(personId, week) && week.status === 'submitted');
+  const approvableWeeks = weeks.filter((week) => week.status === 'submitted' && canApprovePerson(personId, week));
+  const hasPendingApprovalActions = approvableWeeks.length > 0;
   const total = weeks.reduce((s, w) => s + sumWeekHours(w), 0);
   const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
   const notifStore = useNotificationStore();
   const [submittingMonth, setSubmittingMonth] = useState(false);
+  const [approvingMonth, setApprovingMonth] = useState(false);
 
   const fireStatusChange = useCallback(async (w: StoredWeek, newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
     await store.setWeekStatus(personId, w.weekStart, newStatus, meta);
@@ -840,8 +944,29 @@ function PersonSection({
           </button>
         )}
         {hasPendingApprovalActions && (
-          <button onClick={() => { const ct = store.batchApproveMonth(personId, weeks[0].weekStart.slice(0, 7), personName(viewerId || '')); toast.success(`Approved ${ct} weeks`); }}
-            className="p-1 rounded hover:bg-emerald-50 text-emerald-600 transition-colors" title="Approve all"><CheckCircle2 className="h-3.5 w-3.5" /></button>
+          <button
+            onClick={async () => {
+              setApprovingMonth(true);
+              let approvedCount = 0;
+              for (const week of approvableWeeks) {
+                try {
+                  await fireStatusChange(week, 'approved', { by: personName(viewerId || '') });
+                  approvedCount++;
+                } catch {
+                  // setWeekStatus already emits actionable error toasts
+                }
+              }
+              setApprovingMonth(false);
+              if (approvedCount > 0) {
+                toast.success(`Approved ${approvedCount} week${approvedCount === 1 ? '' : 's'}`);
+              }
+            }}
+            disabled={approvingMonth}
+            className="p-1 rounded hover:bg-emerald-50 text-emerald-600 transition-colors disabled:opacity-50"
+            title={approvableWeeks.length > 1 ? `Approve ${approvableWeeks.length} current weeks` : 'Approve current week'}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
 

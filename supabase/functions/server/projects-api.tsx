@@ -86,6 +86,11 @@ function rowToMember(row: any) {
     invitedAt: row.invited_at,
     acceptedAt: row.accepted_at ?? null,
     invitationId: row.invitation_id ?? undefined,
+    graphNodeId: row.graph_node_id ?? undefined,
+    canApprove: row.can_approve ?? false,
+    canViewRates: row.can_view_rates ?? true,
+    canEditTimesheets: row.can_edit_timesheets ?? true,
+    visibleToChain: row.visible_to_chain ?? true,
   };
 }
 
@@ -180,6 +185,7 @@ projectsRouter.get("/make-server-f8b491be/api/projects/:projectId", async (c) =>
 // POST /make-server-f8b491be/api/projects
 // ---------------------------------------------------------------------------
 projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
+  let createdProjectId: string | null = null;
   try {
     const user = await getAuthUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
@@ -204,8 +210,11 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
       parties: body.parties || null,
     };
 
-    const { error: insertError } = await db().from("wg_projects").insert(projectRow);
+    const client = db();
+
+    const { error: insertError } = await client.from("wg_projects").insert(projectRow);
     if (insertError) throw insertError;
+    createdProjectId = projectId;
 
     const membersToInsert: any[] = [{
       id: generateId("mem"),
@@ -214,6 +223,13 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
       user_name: user.name,
       user_email: user.email,
       role: "Owner",
+      scope: null,
+      graph_node_id: user.id,
+      invitation_id: null,
+      can_approve: false,
+      can_view_rates: true,
+      can_edit_timesheets: true,
+      visible_to_chain: true,
       invited_by: user.id,
       invited_at: now,
       accepted_at: now,
@@ -230,6 +246,12 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
           user_email: normalizeEmail(invitee.userEmail || invitee.email),
           role: sanitizeRole(invitee.role),
           scope: invitee.scope || null,
+          graph_node_id: invitee.graphNodeId || null,
+          invitation_id: invitee.invitationId || null,
+          can_approve: invitee.canApprove ?? false,
+          can_view_rates: invitee.canViewRates ?? true,
+          can_edit_timesheets: invitee.canEditTimesheets ?? true,
+          visible_to_chain: invitee.visibleToChain ?? true,
           invited_by: user.id,
           invited_at: now,
           accepted_at: now,
@@ -261,31 +283,44 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
         user_email: email,
         role: sanitizeRole(invitee.role),
         scope: invitee.scope || null,
+        graph_node_id: invitee.graphNodeId || null,
         invited_by: user.id,
         invited_at: now,
         accepted_at: null,
         invitation_id: invitationId,
+        can_approve: invitee.canApprove ?? false,
+        can_view_rates: invitee.canViewRates ?? true,
+        can_edit_timesheets: invitee.canEditTimesheets ?? true,
+        visible_to_chain: invitee.visibleToChain ?? true,
       });
     }
 
-    if (membersToInsert.length > 0) {
-      const { error: me } = await db().from("wg_project_members").insert(membersToInsert);
-      if (me) throw me;
-    }
     if (invitationsToInsert.length > 0) {
-      const { error: ie } = await db().from("wg_project_invitations").insert(invitationsToInsert);
+      const { error: ie } = await client.from("wg_project_invitations").insert(invitationsToInsert);
       if (ie) throw ie;
     }
+    if (membersToInsert.length > 0) {
+      const { error: me } = await client.from("wg_project_members").insert(membersToInsert);
+      if (me) throw me;
+    }
 
-    const { data: finalProject } = await db().from("wg_projects").select("*").eq("id", projectId).single();
-    const { data: finalMembers } = await db().from("wg_project_members").select("*").eq("project_id", projectId);
+    const { data: finalProject } = await client.from("wg_projects").select("*").eq("id", projectId).single();
+    const { data: finalMembers } = await client.from("wg_project_members").select("*").eq("project_id", projectId);
 
     return c.json({
       project: rowToProject(finalProject || projectRow),
       members: (finalMembers || membersToInsert).map(rowToMember),
     }, 201);
   } catch (err: any) {
-    return c.json({ error: `Failed to create project: ${err.message}` }, 500);
+    const message = err?.message || String(err);
+    if (createdProjectId) {
+      try {
+        await db().from("wg_projects").delete().eq("id", createdProjectId);
+      } catch {
+        // best-effort rollback
+      }
+    }
+    return c.json({ error: `Failed to create project: ${message}` }, 500);
   }
 });
 

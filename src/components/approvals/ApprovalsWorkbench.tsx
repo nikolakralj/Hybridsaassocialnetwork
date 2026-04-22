@@ -20,6 +20,7 @@ import {
   type ApprovalQueueFilters,
 } from "../../utils/api/approvals-supabase";
 import { GraphOverlayModal } from "./GraphOverlayModal";
+import { SubmissionsView } from "./SubmissionsView";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -82,6 +83,7 @@ export interface UIApprovalItem {
     status: "pending" | "approved" | "rejected" | "changes_requested";
     submittedAt?: string;
     decidedAt?: string;
+    notes?: string;
   }>;
   gating: {
     blocked: boolean;
@@ -213,6 +215,11 @@ export function ApprovalsWorkbench({
   const [bulkApproving, setBulkApproving] = useState(false);
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
+  const normalizeSubmittedStatus = (status: UIApprovalItem["status"]): WorkbenchStatus => {
+    if (status === "changes_requested") return "pending";
+    return status;
+  };
+
   const notifyApprovalMutation = () => {
     if (typeof window === "undefined") return;
     window.dispatchEvent(new CustomEvent("workgraph-approvals-updated", {
@@ -223,13 +230,15 @@ export function ApprovalsWorkbench({
     }));
   };
 
-  const effectiveStatusFilter = externalStatusFilter ?? statusFilter;
+  const effectiveStatusFilter = viewScope === "submitted"
+    ? statusFilter
+    : externalStatusFilter ?? statusFilter;
 
   useEffect(() => {
-    if (externalStatusFilter) {
+    if (viewScope !== "submitted" && externalStatusFilter) {
       setStatusFilter(externalStatusFilter);
     }
-  }, [externalStatusFilter]);
+  }, [externalStatusFilter, viewScope]);
 
   useEffect(() => {
     if (projectFilter && (!nameDirectory[projectFilter] || !approvalDirectory[projectFilter])) {
@@ -315,8 +324,11 @@ export function ApprovalsWorkbench({
       }
 
       const filters: ApprovalQueueFilters = {
-        status: effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
-        subjectType: typeFilter === "all" ? undefined : (typeFilter as ApprovalQueueFilters["subjectType"]),
+        status: viewScope === "submitted" || effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
+        subjectType:
+          viewScope === "submitted"
+            ? undefined
+            : (typeFilter === "all" ? undefined : (typeFilter as ApprovalQueueFilters["subjectType"])),
         projectId: projectFilter,
         approverNodeId: viewScope === "inbox" ? (viewerNodeId || undefined) : undefined,
         approverUserId: viewScope === "inbox" && !viewerNodeId ? user?.id : undefined,
@@ -430,12 +442,15 @@ export function ApprovalsWorkbench({
       .filter((item) => {
         const searchText = `${item.person.name} ${item.project.name} ${item.objectType}`.toLowerCase();
         if (searchQuery && !searchText.includes(searchQuery.toLowerCase())) return false;
-        if (effectiveStatusFilter !== "all" && item.status !== effectiveStatusFilter) return false;
+        const presentedStatus = viewScope === "submitted" ? normalizeSubmittedStatus(item.status) : item.status;
+        if (effectiveStatusFilter !== "all" && presentedStatus !== effectiveStatusFilter) return false;
         if (typeFilter !== "all" && item.objectType !== typeFilter) return false;
         return true;
       })
       .sort((a, b) => {
-        if (sortBy === "priority") {
+        const sortPreference = viewScope === "submitted" && sortBy === "priority" ? "newest" : sortBy;
+
+        if (sortPreference === "priority") {
           if (a.sla.breached && !b.sla.breached) return -1;
           if (!a.sla.breached && b.sla.breached) return 1;
         }
@@ -443,19 +458,25 @@ export function ApprovalsWorkbench({
         const aTs = new Date(a.submittedAt).getTime();
         const bTs = new Date(b.submittedAt).getTime();
 
-        if (sortBy === "oldest") return aTs - bTs;
+        if (sortPreference === "oldest") return aTs - bTs;
         return bTs - aTs;
       });
-  }, [effectiveStatusFilter, items, searchQuery, sortBy, typeFilter]);
+  }, [effectiveStatusFilter, items, searchQuery, sortBy, typeFilter, viewScope]);
 
   const stats = useMemo(
     () => ({
       total: items.length,
-      pending: items.filter((item) => item.status === "pending").length,
-      approved: items.filter((item) => item.status === "approved").length,
-      rejected: items.filter((item) => item.status === "rejected").length,
+      pending: items.filter((item) =>
+        (viewScope === "submitted" ? normalizeSubmittedStatus(item.status) : item.status) === "pending"
+      ).length,
+      approved: items.filter((item) =>
+        (viewScope === "submitted" ? normalizeSubmittedStatus(item.status) : item.status) === "approved"
+      ).length,
+      rejected: items.filter((item) =>
+        (viewScope === "submitted" ? normalizeSubmittedStatus(item.status) : item.status) === "rejected"
+      ).length,
     }),
-    [items],
+    [items, viewScope],
   );
 
   const hasActiveFilters =
@@ -578,7 +599,7 @@ export function ApprovalsWorkbench({
     setTypeFilter("all");
     setSortBy("newest");
 
-    if (!externalStatusFilter) {
+    if (viewScope === "submitted" || !externalStatusFilter) {
       setStatusFilter("all");
     }
   };
@@ -620,6 +641,28 @@ export function ApprovalsWorkbench({
 
     return "There are no approvals in this view right now.";
   };
+
+  if (viewScope === "submitted") {
+    return (
+      <SubmissionsView
+        items={filteredItems}
+        stats={stats}
+        loading={loading}
+        refreshing={refreshing}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
+        sortBy={sortBy}
+        onSortByChange={setSortBy}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        onRefresh={() => void loadApprovals()}
+        onClearFilters={clearFilters}
+        embedded={embedded}
+      />
+    );
+  }
 
   return (
     <div className={cn("space-y-4", embedded ? "space-y-4" : "space-y-5")}>
@@ -755,7 +798,7 @@ export function ApprovalsWorkbench({
           </div>
         </div>
 
-        {selectedItems.size > 0 && (
+        {selectedItems.size > 0 && viewScope !== "submitted" && (
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
@@ -953,7 +996,7 @@ export function ApprovalsWorkbench({
                               <Button size="sm" variant="outline" onClick={() => handleViewGraph(item)} className="h-8">
                                 Path
                               </Button>
-                              {isPending ? (
+                              {isPending && viewScope !== "submitted" ? (
                                 <>
                                   <Button
                                     size="sm"
@@ -1258,7 +1301,7 @@ export function ApprovalsWorkbench({
                     <Eye className="h-4 w-4" />
                     View path
                   </Button>
-                  {selectedDetailItem.status === "pending" ? (
+                  {selectedDetailItem.status === "pending" && viewScope !== "submitted" ? (
                     <div className="flex gap-2">
                       <Button
                         variant="destructive"
@@ -1430,4 +1473,3 @@ function ApprovalPathStep({
     </div>
   );
 }
-

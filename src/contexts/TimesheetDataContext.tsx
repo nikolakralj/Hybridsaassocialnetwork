@@ -617,7 +617,7 @@ const LS_KEY = 'workgraph-timesheet-weeks';
 const isDemoPersonId = (personId: string) => personId.startsWith('user-');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Local projects (proj_ prefix) don't exist in the DB — they must be handled locally. */
-const isLocalProjectId = (projectId: string) => !UUID_RE.test(projectId);
+const isLocalProjectId = (projectId: string) => !projectId || projectId.startsWith('proj_local_');
 
 function loadFromLocalStorage(): StoredWeek[] | null {
   try {
@@ -938,6 +938,9 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
           tasks: normalizedWeek.tasks,
           status: normalizedWeek.status,
           notes: undefined,
+          projectId: activeProjectId(),
+          personId,
+          totalHours: normalizedWeek.totalHours,
         }, accessToken);
         console.log(`[TimesheetStore] Persisted week ${weekStart} to API`);
       } catch (err) {
@@ -962,6 +965,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         personId,
         approverName: meta?.by,
         note: meta?.note,
+        projectId: activeProjectId(),
       }, accessToken);
       console.log(`[TimesheetStore] Status updated: ${weekStart} -> ${status}`);
     } catch (err) {

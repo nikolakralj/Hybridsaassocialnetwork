@@ -269,6 +269,11 @@ function localDeleteProject(projectId: string) {
   writeLocalProjects(records);
 }
 
+function removeCachedProject(projectId: string) {
+  const records = readLocalProjects().filter((r) => r.project?.id !== projectId);
+  writeLocalProjects(records);
+}
+
 function localGetProjectMembers(projectId: string) {
   const record = readLocalProjects().find((r) => r.project?.id === projectId);
   if (!record) throw new Error('Project not found');
@@ -303,10 +308,16 @@ export interface StoredProjectInvitation {
 interface SupabaseProjectInput {
   id: string;
   name: string;
+  description?: string;
+  region?: string;
+  currency?: string;
   startDate?: string;
   endDate?: string;
   workWeek?: Record<string, boolean>;
   ownerId: string;
+  status?: 'active' | 'draft';
+  supplyChainStatus?: 'complete' | 'incomplete';
+  graph?: any;
   parties?: any;
   members?: Array<{
     id: string;
@@ -316,6 +327,11 @@ interface SupabaseProjectInput {
     role?: string;
     scope?: string;
     graphNodeId?: string;
+    invitationId?: string;
+    canApprove?: boolean;
+    canViewRates?: boolean;
+    canEditTimesheets?: boolean;
+    visibleToChain?: boolean;
   }>;
 }
 
@@ -332,6 +348,8 @@ function mapSupabaseProjectRow(row: any) {
     status: row.status,
     supplyChainStatus: row.supply_chain_status,
     ownerId: row.owner_id,
+    parties: row.parties || null,
+    graph: row.graph || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     storageSource: 'cloud' as const,
@@ -366,12 +384,16 @@ async function supabaseCreateProject(input: SupabaseProjectInput) {
     .insert({
       id: input.id,
       name: input.name,
+      description: input.description || '',
+      region: input.region || 'EU',
+      currency: input.currency || 'EUR',
       start_date: input.startDate || now.slice(0, 10),
       end_date: input.endDate || null,
       work_week: input.workWeek || { monday: true, tuesday: true, wednesday: true, thursday: true, friday: true, saturday: false, sunday: false },
       owner_id: input.ownerId,
-      status: 'active',
-      supply_chain_status: 'complete',
+      status: input.status || 'active',
+      supply_chain_status: input.supplyChainStatus || 'complete',
+      graph: input.graph || null,
       parties: input.parties || null,
     })
     .select()
@@ -388,6 +410,12 @@ async function supabaseCreateProject(input: SupabaseProjectInput) {
       user_email: m.userEmail || null,
       role: m.role || 'Viewer',
       scope: m.scope || null,
+      graph_node_id: m.graphNodeId || null,
+      invitation_id: m.invitationId || null,
+      can_approve: m.canApprove ?? false,
+      can_view_rates: m.canViewRates ?? true,
+      can_edit_timesheets: m.canEditTimesheets ?? true,
+      visible_to_chain: m.visibleToChain ?? true,
       invited_by: input.ownerId,
       invited_at: now,
       accepted_at: m.userId ? now : null,
@@ -519,6 +547,26 @@ export async function getProject(projectId: string, accessToken?: string | null)
     return buildLocalProjectStub(projectId);
   }
 
+  if (accessToken) {
+    try {
+      const { data: row, error } = await supabase
+        .from('wg_projects')
+        .select('*')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (!error && row) {
+        const project = mapSupabaseProjectRow(row);
+        cacheCloudProjectList([project]);
+        return { project };
+      }
+      if (error) {
+        console.warn('[getProject] Direct Supabase read failed:', error.message);
+      }
+    } catch (err) {
+      console.warn('[getProject] Direct Supabase read threw:', err);
+    }
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}`, {
       headers: getHeaders(accessToken),
@@ -559,8 +607,22 @@ export async function createProject(
     ownerName?: string;
     ownerEmail?: string;
     ownerId?: string;
+    graph?: any;
     parties?: any;
-    members?: Array<{ id?: string; userId?: string; userName?: string; userEmail?: string; role?: string; scope?: string; graphNodeId?: string }>;
+    members?: Array<{
+      id?: string;
+      userId?: string;
+      userName?: string;
+      userEmail?: string;
+      role?: string;
+      scope?: string;
+      graphNodeId?: string;
+      invitationId?: string;
+      canApprove?: boolean;
+      canViewRates?: boolean;
+      canEditTimesheets?: boolean;
+      visibleToChain?: boolean;
+    }>;
   },
   accessToken?: string | null
 ) {
@@ -571,10 +633,16 @@ export async function createProject(
       const dbProject = await supabaseCreateProject({
         id: localId,
         name: project.name,
+        description: project.description,
+        region: project.region,
+        currency: project.currency,
         startDate: project.startDate,
         endDate: project.endDate,
         workWeek: project.workWeek,
         ownerId: project.ownerId,
+        status: project.status,
+        supplyChainStatus: project.supplyChainStatus,
+        graph: project.graph,
         parties: project.parties,
         members: project.members?.map((m) => ({
           id: m.id || generateId('mem'),
@@ -584,15 +652,24 @@ export async function createProject(
           role: m.role,
           scope: m.scope,
           graphNodeId: m.graphNodeId,
+          invitationId: m.invitationId,
+          canApprove: m.canApprove,
+          canViewRates: m.canViewRates,
+          canEditTimesheets: m.canEditTimesheets,
+          visibleToChain: m.visibleToChain,
         })),
       });
       const createdProject = {
         id: localId,
         name: dbProject.name,
+        description: dbProject.description || '',
+        region: dbProject.region,
+        currency: dbProject.currency,
         startDate: dbProject.start_date,
         endDate: dbProject.end_date,
         workWeek: dbProject.work_week,
         status: dbProject.status,
+        supplyChainStatus: dbProject.supply_chain_status,
         ownerId: dbProject.owner_id,
         createdAt: dbProject.created_at,
         updatedAt: dbProject.updated_at,
@@ -682,6 +759,49 @@ async function supabaseUpdateProject(projectId: string, updates: Record<string, 
   return mapped;
 }
 
+async function supabaseDeleteProject(projectId: string, accessToken?: string | null) {
+  const authResult = accessToken
+    ? await supabase.auth.getUser(accessToken)
+    : await supabase.auth.getUser();
+
+  if (authResult.error || !authResult.data.user?.id) {
+    throw new Error(authResult.error?.message || 'Failed to resolve current user');
+  }
+
+  const userId = authResult.data.user.id;
+
+  const { data: projectRow, error: projectError } = await supabase
+    .from('wg_projects')
+    .select('id, owner_id')
+    .eq('id', projectId)
+    .maybeSingle();
+
+  if (projectError) {
+    throw new Error(`Failed to load project before delete: ${projectError.message}`);
+  }
+
+  if (!projectRow) {
+    throw new Error('Project not found');
+  }
+
+  if (projectRow.owner_id !== userId) {
+    throw new Error('Only the project owner can delete this project');
+  }
+
+  const { error: deleteError } = await supabase
+    .from('wg_projects')
+    .delete()
+    .eq('id', projectId)
+    .eq('owner_id', userId);
+
+  if (deleteError) {
+    throw new Error(`Failed to delete project in DB: ${deleteError.message}`);
+  }
+
+  removeCachedProject(projectId);
+  return true;
+}
+
 export async function updateProject(
   projectId: string,
   updates: Record<string, any>,
@@ -744,6 +864,19 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
     return true;
   }
 
+  if (accessToken) {
+    try {
+      return await supabaseDeleteProject(projectId, accessToken);
+    } catch (dbError: any) {
+      console.error('[deleteProject] Direct Supabase delete failed:', {
+        message: dbError?.message,
+        code: dbError?.code,
+        details: dbError?.details,
+        hint: dbError?.hint,
+      });
+    }
+  }
+
   try {
     const res = await fetch(`${BASE}/projects/${projectId}`, {
       method: 'DELETE',
@@ -751,26 +884,11 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
     });
     const data = await res.json();
     if (!res.ok) {
-      if (hasLocalProject(projectId)) {
-        localDeleteProject(projectId);
-        return true;
-      }
-      if (canUseLocalFallback(res.status, accessToken)) {
-        localDeleteProject(projectId);
-        return true;
-      }
       throw new Error(data.error || 'Failed to delete project');
     }
+    removeCachedProject(projectId);
     return true;
   } catch (error) {
-    if (hasLocalProject(projectId)) {
-      localDeleteProject(projectId);
-      return true;
-    }
-    if (canUseLocalFallback(undefined, accessToken)) {
-      localDeleteProject(projectId);
-      return true;
-    }
     throw error;
   }
 }

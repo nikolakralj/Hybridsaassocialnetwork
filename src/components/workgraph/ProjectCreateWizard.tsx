@@ -34,7 +34,7 @@ import { format } from 'date-fns';
 import { Project, ProjectMember, ProjectRole, WorkWeek } from '../../types/collaboration';
 import type { PartyType } from '../../types/workgraph';
 import { CompanySearchDialog } from './CompanySearchDialog';
-import { createProject, updateProject, type ProjectStorageSource } from '../../utils/api/projects-api';
+import { createProject, type ProjectStorageSource } from '../../utils/api/projects-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import {
@@ -290,12 +290,14 @@ export function ProjectCreateWizard({
           supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
         }, allMembers);
       } else {
+        const graph = generateGraphFromWizard(parties, name);
         const result = await createProject({
           name, description: '', region: 'EU',
           startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
           ownerName: user?.user_metadata?.full_name || user?.email || 'Project Owner',
           ownerEmail: user?.email || '',
           ownerId: user?.id,
+          graph: { nodes: graph.nodes, edges: graph.edges },
           parties: parties.map(p => ({
             id: p.id, name: p.name, partyType: p.partyType,
             billsTo: p.billsTo,
@@ -310,17 +312,6 @@ export function ProjectCreateWizard({
           supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
           members: allMembers,
         }, accessToken);
-
-        const graph = generateGraphFromWizard(parties, name);
-        try {
-          await updateProject(result.project.id, {
-            graph: { nodes: graph.nodes, edges: graph.edges },
-            parties: parties.map(p => ({
-              id: p.id, name: p.name, partyType: p.partyType,
-              billsTo: p.billsTo, peopleCount: p.people.length,
-            })),
-          }, accessToken);
-        } catch (e) { console.error('Failed to save graph:', e); }
 
         // Write approval-dir to sessionStorage immediately so Timesheets tab
         // can resolve approval routes without requiring the Graph tab to load first.

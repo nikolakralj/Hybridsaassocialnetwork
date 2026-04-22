@@ -58,11 +58,12 @@ type ProjectListItem = {
   workWeek?: Record<string, boolean>;
   storageSource?: ProjectStorageSource;
   isLocalOnly?: boolean;
+  ownerId?: string;
 };
 
 export function ProjectsListView() {
   const navigate = useNavigate();
-  const { accessToken, loading: authLoading } = useAuth();
+  const { user, accessToken, loading: authLoading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -185,12 +186,23 @@ export function ProjectsListView() {
     }
   };
 
-  const handleDeleteProject = async (projectId: string) => {
+  const canDeleteProject = (project: ProjectListItem) => {
+    if (project.storageSource === 'local' || project.isLocalOnly) return true;
+    if (!user?.id || !project.ownerId) return false;
+    return project.ownerId === user.id;
+  };
+
+  const handleDeleteProject = async (project: ProjectListItem) => {
+    if (!canDeleteProject(project)) {
+      toast.error('Only the project owner can delete this project');
+      return;
+    }
+
     if (!confirm('Are you sure you want to delete this project?')) return;
     try {
-      await deleteProjectApi(projectId, accessToken);
-      clearProjectData(projectId); // Purge timesheets, approval dirs, viewer meta
-      setProjects(projects.filter(p => p.id !== projectId));
+      await deleteProjectApi(project.id, accessToken);
+      clearProjectData(project.id); // Purge timesheets, approval dirs, viewer meta
+      setProjects(projects.filter(p => p.id !== project.id));
       toast.success('Project deleted');
     } catch (error: any) {
       console.error('Delete project error:', error);
@@ -380,14 +392,16 @@ export function ProjectsListView() {
                       <Users className="mr-2 h-4 w-4" />
                       Invite Member
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }}
-                      className="text-destructive"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                    {canDeleteProject(project) ? (
+                      <DropdownMenuItem
+                        onClick={(e) => { e.stopPropagation(); handleDeleteProject(project); }}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

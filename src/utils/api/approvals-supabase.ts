@@ -106,6 +106,7 @@ export interface ApprovalQueueItem extends ApprovalRecord {
     status: ApprovalRecord['status'];
     submittedAt?: string;
     decidedAt?: string;
+    notes?: string;
   }>;
   timesheetData?: {
     weekStart: string;
@@ -139,6 +140,12 @@ export interface ApprovalQueueFilters {
 
 function isUuid(value?: string | null): value is string {
   return Boolean(value && UUID_REGEX.test(value));
+}
+
+// A project is cloud-backed unless it was explicitly created local-only
+// (proj_local_* prefix). UUIDs and cloud-issued proj_* TEXT IDs both live in Supabase.
+function isLocalOnlyProjectId(projectId?: string | null): boolean {
+  return Boolean(projectId && projectId.startsWith('proj_local_'));
 }
 
 function readLocalApprovals(): ApprovalRecord[] {
@@ -213,21 +220,46 @@ function normalizeMatchValue(value?: string | null): string {
 }
 
 function readSessionJson<T>(key: string): T | null {
-  if (typeof sessionStorage === 'undefined') return null;
+  const storages: Array<Storage | undefined> = [];
+  if (typeof sessionStorage !== 'undefined') storages.push(sessionStorage);
+  if (typeof localStorage !== 'undefined') storages.push(localStorage);
 
-  try {
-    const raw = sessionStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : null;
-  } catch {
-    return null;
+  for (const storage of storages) {
+    try {
+      const raw = storage?.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as T;
+      if (storage === localStorage && typeof sessionStorage !== 'undefined') {
+        try {
+          sessionStorage.setItem(key, raw);
+        } catch {
+          // Ignore promotion failures.
+        }
+      }
+      return parsed;
+    } catch {
+      // Try next storage backend.
+    }
   }
+
+  return null;
 }
 
 function writeSessionJson<T>(key: string, value: T): void {
-  if (typeof sessionStorage === 'undefined') return;
+  const payload = JSON.stringify(value);
 
   try {
-    sessionStorage.setItem(key, JSON.stringify(value));
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(key, payload);
+    }
+  } catch {
+    // ignore quota/storage errors
+  }
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, payload);
+    }
   } catch {
     // ignore quota/storage errors
   }
@@ -244,10 +276,87 @@ function readApprovalParties(projectId: string): ApprovalDirParty[] {
   return Array.isArray(parsed?.parties) ? parsed.parties : [];
 }
 
+function hasUsablePartyPeople(parties: ApprovalDirParty[]): boolean {
+  return parties.some((party) => Array.isArray(party.people) && party.people.length > 0);
+}
+
+function roleImpliesApproval(role?: string | null): boolean {
+  const normalized = (role || '').trim().toLowerCase();
+  return normalized === 'owner' || normalized === 'editor' || normalized === 'admin' || normalized === 'approver';
+}
+
+function normalizeEmailLocal(value?: string | null): string {
+  return normalizeMatchValue((value || '').split('@')[0]?.replace(/[._-]+/g, ' ') || '');
+}
+
+function resolvePartyMemberNodeId(
+  partyId: string,
+  member: WgProjectMember,
+  nameDir: Record<string, NameDirEntry>
+): string | undefined {
+  const exactName = normalizeMatchValue(member.user_name);
+  const emailLocal = normalizeEmailLocal(member.user_email);
+
+  const candidates = Object.entries(nameDir)
+    .filter(([, entry]) => entry.orgId === partyId)
+    .map(([nodeId, entry]) => ({
+      nodeId,
+      normalizedName: normalizeMatchValue(entry.name),
+      normalizedEmailLocal: normalizeEmailLocal(entry.name),
+    }));
+
+  const exactNameMatch = candidates.find((candidate) => exactName && candidate.normalizedName === exactName);
+  if (exactNameMatch) return exactNameMatch.nodeId;
+
+  const emailLocalMatch = candidates.find((candidate) => emailLocal && candidate.normalizedName === emailLocal);
+  if (emailLocalMatch) return emailLocalMatch.nodeId;
+
+  const fuzzyEmailLocalMatch = candidates.find((candidate) => emailLocal && candidate.normalizedEmailLocal === emailLocal);
+  if (fuzzyEmailLocalMatch) return fuzzyEmailLocalMatch.nodeId;
+
+  return undefined;
+}
+
+async function hydrateApprovalParties(projectId: string, parties: ApprovalDirParty[]): Promise<ApprovalDirParty[]> {
+  if (parties.length === 0 || hasUsablePartyPeople(parties)) return parties;
+
+  const members = await fetchProjectMembers(projectId).catch(() => []);
+  const nameDir = readNameDir(projectId);
+
+  const hydrated = parties.map((party) => {
+    const scopedMembers = members.filter((member) => member.scope === party.id);
+    const inferredPeople = scopedMembers.map((member) => {
+      const resolvedNodeId =
+        resolvePartyMemberNodeId(party.id, member, nameDir) ||
+        member.user_id ||
+        undefined;
+
+      return {
+        id: resolvedNodeId || `${party.id}::${normalizeMatchValue(member.user_email || member.user_name || 'member')}`,
+        name: member.user_name || nameDir[resolvedNodeId || '']?.name || member.user_email || party.name,
+        canApprove: roleImpliesApproval(member.role),
+      } satisfies ApprovalDirPerson;
+    });
+
+    return {
+      ...party,
+      people: Array.isArray(party.people) && party.people.length > 0 ? party.people : inferredPeople,
+    };
+  });
+
+  return hydrated;
+}
+
 async function loadApprovalParties(projectId: string): Promise<ApprovalDirParty[]> {
   const sessionParties = readApprovalParties(projectId);
-  if (sessionParties.length > 0) return sessionParties;
-  if (!isUuid(projectId)) return [];
+  if (sessionParties.length > 0) {
+    const hydratedSession = await hydrateApprovalParties(projectId, sessionParties);
+    if (hasUsablePartyPeople(hydratedSession)) {
+      writeSessionJson(`workgraph-approval-dir:${projectId}`, { parties: hydratedSession });
+    }
+    return hydratedSession;
+  }
+  if (isLocalOnlyProjectId(projectId)) return [];
 
   try {
     const { data, error } = await supabase
@@ -263,8 +372,9 @@ async function loadApprovalParties(projectId: string): Promise<ApprovalDirParty[
       : (data.parties as { parties?: ApprovalDirParty[] })?.parties;
 
     if (Array.isArray(resolvedParties) && resolvedParties.length > 0) {
-      writeSessionJson(`workgraph-approval-dir:${projectId}`, { parties: resolvedParties });
-      return resolvedParties;
+      const hydratedResolved = await hydrateApprovalParties(projectId, resolvedParties);
+      writeSessionJson(`workgraph-approval-dir:${projectId}`, { parties: hydratedResolved });
+      return hydratedResolved;
     }
 
     return [];
@@ -394,13 +504,28 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
 
   while (nextIndex < route.length) {
     const candidateParty = route[nextIndex];
-    const candidateApprovers = [...(candidateParty.people || [])]
+    const candidatePeople = [...(candidateParty.people || [])]
       .filter((person) => person.canApprove)
       .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
 
-    if (candidateApprovers.length > 0) {
+    const fallbackPeople = [...(candidateParty.people || [])]
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
+
+    const candidateAssignees = candidatePeople.length > 0
+      ? candidatePeople
+      : fallbackPeople.length > 0
+        ? fallbackPeople
+        : [{ id: candidateParty.id, name: candidateParty.name || candidateParty.id, canApprove: true }];
+
+    if (candidateAssignees.length > 0) {
       nextParty = candidateParty;
-      sortedApprovers = candidateApprovers;
+      sortedApprovers = candidateAssignees;
+      if (candidatePeople.length === 0) {
+        console.warn('[approvals.nextLayer] No canApprove flag found in next party; falling back to first party member', {
+          nextPartyId: candidateParty.id,
+          fallbackAssigneeId: candidateAssignees[0]?.id || null,
+        });
+      }
       break;
     }
 
@@ -416,8 +541,10 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
 
   if (!nextParty) return false;
 
-  const approverRef = sortedApprovers[0]?.id || nextParty.id;
-  const approverName = nextParty.name || approverRef;
+  const selectedApprover = sortedApprovers[0];
+  const approverRef = selectedApprover?.id || nextParty.id;
+  const approverNodeId = selectedApprover?.id || nextParty.id;
+  const approverName = selectedApprover?.name || nextParty.name || approverRef;
   const subjectSnapshot = dbApproval.subject_snapshot && typeof dbApproval.subject_snapshot === 'object'
     ? dbApproval.subject_snapshot as ApprovalSubjectSnapshot
     : null;
@@ -430,13 +557,14 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
       ? {
           ...subjectSnapshot,
           currentApproverName: approverName,
-          currentApproverNodeId: nextParty.id,
+          currentApproverNodeId: approverNodeId,
+          currentApproverUserRef: approverRef,
           approvalLayer: nextIndex + 1,
         }
       : undefined,
     approverUserId: approverRef,
     approverName,
-    approverNodeId: nextParty.id,
+    approverNodeId,
     approvalLayer: nextIndex + 1,
     status: 'pending',
     submittedAt: new Date().toISOString(),
@@ -497,7 +625,13 @@ function getCandidateNodeIds(projectId: string, nodeId: string): string[] {
   push(nodeId);
 
   const party = readApprovalParties(projectId).find((entry) => entry.id === nodeId);
-  if (!party) return ordered;
+  if (!party) {
+    Object.entries(readNameDir(projectId))
+      .filter(([, entry]) => entry.orgId === nodeId)
+      .sort((left, right) => (left[1].name || '').localeCompare(right[1].name || '') || left[0].localeCompare(right[0]))
+      .forEach(([candidateNodeId]) => push(candidateNodeId));
+    return ordered;
+  }
 
   const people = [...(party.people || [])].sort((a, b) =>
     (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id)
@@ -542,13 +676,24 @@ function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): strin
 }
 
 async function resolveApproverScopeNodeIds(projectId: string, viewerNodeId: string): Promise<string[]> {
-  const sessionScope = getApproverScopeNodeIds(projectId, viewerNodeId);
-  if (sessionScope.length > 1 || readApprovalParties(projectId).length > 0) {
+  const storedParties = readApprovalParties(projectId);
+  const sessionScope = computeApproverScopeNodeIds(storedParties, viewerNodeId);
+  const viewerOrgId = readNameDir(projectId)[viewerNodeId]?.orgId;
+
+  if (viewerOrgId && !sessionScope.includes(viewerOrgId)) {
+    sessionScope.push(viewerOrgId);
+  }
+
+  if (sessionScope.length > 1 && hasUsablePartyPeople(storedParties)) {
     return sessionScope;
   }
 
   const loadedParties = await loadApprovalParties(projectId);
-  return computeApproverScopeNodeIds(loadedParties, viewerNodeId);
+  const loadedScope = computeApproverScopeNodeIds(loadedParties, viewerNodeId);
+  if (viewerOrgId && !loadedScope.includes(viewerOrgId)) {
+    loadedScope.push(viewerOrgId);
+  }
+  return loadedScope;
 }
 
 export async function resolveGraphNodeToUserId(
@@ -559,9 +704,8 @@ export async function resolveGraphNodeToUserId(
   if (isUuid(nodeId)) return nodeId;
   if (!projectId || !nodeId) return fallbackUserId;
 
-  // wg_project_members.project_id is UUID â€” skip DB lookup for non-UUID project IDs
-  // (projects created locally before being persisted to DB use a text format ID)
-  if (!isUuid(projectId)) return fallbackUserId;
+  // wg_project_members.project_id is TEXT. Only skip DB lookup for true local-only projects.
+  if (isLocalOnlyProjectId(projectId)) return fallbackUserId;
 
   // Direct JOIN-style lookup is the highest-confidence path.
   // If we can resolve by scope or graph_node_id, return immediately and skip heuristic scoring.
@@ -658,25 +802,32 @@ function isSchemaCacheMissingColumnError(error: unknown, columnName: string): bo
 }
 
 async function insertApprovalRecordWithFallback(row: Record<string, any>) {
-  const attempt = await supabase
-    .from('approval_records')
-    .insert([row])
-    .select()
-    .single();
-
-  if (!attempt.error) return attempt;
-
-  if (Object.prototype.hasOwnProperty.call(row, 'subject_snapshot') && isSchemaCacheMissingColumnError(attempt.error, 'subject_snapshot')) {
-    const { subject_snapshot, ...fallbackRow } = row;
-    console.warn('[Approvals] subject_snapshot column is not available yet; retrying approval insert without it.');
-    return supabase
+  let workingRow = { ...row };
+  for (let i = 0; i < 3; i++) {
+    const attempt = await supabase
       .from('approval_records')
-      .insert([fallbackRow])
+      .insert([workingRow])
       .select()
       .single();
-  }
 
-  return attempt;
+    if (!attempt.error) return attempt;
+
+    const droppable = ['subject_snapshot', 'submitter_user_id', 'graph_version_id'];
+    const missingCol = droppable.find(
+      (col) => Object.prototype.hasOwnProperty.call(workingRow, col) && isSchemaCacheMissingColumnError(attempt.error, col)
+    );
+
+    if (!missingCol) return attempt;
+
+    console.warn(`[Approvals] Column ${missingCol} not available; retrying insert without it.`);
+    const { [missingCol]: _dropped, ...rest } = workingRow;
+    workingRow = rest;
+  }
+  return supabase
+    .from('approval_records')
+    .insert([workingRow])
+    .select()
+    .single();
 }
 
 async function findExistingPendingApproval(
@@ -769,13 +920,23 @@ async function syncTimesheetWeekStatusFromApproval(dbApproval: any): Promise<voi
       updates.approved_by = null;
     }
 
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from('wg_timesheet_weeks')
       .update(updates)
-      .eq('id', rowId);
+      .eq('id', rowId)
+      .select('id');
 
-    if (!error) return;
+    if (!error && updatedRows && updatedRows.length > 0) return;
+    if (error) {
+      console.warn('[approvals.sync] wg_timesheet_weeks update error', { rowId, message: error.message });
+    }
   }
+
+  console.warn('[approvals.sync] No wg_timesheet_weeks row matched for subject', {
+    subjectId: dbApproval?.subject_id,
+    tried: uniqueRowIds,
+    status,
+  });
 }
 
 // ============================================================================
@@ -791,7 +952,7 @@ export async function createApproval(
 
   const createPromise = (async () => {
     try {
-      if (!isUuid(approval.projectId)) {
+      if (isLocalOnlyProjectId(approval.projectId)) {
         const localApprovals = readLocalApprovals();
         const existingLocal = localApprovals.find((item) =>
           item.projectId === approval.projectId &&
@@ -863,6 +1024,7 @@ export async function createApproval(
           notes: approval.notes,
           submitted_at: approval.submittedAt || new Date().toISOString(),
           graph_version_id: approval.graphVersionId,
+          submitter_user_id: approval.submitterUserId || null,
         });
         if (attempt.error) throw new Error(`Failed to create approval: ${attempt.error.message}`);
         return transformApproval(attempt.data);
@@ -881,6 +1043,7 @@ export async function createApproval(
         notes: approval.notes,
         submitted_at: approval.submittedAt || new Date().toISOString(),
         graph_version_id: approval.graphVersionId,
+        submitter_user_id: approval.submitterUserId || null,
       });
 
       if (attempt.error) {
@@ -922,7 +1085,7 @@ export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
 ): Promise<ApprovalQueueItem[]> {
   try {
-    if (filters.projectId && !isUuid(filters.projectId)) {
+    if (filters.projectId && isLocalOnlyProjectId(filters.projectId)) {
       const localFiltered = filterLocalApprovals(readLocalApprovals(), filters);
       return localFiltered.map((record) => ({
         ...(record as ApprovalQueueItem),
@@ -1000,18 +1163,18 @@ export async function getApprovalQueue(
     if (!data || data.length === 0) return [];
 
     const projectIds = [...new Set(data.map((entry) => entry.project_id))].filter(Boolean);
-    const validUuidProjectIds = projectIds.filter((id) => isUuid(id));
+    const cloudProjectIds = projectIds.filter((id) => !isLocalOnlyProjectId(id));
     let projectMap = new Map<string, string>();
 
-    if (validUuidProjectIds.length > 0) {
+    if (cloudProjectIds.length > 0) {
       const { data: projectsData } = await supabase
         .from('wg_projects')
         .select('id, name')
-        .in('id', validUuidProjectIds);
+        .in('id', cloudProjectIds);
       projectMap = new Map(projectsData?.map((project) => [project.id, project.name]) || []);
     }
 
-    projectIds.filter((id) => !isUuid(id)).forEach((id) => {
+    projectIds.filter((id) => isLocalOnlyProjectId(id)).forEach((id) => {
       projectMap.set(id, id);
     });
 
@@ -1082,13 +1245,18 @@ export async function getApprovalQueue(
         if (weekUserIds.length > 0 && filters.projectId) {
           const { data: members } = await supabase
             .from('wg_project_members')
-            .select('user_id, user_name')
+            .select('user_id, user_name, user_email')
             .eq('project_id', filters.projectId)
             .in('user_id', weekUserIds);
           memberNameByUserId = new Map(
             (members || [])
               .filter((member: any) => member.user_id)
-              .map((member: any) => [member.user_id as string, member.user_name as string || 'Unknown contractor'])
+              .map((member: any) => {
+                const rawName = (member.user_name as string | null)?.trim();
+                const sanitized = rawName && rawName !== 'Me' ? rawName : '';
+                const emailLocal = (member.user_email as string | null)?.split('@')[0]?.trim();
+                return [member.user_id as string, sanitized || emailLocal || 'Unknown contractor'];
+              })
           );
         }
 
@@ -1159,6 +1327,7 @@ export async function getApprovalQueue(
           status: entry.status,
           submittedAt: entry.submittedAt,
           decidedAt: entry.decidedAt,
+          notes: entry.notes,
         }));
         approval.totalSteps = Math.max(history.length, approval.approvalLayer);
         const latest = history[history.length - 1];
