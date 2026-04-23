@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense, useMemo } from "react";
 import { 
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt, 
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
@@ -22,7 +22,7 @@ import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
-import { addProjectMember, getProjectMembers } from "../utils/api/projects-api";
+import { addProjectMember, getProject, getProjectMembers } from "../utils/api/projects-api";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
@@ -247,6 +247,7 @@ export function ProjectWorkspace({
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
+  const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -256,6 +257,22 @@ export function ProjectWorkspace({
 
   const enabledModules = modules.filter(m => m.isEnabled);
   const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
+  const currentMembership = useMemo(() => {
+    if (!user) return null;
+    const email = user.email?.toLowerCase();
+    return (
+      teamMembers.find((member) => member.userId && member.userId === user.id) ||
+      teamMembers.find((member) => email && member.userEmail?.toLowerCase() === email) ||
+      null
+    );
+  }, [teamMembers, user]);
+  const currentProjectRole = useMemo<ProjectRole | null>(() => {
+    if (user?.id && projectOwnerId && user.id === projectOwnerId) return "Owner";
+    return currentMembership?.role || null;
+  }, [currentMembership?.role, projectOwnerId, user?.id]);
+  const canManageProject = currentProjectRole === "Owner" || currentProjectRole === "Editor";
+  const canEditGraph = canManageProject;
+  const teamButtonLabel = teamMembers.length > 0 ? `Team (${teamMembers.length})` : "Team";
 
   const enableAndOpenModule = (moduleId: ModuleId) => {
     setModules(prev => prev.map(m => m.id === moduleId ? { ...m, isEnabled: true } : m));
@@ -263,10 +280,12 @@ export function ProjectWorkspace({
   };
 
   const handleOpenTeam = () => {
+    if (!canManageProject) return;
     enableAndOpenModule("team");
   };
 
   const handleOpenSettings = () => {
+    if (!canManageProject) return;
     setEditingProject({
       id: projectId,
       name: projectName,
@@ -306,6 +325,38 @@ export function ProjectWorkspace({
   useEffect(() => {
     loadTeamMembers();
   }, [projectId, accessToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) {
+      setProjectOwnerId(null);
+      return;
+    }
+
+    const loadProjectMeta = async () => {
+      try {
+        const data = await getProject(projectId, accessToken);
+        if (!cancelled) {
+          setProjectOwnerId(data?.project?.ownerId || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setProjectOwnerId(null);
+        }
+      }
+    };
+
+    void loadProjectMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, accessToken]);
+
+  useEffect(() => {
+    if (!canManageProject && activeTab === "team") {
+      setActiveTab("overview");
+    }
+  }, [activeTab, canManageProject]);
 
   useEffect(() => {
     const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;
@@ -452,14 +503,18 @@ export function ProjectWorkspace({
             </div>
             <div className="flex gap-2 items-center">
               <NotificationCenterBell />
-              <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenTeam}>
-                <Users className="w-4 h-4" />
-                Team ({teamMembers.length || 0})
-              </Button>
-              <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenSettings}>
-                <Settings className="w-4 h-4" />
-                Settings
-              </Button>
+              {canManageProject ? (
+                <>
+                  <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenTeam}>
+                    <Users className="w-4 h-4" />
+                    {teamButtonLabel}
+                  </Button>
+                  <Button variant="outline" size="sm" className="gap-2" onClick={handleOpenSettings}>
+                    <Settings className="w-4 h-4" />
+                    Settings
+                  </Button>
+                </>
+              ) : null}
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3">
@@ -591,6 +646,7 @@ export function ProjectWorkspace({
                   scope={scope}
                   mode={mode}
                   asOf={asOf}
+                  canEditGraph={canEditGraph}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
                     setWorkspaceViewer(viewer);
@@ -658,6 +714,7 @@ export function ProjectWorkspace({
               <TeamModule
                 members={teamMembers}
                 loading={isTeamLoading}
+                canManageMembers={canManageProject}
                 onInvite={() => setIsInviteOpen(true)}
                 onRefresh={loadTeamMembers}
               />
@@ -670,22 +727,26 @@ export function ProjectWorkspace({
         </MonthProvider>
       </div>
 
-      <ProjectConfigurationDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => {
-          setIsDrawerOpen(false);
-          setEditingProject(undefined);
-        }}
-        project={editingProject}
-        onSave={handleSaveProject}
-      />
+      {canManageProject ? (
+        <ProjectConfigurationDrawer
+          isOpen={isDrawerOpen}
+          onClose={() => {
+            setIsDrawerOpen(false);
+            setEditingProject(undefined);
+          }}
+          project={editingProject}
+          onSave={handleSaveProject}
+        />
+      ) : null}
 
-      <ProjectInviteMemberDialog
-        open={isInviteOpen}
-        projectName={projectName}
-        onOpenChange={setIsInviteOpen}
-        onInvite={handleInviteMember}
-      />
+      {canManageProject ? (
+        <ProjectInviteMemberDialog
+          open={isInviteOpen}
+          projectName={projectName}
+          onOpenChange={setIsInviteOpen}
+          onInvite={handleInviteMember}
+        />
+      ) : null}
     </div>
   );
 }
@@ -857,11 +918,13 @@ function AnalyticsModule() {
 function TeamModule({
   members,
   loading,
+  canManageMembers,
   onInvite,
   onRefresh,
 }: {
   members: ProjectMember[];
   loading: boolean;
+  canManageMembers: boolean;
   onInvite: () => void;
   onRefresh: () => void;
 }) {
@@ -874,10 +937,12 @@ function TeamModule({
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onRefresh}>Refresh</Button>
-          <Button size="sm" className="gap-2" onClick={onInvite}>
-            <Plus className="w-4 h-4" />
-            Invite Member
-          </Button>
+          {canManageMembers ? (
+            <Button size="sm" className="gap-2" onClick={onInvite}>
+              <Plus className="w-4 h-4" />
+              Invite Member
+            </Button>
+          ) : null}
         </div>
       </div>
 

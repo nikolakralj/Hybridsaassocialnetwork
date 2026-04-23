@@ -1460,6 +1460,7 @@ interface WorkGraphBuilderProps {
   scope?: 'approvals' | 'money' | 'people' | 'access';
   mode?: 'view' | 'edit';
   asOf?: string;
+  canEditGraph?: boolean;
   currentViewer?: ViewerIdentity | null;
   onViewerChange?: (viewer: ViewerIdentity) => void;
 }
@@ -1469,6 +1470,7 @@ export function WorkGraphBuilder({
   projectName: propProjectName,
   onSave,
   initialConfig,
+  canEditGraph = true,
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
 }: WorkGraphBuilderProps) {
@@ -1860,6 +1862,10 @@ export function WorkGraphBuilder({
   }, [historyOpen]);
 
   const runGraphMigration = useCallback(async () => {
+    if (!canEditGraph) {
+      toast.error('Only project managers can repair the graph');
+      return;
+    }
     const migrated = migrateGraphForVisibility(allNodes, allEdges);
     if (!migrated.changed) {
       toast.info('Graph already up to date');
@@ -1885,7 +1891,7 @@ export function WorkGraphBuilder({
         description: 'Could not persist migration to server yet. Use Save after reconnecting.',
       });
     }
-  }, [allNodes, allEdges, projectId, accessToken]);
+  }, [allNodes, allEdges, projectId, accessToken, canEditGraph]);
 
   // Compute scoped view
   const scopedView = useMemo(
@@ -1964,6 +1970,10 @@ export function WorkGraphBuilder({
     nodes: BaseNode[];
     edges: BaseEdge[];
   }) => {
+    if (!canEditGraph) {
+      toast.error('Only project managers can edit the supply chain');
+      return;
+    }
     // Build maps for incoming nodes/edges by ID so we can update OR add
     const incomingNodeMap = new Map(nodes.map((n) => [n.id, n]));
     const incomingEdgeMap = new Map(edges.map((e) => [e.id, e]));
@@ -2015,7 +2025,7 @@ export function WorkGraphBuilder({
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
     setIsEditSupplyChainOpen(false);
-  }, [allNodes, allEdges, projectId, accessToken, graphPersistence]);
+  }, [allNodes, allEdges, projectId, accessToken, graphPersistence, canEditGraph]);
 
   return (
     <>
@@ -2067,26 +2077,34 @@ export function WorkGraphBuilder({
             </button>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsEditSupplyChainOpen(true)}
-            className="h-8 gap-1.5 text-xs"
-          >
-            <Users className="h-3.5 w-3.5" />
-            Edit Supply Chain
-          </Button>
+          {canEditGraph ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsEditSupplyChainOpen(true)}
+                className="h-8 gap-1.5 text-xs"
+              >
+                <Users className="h-3.5 w-3.5" />
+                Edit Supply Chain
+              </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => graphPersistence.saveVersion(allNodes as any, allEdges as any, 'Manual save')}
-            disabled={graphPersistence.isSaving}
-            className="h-8 gap-1.5 text-xs"
-          >
-            {graphPersistence.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            Save
-          </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => graphPersistence.saveVersion(allNodes as any, allEdges as any, 'Manual save')}
+                disabled={graphPersistence.isSaving}
+                className="h-8 gap-1.5 text-xs"
+              >
+                {graphPersistence.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Save
+              </Button>
+            </>
+          ) : (
+            <Badge variant="outline" className="h-8 px-3 text-xs text-muted-foreground">
+              Read-only graph
+            </Badge>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -2099,10 +2117,12 @@ export function WorkGraphBuilder({
                 <Clock className="h-3.5 w-3.5 mr-2" />
                 Version History
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={runGraphMigration}>
-                <AlertCircle className="h-3.5 w-3.5 mr-2" />
-                Repair Graph
-              </DropdownMenuItem>
+              {canEditGraph ? (
+                <DropdownMenuItem onClick={runGraphMigration}>
+                  <AlertCircle className="h-3.5 w-3.5 mr-2" />
+                  Repair Graph
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -2165,14 +2185,16 @@ export function WorkGraphBuilder({
       </div>
       </div>
 
-      <ProjectCreateWizard
-        open={isEditSupplyChainOpen}
-        onClose={() => setIsEditSupplyChainOpen(false)}
-        onEditSave={handleEditSupplyChainSave}
-        editMode={true}
-        initialParties={editableParties}
-        initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
-      />
+      {canEditGraph ? (
+        <ProjectCreateWizard
+          open={isEditSupplyChainOpen}
+          onClose={() => setIsEditSupplyChainOpen(false)}
+          onEditSave={handleEditSupplyChainSave}
+          editMode={true}
+          initialParties={editableParties}
+          initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
+        />
+      ) : null}
     </>
   );
 }
