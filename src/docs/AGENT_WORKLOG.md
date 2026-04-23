@@ -3,6 +3,13 @@
 Last updated: 2026-04-21 (Europe/Zagreb)
 Owner thread: Nikola + Codex + Claude
 
+## 2026-04-22 - [DONE] project-workspace-role-gating (Codex)
+
+- Changed: `src/components/ProjectWorkspace.tsx`, `src/components/workgraph/WorkGraphBuilder.tsx`.
+- The workspace now resolves the signed-in user's effective project role from `ownerId` plus project membership rows and uses that as the single gate for management controls. `Team`, `Settings`, invite flows, and graph mutation surfaces no longer appear for contributors/viewers, and the old `Team (0)` placeholder count now degrades to a plain `Team` label instead of broadcasting an empty stub state.
+- `WorkGraphBuilder` now accepts `canEditGraph` and fails closed: `Edit Supply Chain`, `Save`, `Repair Graph`, and the edit wizard only render for owner/editor roles, while read-only users see a non-destructive `Read-only graph` badge instead.
+- Residual risk: this is a UI-level trust cleanup that matches the existing owner/editor model better, but the server-side `updateProject()` path still needs explicit role enforcement before we can call the permission model complete.
+
 ## 2026-04-22 - [DONE] cycle1-project-schema-api-correctness (Codex)
 
 - Changed: `src/utils/api/projects-api.ts`, `supabase/migrations/013_graph_node_id_and_invite_link.sql`.
@@ -17,7 +24,14 @@ Owner thread: Nikola + Codex + Claude
 - The server create route now inserts invitations before member rows to satisfy the new `invitation_id` foreign key, persists the capability/graph-node fields on member rows, and rolls back the created project on downstream insert failure so we stop leaving zombie projects behind.
 - Residual risk: this is still best-effort rollback inside the edge route rather than a true Postgres transaction/RPC, but it removes the biggest client-side partial-state failure mode immediately.
 
-## 2026-04-21 - [IN PROGRESS] approval-submissions-redesign (Codex)
+## 2026-04-22 - [DONE] docs-sprint-board-and-context-refresh (Claude)
+
+- Created `src/docs/TASK_BACKLOG.md` — the sprint board Codex reads to pick tasks. Contains Sprint A (approvals UX), Sprint B (graph/permissions), Sprint C (invitations), Phase 4 queue, and manual migration steps for Nikola.
+- Updated `CLAUDE.md` — was stale (said "Phase 3 NO-GO"). Now reflects: Phase 4 active, Phase 3 GO, migrations 005-013, `isLocalOnlyProjectId` discrimination rule, `mapSupabaseProjectRow` graph/parties contract, sessionStorage→localStorage fallback pattern, Supabase 0-row update gotcha.
+- Marked approval-submissions-redesign [DONE] (grid layout fix landed in previous session — `DESKTOP_COLUMNS` applied to `SubmissionRow`).
+- Residual risk: migrations 012 and 013 still need manual apply by Nikola in Supabase SQL Editor before server-side role enforcement (B3) can proceed.
+
+## 2026-04-21 - [DONE] approval-submissions-redesign (Codex)
 
 - Changed: `src/components/approvals/ApprovalsWorkbench.tsx`, `src/components/approvals/SubmissionsView.tsx`, `src/components/approvals/ApprovalTimeline.tsx`, `src/components/approvals/ProjectApprovalsTab.tsx`, `src/components/ui/badge.tsx`, `src/utils/api/approvals-supabase.ts`.
 - Goal: split the `viewScope === "submitted"` route into a drawer-based audit trail view with semantic status chips, URL-hash deep linking, and a vertical approval timeline while leaving the approver queue branch intact.

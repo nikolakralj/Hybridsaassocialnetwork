@@ -1,5 +1,7 @@
 # CLAUDE.md — WorkGraph Project Context
 
+**Last updated: 2026-04-22**
+
 ## What This Is
 WorkGraph: graph-aware operational workflow for agencies/consulting firms.
 Core loop: **project → timesheet → approval → invoice**
@@ -11,80 +13,140 @@ Multi-tenant supply chain: Global Corp → Agency → DevShop → Contractor
 - **Database**: Supabase Postgres (Frankfurt, project `gcdtimasyknakdojiufl`)
 - **Auth**: Supabase Auth (email/password), wired via `src/contexts/AuthContext.tsx`
 
+## Current Phase: Phase 4 (Invoice Generation) — Phase 3 is GO ✅
+
+Phase 3 gate was closed on 2026-04-21. All blockers resolved:
+- ✅ Viewer dropdown type mismatch fixed (orgId-based detection)
+- ✅ Timesheet persistence across refresh (localStorage + Supabase fallback)
+- ✅ Approval queue wired to `approval_records` table
+- ✅ Self-approval guard implemented
+- ✅ Multi-layer approval chain progression working
+
+Phase 4 active work: see `src/docs/TASK_BACKLOG.md` for Sprint A/B/C tasks.
+
 ## Critical Architecture
-- **Graph topology IS the permission model** (ReBAC — Relationship-Based Access Control)
+
+### Graph = Permission Model (ReBAC)
 - `WorkGraphBuilder.tsx` writes to sessionStorage: `workgraph-viewer-meta:${projectId}`, `workgraph-name-dir:${projectId}`, `workgraph-approval-dir:${projectId}`
-- Other tabs (Timesheets, Approvals) read from sessionStorage — they depend on Graph tab being visited first
+- Other tabs (Timesheets, Approvals) read from sessionStorage — context: `WorkGraphContext.tsx` provides fallback hydration so Graph tab no longer must be visited first
 - `buildViewerOptions()` in `graph-visibility.ts` produces viewer types: `admin`, `client`, `agency`, `company`, `freelancer` — NOT `person`
 - People in the name directory have `orgId` set; orgs do not
 
-## Database State (as of March 25, 2026)
-- **Live tables**: `kv_store_f8b491be` (legacy), `wg_projects`, `wg_project_members`, `wg_project_invitations`, `wg_contracts`, `wg_timesheet_weeks`, `approval_records`
-- **Migration files exist but were run manually via SQL Editor** — do NOT use `supabase db push`
-- Edge functions NOT yet deployed (SUPABASE_ACCESS_TOKEN missing on dev machine)
+### Project ID Discrimination — CRITICAL
+- `isLocalOnlyProjectId(id)` → true only for `proj_local_*` prefix — these are browser-only
+- `proj_1776...` (TEXT IDs without `_local_`) are **cloud-backed** — go through Supabase direct paths
+- `isUuid(id)` → only UUID format (36-char hex) — these are also cloud-backed
+- **Never use `isUuid()` as the gate for "should this use Supabase?"** — it wrongly excludes TEXT IDs
+- The correct gate is: `!isLocalOnlyProjectId(id)` → use Supabase
 
-## Current Phase: Phase 3 (NO-GO for Phase 4)
-See `src/docs/ROADMAP.md` for full roadmap. Phase 3 = Production Auth + Invites + Incremental Supply Chains.
-Phase 3 gate blockers:
-1. Viewer dropdown in Timesheets broken (type mismatch: checks `person` but data has `company`/`freelancer`)
-2. Timesheet data lost on refresh (localStorage persistence added but needs verification)
-3. Approval queue empty (approval_records table needs 007 migration run in Supabase)
-4. Edge functions not deployed
+### Project Mapper — CRITICAL
+- `mapSupabaseProjectRow()` in `projects-api.ts` MUST include `graph` and `parties` fields
+- Dropping these causes empty graph canvas on every cloud project load
+- Always check the mapper when adding new DB columns
+
+### sessionStorage → localStorage Fallback
+- `readSessionJson()` in `approvals-supabase.ts` now falls back to `localStorage` for approval directory
+- This means approval directory survives browser refresh even when Graph tab has not been revisited
+
+### Approval Chain Routing
+- `buildApprovalPartyRoute()` resolves the multi-party approval path from sessionStorage/DB
+- `createNextApprovalLayerIfNeeded()` spawns the next `approval_records` row after each approval
+- Self-approval guard: rejects approval if `submitter_user_id === approvedBy`
+- Approver is resolved to `wg_project_members.user_id` UUID, stored in `currentApproverUserRef`
+
+## Database State (as of 2026-04-22)
+
+**Applied migrations** (all run manually via Supabase SQL Editor):
+- `005_workgraph_core.sql` — core tables: `wg_projects`, `wg_project_members`, etc.
+- `006` through `011` — various schema additions (approval snapshots, state triggers, etc.)
+- `010_phase4_invoice_schema.sql` — `wg_invoices`, `wg_invoice_templates` (run ✅)
+
+**Pending migrations** (Nikola must apply manually in Supabase SQL Editor):
+- `012_approval_submitter_id.sql` — adds `submitter_user_id` + self-approval trigger
+- `013_graph_node_id_and_invite_link.sql` — adds capability flags to `wg_project_members`
+
+**Rule:** Do NOT use `supabase db push`. Run migrations manually in SQL Editor.
+
+**Edge functions:** NOT yet deployed. `SUPABASE_ACCESS_TOKEN` missing on dev machine.
+All API calls use the direct Supabase JS client path (no edge function dependency for core flows).
 
 ## Multi-Agent Setup & Roles
 
+See `src/docs/OPERATIONS.md` for full roles, memory protocol, and coordination.
+
 ### Claude (this agent) — Lead Architect, Researcher, Code Reviewer
-- **Senior developer**: reviews and criticizes all Codex agent output before merge. Codex agents report progress to Claude for approval.
-- **Researcher**: brings PhD-level depth to product strategy — finds non-obvious market gaps, academic patterns (graph theory, mechanism design, ReBAC formalization), and revolutionary ideas that redefine what WorkGraph can become.
-- **Creative mind**: generates game-changing feature concepts that go beyond incremental improvement — thinks in terms of platform dynamics, network effects, and category creation.
-- **Development**: when necessary, implements complex fixes and architectural changes directly. Owns the hardest cross-cutting work (auth wiring, approval chain logic, data persistence architecture).
-- **Gate authority**: no Phase transition happens without Claude's honest GO/NO-GO assessment.
+- Reviews all Codex output before it ships. Reads actual diffs. Runs builds.
+- Implements hardest cross-cutting work: auth wiring, approval chain logic, data persistence
+- Gate authority: no phase transition without Claude's honest GO/NO-GO
 
 ### Codex (OpenAI) — Implementation Workforce
-- 6 specialized subagents via `.codex/agents/` — see `src/docs/CODEX_SUBAGENT_PLAYBOOK.md`
+- 6 specialized subagents via `.codex/agents/`
 - Agents: backend-developer, frontend-developer, postgres-pro, api-designer, security-auditor, reviewer
-- **Report to Claude**: progress updates, blockers, and completed work are reviewed by Claude before being declared done
-- Work must pass `npm run build` and update `AGENT_WORKLOG.md`
+- Picks tasks from `src/docs/TASK_BACKLOG.md` in order
+- Must: read CLAUDE.md + OPERATIONS.md + TASK_BACKLOG.md + AGENT_WORKLOG.md at start of every run
+- Must: run `npm run build` and update `AGENT_WORKLOG.md` before marking any task [REVIEW]
 
 ### Antigravity — UI/UX Polish
-- Wizard styling, component visual refinement
-- Works from Figma designs when available
-
-### Coordination
-- **Sync doc**: `src/docs/AGENT_WORKLOG.md` — all agents read/write this
-- **Conflict prevention**: disjoint file ownership per cycle (see CODEX_SUBAGENT_PLAYBOOK.md §4)
+- Works from Figma designs or Claude's written specs with exact Tailwind classes
+- Does NOT make UX decisions or touch business logic
+- Output reviewed by Claude before merge
 
 ## File Ownership Rules
-- Never edit files another agent is actively modifying in the same cycle
-- Always update `AGENT_WORKLOG.md` after making changes
-- Always run `npm run build` before declaring work done
+
+| File | Owner | Rule |
+|---|---|---|
+| `CLAUDE.md` | Claude | Never touched by Codex |
+| `src/docs/OPERATIONS.md` | Claude | Never touched by Codex |
+| `src/docs/ROADMAP.md` | Claude | Never touched by Codex |
+| `src/docs/TASK_BACKLOG.md` | Claude writes, Codex updates status | No structural edits by Codex |
+| `src/docs/AGENT_WORKLOG.md` | All agents append | Append only |
+| `src/utils/api/approvals-supabase.ts` | Claude (active fixes) | Codex: read only without explicit clearance |
+| `src/utils/api/timesheets-api.ts` | Claude (active fixes) | Same |
+| All other `src/` files | Codex | Claude reviews output |
+| `supabase/migrations/` | Codex drafts, Claude approves | Claude reviews before Nikola applies |
 
 ## Commands
 ```bash
 npm run dev          # Vite dev server
 npm run edge:serve   # Supabase edge functions locally
 npm run dev:all      # Both via concurrently
-npm run build        # Production build check
+npm run build        # Production build check — REQUIRED before any REVIEW/DONE
 ```
 
 ## Key Directories
 ```
-src/contexts/          # AuthContext, TimesheetDataContext, NotificationContext
-src/components/workgraph/  # WorkGraphBuilder, graph-visibility, auto-generate
+src/contexts/          # AuthContext, TimesheetDataContext, WorkGraphContext, NotificationContext
+src/components/workgraph/  # WorkGraphBuilder, graph-visibility, auto-generate, ProjectCreateWizard
 src/components/timesheets/ # ProjectTimesheetsView (main timesheet UI)
-src/components/approvals/  # ApprovalsWorkbench, ProjectApprovalsTab
-src/components/invoices/   # InvoicesWorkspace (Phase 4 scaffold)
+src/components/approvals/  # ApprovalsWorkbench, ProjectApprovalsTab, SubmissionsView, ApprovalTimeline
+src/components/invoices/   # InvoicesWorkspace (Phase 4 active)
 src/utils/graph/           # approval-fallback.ts, auto-generate.ts
-src/utils/api/             # timesheets-api.ts, timesheets-approval-hooks.ts
-supabase/functions/server/ # Edge function APIs (projects, timesheets, contracts)
-supabase/migrations/       # SQL migrations (005-007+)
-src/docs/                  # ROADMAP, ARCHITECTURE, AGENT_WORKLOG, etc.
+src/utils/api/             # timesheets-api.ts, timesheets-approval-hooks.ts, approvals-supabase.ts
+supabase/functions/server/ # Edge function APIs (projects, timesheets, contracts, invoices)
+supabase/migrations/       # SQL migrations (005-013)
+src/docs/                  # ROADMAP, AGENT_WORKLOG, TASK_BACKLOG, OPERATIONS, specs/
 ```
 
 ## Things That Bite You
-1. `PersonaContext` was killed but some residual references may exist — never re-introduce it
-2. Timesheet persist only saves UUID-format person IDs to API (`/^[0-9a-f-]{36}$/`). Graph node IDs like `person-nikola` silently skip. localStorage fallback covers this gap.
-3. The "YOU" badge in the graph shows for all orgs when viewing as Admin — this is correct, not a bug
-4. `cachedApprovalParties` was a module-level cache that caused staleness — it was removed, always read fresh from sessionStorage
-5. The name directory and approval directory in sessionStorage are only populated when the Graph tab is visited
-6. Demo seed data (`user-sarah`, `user-mike`, etc.) is stripped when authenticated — don't mix demo IDs with real data
+
+1. **PersonaContext is dead** — killed in Phase 2. Never re-introduce it. Some residual references may remain; ignore them.
+
+2. **Timesheet API only saves UUID-format person IDs** — Graph node IDs like `person-nikola` silently skip the API (`/^[0-9a-f-]{36}$/` check). localStorage fallback covers this gap.
+
+3. **"YOU" badge in graph shows for all orgs when viewing as Admin** — this is correct, not a bug.
+
+4. **`cachedApprovalParties` was removed** — it was a module-level cache that caused staleness. Always read fresh from sessionStorage.
+
+5. **Name directory + approval directory in sessionStorage** — populated when Graph tab is visited OR via `WorkGraphContext` hydration from DB fallback. Don't assume they're always set.
+
+6. **Demo seed data stripped when authenticated** — `user-sarah`, `user-mike`, etc. are stripped on login. Never mix demo IDs with real UUIDs.
+
+7. **`isLocalOnlyProjectId()` vs `isUuid()`** — `proj_*` TEXT IDs are cloud-backed. Never use `isUuid()` as the "use Supabase" gate. Use `!isLocalOnlyProjectId(id)`.
+
+8. **`mapSupabaseProjectRow()` must include `graph` and `parties`** — if these fields are dropped, the graph canvas is empty on load. Always verify the mapper when touching `projects-api.ts`.
+
+9. **Supabase `.update().eq()` returns `error: null` on 0-row matches** — it does NOT error when no rows were updated. Always use `.select('id')` and check `updatedRows.length > 0` to detect 0-row updates.
+
+10. **sessionStorage approval directory falls back to localStorage** — `readSessionJson()` in `approvals-supabase.ts` uses this fallback so approval chain survives refresh. Don't break this pattern.
+
+11. **Edge functions not deployed** — `SUPABASE_ACCESS_TOKEN` missing. All `getProject`, `createProject`, `listProjects` calls use the direct Supabase JS client path. Edge function routes exist but are unused in dev.
