@@ -13,7 +13,6 @@ const ROLE_PRIORITY: Record<string, number> = {
   Commenter: 3,
   Viewer: 4,
 };
-const LOCAL_APPROVALS_KEY = 'workgraph-local-approvals';
 
 interface NameDirEntry {
   name?: string;
@@ -142,39 +141,6 @@ function isUuid(value?: string | null): value is string {
   return Boolean(value && UUID_REGEX.test(value));
 }
 
-// A project is cloud-backed unless it was explicitly created local-only
-// (proj_local_* prefix). UUIDs and cloud-issued proj_* TEXT IDs both live in Supabase.
-function isLocalOnlyProjectId(projectId?: string | null): boolean {
-  return Boolean(projectId && projectId.startsWith('proj_local_'));
-}
-
-function readLocalApprovals(): ApprovalRecord[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(LOCAL_APPROVALS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed as ApprovalRecord[] : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalApprovals(records: ApprovalRecord[]): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(LOCAL_APPROVALS_KEY, JSON.stringify(records));
-  } catch {
-    // ignore quota/storage errors
-  }
-}
-
-function createLocalApprovalId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return `local-${crypto.randomUUID()}`;
-  }
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 function getApprovalSubmitterGraphNodeId(
   record: Pick<ApprovalRecord, 'subjectType' | 'subjectId' | 'subjectSnapshot'>
@@ -203,17 +169,6 @@ function matchesSubmitterFilters(
   return false;
 }
 
-function filterLocalApprovals(records: ApprovalRecord[], filters: ApprovalQueueFilters): ApprovalRecord[] {
-  return records.filter((record) => {
-    if (filters.projectId && record.projectId !== filters.projectId) return false;
-    if (filters.status && filters.status !== 'all' && record.status !== filters.status) return false;
-    if (filters.subjectType && filters.subjectType !== 'all' && record.subjectType !== filters.subjectType) return false;
-    if (filters.approverUserId && record.approverUserId !== filters.approverUserId) return false;
-    if (filters.approverNodeId && record.approverNodeId !== filters.approverNodeId) return false;
-    if (!matchesSubmitterFilters(record, filters)) return false;
-    return true;
-  });
-}
 
 function normalizeMatchValue(value?: string | null): string {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -356,8 +311,6 @@ async function loadApprovalParties(projectId: string): Promise<ApprovalDirParty[
     }
     return hydratedSession;
   }
-  if (isLocalOnlyProjectId(projectId)) return [];
-
   try {
     const { data, error } = await supabase
       .from('wg_projects')
@@ -704,9 +657,6 @@ export async function resolveGraphNodeToUserId(
   if (isUuid(nodeId)) return nodeId;
   if (!projectId || !nodeId) return fallbackUserId;
 
-  // wg_project_members.project_id is TEXT. Only skip DB lookup for true local-only projects.
-  if (isLocalOnlyProjectId(projectId)) return fallbackUserId;
-
   // Direct JOIN-style lookup is the highest-confidence path.
   // If we can resolve by scope or graph_node_id, return immediately and skip heuristic scoring.
   const { data: directMatch, error: directMatchError } = await supabase
@@ -952,42 +902,6 @@ export async function createApproval(
 
   const createPromise = (async () => {
     try {
-      if (isLocalOnlyProjectId(approval.projectId)) {
-        const localApprovals = readLocalApprovals();
-        const existingLocal = localApprovals.find((item) =>
-          item.projectId === approval.projectId &&
-          item.subjectType === approval.subjectType &&
-          item.subjectId === approval.subjectId &&
-          item.approvalLayer === approval.approvalLayer &&
-          item.status === 'pending' &&
-          (approval.approverNodeId ? item.approverNodeId === approval.approverNodeId : true)
-        );
-        if (existingLocal) return existingLocal;
-
-        const now = new Date().toISOString();
-        const localRecord: ApprovalRecord = {
-          id: createLocalApprovalId(),
-          projectId: approval.projectId,
-          subjectType: approval.subjectType,
-          subjectId: approval.subjectId,
-          subjectSnapshot: approval.subjectSnapshot || null,
-          submitterUserId: approval.submitterUserId,
-          approverUserId: approval.approverUserId || approval.approverNodeId || 'unknown',
-          approverName: approval.approverName,
-          approverNodeId: approval.approverNodeId,
-          approvalLayer: approval.approvalLayer,
-          status: approval.status || 'pending',
-          notes: approval.notes,
-          submittedAt: approval.submittedAt || now,
-          decidedAt: approval.decidedAt,
-          graphVersionId: approval.graphVersionId,
-          createdAt: now,
-          updatedAt: now,
-        };
-        writeLocalApprovals([...localApprovals, localRecord]);
-        return localRecord;
-      }
-
       const existing = await findExistingPendingApproval(approval);
       if (existing) return existing;
 
@@ -1085,25 +999,6 @@ export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
 ): Promise<ApprovalQueueItem[]> {
   try {
-    if (filters.projectId && isLocalOnlyProjectId(filters.projectId)) {
-      const localFiltered = filterLocalApprovals(readLocalApprovals(), filters);
-      return localFiltered.map((record) => ({
-        ...(record as ApprovalQueueItem),
-        projectName: record.projectName || record.projectId,
-        timesheetData: record.subjectType === 'timesheet'
-          ? {
-            weekStart: record.subjectSnapshot?.periodStart || '',
-            weekEnd: record.subjectSnapshot?.periodEnd || '',
-            totalHours: record.subjectSnapshot?.hours || 0,
-            submitterId: record.subjectSnapshot?.submitterId,
-            contractorName: record.subjectSnapshot?.submitterName || record.subjectSnapshot?.submitterId || 'Unknown contractor',
-            billableHours: record.subjectSnapshot?.billableHours,
-            daySummary: record.subjectSnapshot?.daySummary,
-          }
-          : undefined,
-      }));
-    }
-
     let query = supabase
       .from('approval_records')
       .select('*');
@@ -1163,20 +1058,15 @@ export async function getApprovalQueue(
     if (!data || data.length === 0) return [];
 
     const projectIds = [...new Set(data.map((entry) => entry.project_id))].filter(Boolean);
-    const cloudProjectIds = projectIds.filter((id) => !isLocalOnlyProjectId(id));
     let projectMap = new Map<string, string>();
 
-    if (cloudProjectIds.length > 0) {
+    if (projectIds.length > 0) {
       const { data: projectsData } = await supabase
         .from('wg_projects')
         .select('id, name')
-        .in('id', cloudProjectIds);
+        .in('id', projectIds);
       projectMap = new Map(projectsData?.map((project) => [project.id, project.name]) || []);
     }
-
-    projectIds.filter((id) => isLocalOnlyProjectId(id)).forEach((id) => {
-      projectMap.set(id, id);
-    });
 
     const timesheetIds = data
       .filter((entry) => entry.subject_type === 'timesheet')
@@ -1400,11 +1290,6 @@ export async function getLatestPendingApproval(
   subjectId: string
 ): Promise<ApprovalRecord | null> {
   try {
-    const localPending = readLocalApprovals()
-      .filter((record) => record.subjectType === subjectType && record.subjectId === subjectId && record.status === 'pending')
-      .sort((a, b) => (a.approvalLayer - b.approvalLayer) || b.createdAt.localeCompare(a.createdAt))[0];
-    if (localPending) return localPending;
-
     const { data, error } = await supabase
       .from('approval_records')
       .select('*')
@@ -1432,33 +1317,7 @@ export async function approveItem(
   data?: { approvedBy?: string; notes?: string }
 ): Promise<ApprovalRecord & { spawnedNextLayer: boolean }> {
   try {
-    if (approvalId.startsWith('local-')) {
-      const localApprovals = readLocalApprovals();
-      const idx = localApprovals.findIndex((record) => record.id === approvalId);
-      if (idx < 0) throw new Error(`Approval ${approvalId} was not found`);
-      const existing = localApprovals[idx];
-      // Self-approval guard (local store)
-      if (
-        data?.approvedBy &&
-        existing.submitterUserId &&
-        data.approvedBy === existing.submitterUserId
-      ) {
-        throw new Error('You cannot approve your own submission.');
-      }
-      const now = new Date().toISOString();
-      const updated: ApprovalRecord = {
-        ...existing,
-        status: 'approved',
-        decidedAt: now,
-        notes: data?.notes || existing.notes,
-        updatedAt: now,
-      };
-      localApprovals[idx] = updated;
-      writeLocalApprovals(localApprovals);
-      return { ...updated, spawnedNextLayer: false };
-    }
-
-    // Self-approval guard (Supabase): reject if the acting user is the submitter.
+    // Self-approval guard: reject if the acting user is the submitter.
     if (data?.approvedBy) {
       const { data: existingRecord, error: fetchErr } = await supabase
         .from('approval_records')
@@ -1508,23 +1367,6 @@ export async function rejectItem(
   data?: { rejectedBy?: string; reason?: string }
 ): Promise<ApprovalRecord> {
   try {
-    if (approvalId.startsWith('local-')) {
-      const localApprovals = readLocalApprovals();
-      const idx = localApprovals.findIndex((record) => record.id === approvalId);
-      if (idx < 0) throw new Error(`Approval ${approvalId} was not found`);
-      const now = new Date().toISOString();
-      const updated: ApprovalRecord = {
-        ...localApprovals[idx],
-        status: 'rejected',
-        decidedAt: now,
-        notes: data?.reason || localApprovals[idx].notes,
-        updatedAt: now,
-      };
-      localApprovals[idx] = updated;
-      writeLocalApprovals(localApprovals);
-      return updated;
-    }
-
     const { data: result, error } = await supabase
       .from('approval_records')
       .update({
@@ -1583,27 +1425,6 @@ export async function bulkApprove(data: {
   notes?: string;
 }): Promise<ApprovalRecord[]> {
   try {
-    if (data.itemIds.every((id) => id.startsWith('local-'))) {
-      const localApprovals = readLocalApprovals();
-      const idSet = new Set(data.itemIds);
-      const now = new Date().toISOString();
-      const updatedRecords: ApprovalRecord[] = [];
-      const next = localApprovals.map((record) => {
-        if (!idSet.has(record.id)) return record;
-        const updated: ApprovalRecord = {
-          ...record,
-          status: 'approved',
-          decidedAt: now,
-          notes: data.notes || record.notes,
-          updatedAt: now,
-        };
-        updatedRecords.push(updated);
-        return updated;
-      });
-      writeLocalApprovals(next);
-      return updatedRecords;
-    }
-
     const { data: result, error } = await supabase
       .from('approval_records')
       .update({
@@ -1679,11 +1500,6 @@ export async function getApprovalHistory(
 
 export async function getPendingCount(approverUserId: string): Promise<number> {
   try {
-    const localPending = readLocalApprovals().filter((record) =>
-      record.approverUserId === approverUserId && record.status === 'pending'
-    ).length;
-    if (localPending > 0) return localPending;
-
     const { count, error } = await supabase
       .from('approval_records')
       .select('*', { count: 'exact', head: true })

@@ -82,7 +82,7 @@ export async function saveTimesheetWeek(
         },
         updated_at: now,
       };
-      if (weekData.projectId && !weekData.projectId.startsWith('proj_local_')) {
+      if (weekData.projectId) {
         row.project_id = weekData.projectId;
       }
       if (weekData.status === 'submitted') row.submitted_at = now;
@@ -156,7 +156,7 @@ export async function updateTimesheetStatus(
         created_at: now,
         updated_at: now,
       };
-      if (options?.projectId && !options.projectId.startsWith('proj_local_')) {
+      if (options?.projectId) {
         upsertRow.project_id = options.projectId;
       }
       const { error: upsertError } = await supabase

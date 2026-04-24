@@ -291,9 +291,8 @@ function writeApprovalParties(projectId: string, parties: ApprovalParty[]): void
 async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
   const sessionParties = readApprovalParties(projectId);
   if (sessionParties.length > 0) return sessionParties;
-  if (isLocalProjectId(projectId)) return [];
 
-  // DB fallback for UUID-format project IDs
+  // DB fallback
   try {
     const data = await getProject(projectId, accessToken);
     const projectParties = data?.project?.parties;
@@ -616,8 +615,6 @@ const TimesheetStoreContext = createContext<TimesheetStoreAPI | null>(null);
 const LS_KEY = 'workgraph-timesheet-weeks';
 const isDemoPersonId = (personId: string) => personId.startsWith('user-');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Local projects (proj_ prefix) don't exist in the DB — they must be handled locally. */
-const isLocalProjectId = (projectId: string) => !projectId || projectId.startsWith('proj_local_');
 
 function loadFromLocalStorage(): StoredWeek[] | null {
   try {
@@ -754,11 +751,6 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       setProjectStartDate(null);
       return;
     }
-    if (isLocalProjectId(projectId)) {
-      setProjectStartDate(null);
-      return;
-    }
-
     const cached = typeof sessionStorage !== 'undefined'
       ? normalizeIsoDate(sessionStorage.getItem('currentProjectStartDate'))
       : null;
@@ -790,7 +782,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   const reloadWeeksFromApi = useCallback(async () => {
     if (!user?.id || !accessToken) return;
     const projectId = activeProjectId();
-    if (!projectId || isLocalProjectId(projectId)) return;
+    if (!projectId) return;
     try {
       const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
       if (apiWeeks && apiWeeks.length > 0) {
@@ -879,9 +871,6 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     const loadFromApi = async () => {
       try {
         const projectId = activeProjectId();
-        if (projectId && isLocalProjectId(projectId)) {
-          return;
-        }
         setIsLoading(true);
         console.log('[TimesheetStore] Loading timesheets from API for user:', user.id);
         const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
@@ -921,8 +910,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
   // --- Debounced API persist ---
   const persistWeek = useCallback((personId: string, weekStart: string, weekData: StoredWeek) => {
-    // Skip demo identities and local-only projects (no DB row exists for proj_ IDs).
-    if (!accessToken || isDemoPersonId(personId) || isLocalProjectId(activeProjectId())) return;
+    if (!accessToken || isDemoPersonId(personId)) return;
 
     const key = `${personId}:${weekStart}`;
     // Cancel any pending sync for this week
@@ -958,7 +946,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     status: WeekStatus,
     meta?: { note?: string; by?: string }
   ) => {
-    if (!accessToken || isDemoPersonId(personId) || isLocalProjectId(activeProjectId())) return;
+    if (!accessToken || isDemoPersonId(personId)) return;
 
     try {
       await updateTimesheetStatus(weekStart, status, {
@@ -1121,7 +1109,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     }
 
     const projectId = activeProjectId();
-    const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId) && !isLocalProjectId(projectId));
+    const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId));
     if (!isRemoteWorkflow) {
       if (status === 'submitted') {
         const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
