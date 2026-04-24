@@ -1,7 +1,8 @@
 // Phase 5 Day 7: Email Sending Service
 // Sends approval notification emails with action tokens
 
-import { generateApprovalToken } from '../tokens/approval-tokens';
+import type { ApprovalTokenPayload } from '../tokens/approval-tokens';
+import { projectId, publicAnonKey } from '../supabase/info';
 import {
   approvalRequestTemplate,
   approvalCompletedTemplate,
@@ -29,6 +30,9 @@ export interface ApprovalItem {
   urgency?: 'low' | 'medium' | 'high';
 }
 
+const APPROVAL_TOKENS_BASE =
+  `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/approval-tokens`;
+
 /**
  * Get base URL for generating action links
  */
@@ -38,7 +42,57 @@ function getBaseUrl(): string {
     return window.location.origin;
   }
   // Fallback for SSR or testing
-  return 'http://localhost:3000';
+  return 'http://localhost:5173';
+}
+
+function createApprovalTokenPayload(
+  approvalItemId: string,
+  approverId: string,
+  action: ApprovalTokenPayload['action'],
+  expiresInHours: number
+): ApprovalTokenPayload {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000);
+
+  return {
+    id: crypto.randomUUID(),
+    approvalItemId,
+    approverId,
+    action,
+    expiresAt: expiresAt.toISOString(),
+    issuedAt: now.toISOString(),
+  };
+}
+
+async function requestSignedApprovalToken(
+  approvalItemId: string,
+  approverId: string,
+  action: ApprovalTokenPayload['action'],
+  expiresInHours: number
+): Promise<string> {
+  const payload = createApprovalTokenPayload(
+    approvalItemId,
+    approverId,
+    action,
+    expiresInHours
+  );
+
+  const response = await fetch(`${APPROVAL_TOKENS_BASE}/sign`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${publicAnonKey}`,
+    },
+    body: JSON.stringify({ payload }),
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data?.token) {
+    throw new Error(data?.error || 'Failed to generate approval token');
+  }
+
+  return data.token;
 }
 
 /**
@@ -50,21 +104,21 @@ export async function sendApprovalRequestEmail(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Generate tokens for email actions
-    const approveToken = await generateApprovalToken(
+    const approveToken = await requestSignedApprovalToken(
       approvalItem.id,
       approver.id,
       'approve',
       72 // 72 hours expiration
     );
     
-    const rejectToken = await generateApprovalToken(
+    const rejectToken = await requestSignedApprovalToken(
       approvalItem.id,
       approver.id,
       'reject',
       72
     );
     
-    const viewToken = await generateApprovalToken(
+    const viewToken = await requestSignedApprovalToken(
       approvalItem.id,
       approver.id,
       'view',
@@ -150,7 +204,7 @@ export async function sendApprovalCompletedEmail(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Generate view token
-    const viewToken = await generateApprovalToken(
+    const viewToken = await requestSignedApprovalToken(
       approvalItem.id,
       submitter.id,
       'view',

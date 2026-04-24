@@ -159,9 +159,9 @@ export function registerEmailRoutes(app: Hono) {
       const appUrl = baseUrl || Deno.env.get('PUBLIC_URL') || 'http://localhost:3000';
       console.log('[EMAIL] Using base URL:', appUrl);
       
-      const approveToken = `token-${Date.now()}-approve-${Math.random().toString(36).substring(7)}`;
-      const rejectToken = `token-${Date.now()}-reject-${Math.random().toString(36).substring(7)}`;
-      const viewToken = `token-${Date.now()}-view-${Math.random().toString(36).substring(7)}`;
+      const approveToken = `token-approve-${crypto.randomUUID()}`;
+      const rejectToken = `token-reject-${crypto.randomUUID()}`;
+      const viewToken = `token-view-${crypto.randomUUID()}`;
 
       // ✅ Use hash-based routing (works in ALL hosting environments including Figma preview)
       const approveUrl = `${appUrl}/#/approve?token=${approveToken}`;

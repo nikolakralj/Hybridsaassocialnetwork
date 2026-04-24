@@ -500,3 +500,27 @@ pm run build passed (vite build, 3300 modules).
 1. Open a `proj_...` project and confirm the console no longer floods with `getProject()` / `listTimesheets()` CORS or 401 errors.
 2. Switch from a project with a 2025 month history into a project that starts in `2026-04` and confirm the graph month picker resets with the project instead of staying stuck on the old month.
 3. Change the viewer in the workspace header and confirm the control stays visible across tab switches without duplicating labels.
+
+## 2026-04-24 - [REVIEW] S2/D1/D2 security + dead-code pass (Codex)
+
+- Workspace: all implementation and verification was done from `C:\Users\nikol\Projects\HybridSocialApp-run`. The broken Google Drive checkout is no longer used for project execution.
+- Environment: installed Node.js LTS via winget (`node v24.15.0`, `npm 11.12.1`) and set PowerShell CurrentUser execution policy to `RemoteSigned` so npm can run.
+- S2 token signing:
+  - Reduced `src/utils/tokens/approval-tokens.ts` to shared interfaces only.
+  - Added `supabase/functions/server/approval-tokens-api.tsx` for server-side HMAC signing and verification using `Deno.env.get("APPROVAL_TOKEN_SECRET")`.
+  - Registered approval token routes in `supabase/functions/server/index.tsx`.
+  - Updated `src/utils/notifications/email-sender.ts` so the browser only creates an opaque `crypto.randomUUID()` payload id and asks the edge function for a signed token.
+  - Replaced older approval email token id generation in `supabase/functions/server/email.tsx`, `approvals-kv.tsx`, and `approvals.tsx` from `Math.random()` to `crypto.randomUUID()`.
+- D1 dead timesheet views:
+  - Deleted the listed unused timesheet view files and the `src/components/timesheets/approval/` and `approval-v2/` folders after import grep showed references were internal to the deletion set.
+  - Preserved `src/components/timesheets/ProjectTimesheetsView.tsx`.
+- D2 dead approval APIs:
+  - Deleted `src/utils/api/timesheets-approval.ts` and `src/utils/api/timesheets-approval-hooks.ts`; grep showed only the hook imported the old API file.
+- Verification:
+  - Static scan found no client-side `SECRET_KEY`, hardcoded approval token secret, token signing, or token verification left in `src/`.
+  - `npm run build` passed after S2, after D1, and after D2 from the C-drive workspace. Existing circular chunk warnings remain.
+- Backlog note: `src/docs/TASK_BACKLOG.md` in this checkout has no S2/D1/D2 entries, so no task status line was changed there.
+- Residual risks:
+  - `APPROVAL_TOKEN_SECRET` must be configured in Supabase before deploying the new edge route.
+  - The sign endpoint removes the client secret, but authorization for who may mint tokens still belongs in the broader server-side role enforcement work.
+  - `package-lock.json` was refreshed by npm while repairing the C-drive toolchain/lockfile state.

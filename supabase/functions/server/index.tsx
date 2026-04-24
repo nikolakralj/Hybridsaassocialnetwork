@@ -5,6 +5,7 @@ import * as kv from "./kv_store.tsx";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { registerEmailRoutes } from "./email.tsx"; // Phase 5 Day 8: Email sending
 import { registerApprovalKVRoutes } from "./approvals-kv.tsx"; // Phase 5 Days 9-10: KV-based approval
+import { registerApprovalTokenRoutes } from "./approval-tokens-api.tsx"; // Security: server-side token signing
 import { timesheetApprovalsRouter } from "./timesheet-approvals.ts"; // Phase 5B: Graph-based approvals
 import { graphVersionsRouter } from "./graph-versions.ts"; // Phase 5B: Graph versions API
 import { graphDynamicNodesRouter } from "./graph-dynamic-nodes.ts"; // Dynamic graph nodes
@@ -40,6 +41,7 @@ app.route("/", timesheetsRouter); // Phase 1: Timesheets
 app.route("/make-server-f8b491be/invitations", invitationsRouter); // Phase 5: Project invitations
 registerEmailRoutes(app); // Phase 5 Day 8: Email sending
 registerApprovalKVRoutes(app); // Phase 5 Days 9-10: KV-based approval
+registerApprovalTokenRoutes(app); // Security: approval token signing/verification
 app.route("/make-server-f8b491be/timesheet-approvals", timesheetApprovalsRouter); // Phase 5B: Graph approvals
 app.route("/make-server-f8b491be/graph-versions", graphVersionsRouter); // Phase 5B: Graph versions
 app.route("/make-server-f8b491be/graph/dynamic-nodes", graphDynamicNodesRouter); // Dynamic nodes
