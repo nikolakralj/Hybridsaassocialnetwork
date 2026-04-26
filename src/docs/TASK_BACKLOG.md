@@ -1,6 +1,6 @@
 # WorkGraph Task Backlog
 
-**Version:** 2.0 · **Date:** 2026-04-24 · **Owner:** Claude (writes) / Codex (status updates)
+**Version:** 2.1 · **Date:** 2026-04-26 · **Owner:** Claude (writes) / Codex (status updates)
 
 Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]`
 
@@ -10,118 +10,57 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 
 | # | Migration | Status |
 |---|---|---|
-| M1 | `012_approval_submitter_id.sql` | `[READY]` |
-| M2 | `013_graph_node_id_and_invite_link.sql` | `[READY]` |
-| **M3** | **`014_approval_records_rls_fix.sql`** — **CRITICAL SECURITY. Apply first.** | **`[READY]`** |
+| M1 | `012_approval_submitter_id.sql` | `[DONE]` |
+| M2 | `013_graph_node_id_and_invite_link.sql` — blocks B3 | `[READY]` |
+| M3 | `014_approval_records_rls_fix.sql` — applied 2026-04-24 | `[DONE]` |
 
 ---
 
-## Tier 0 — Security (apply before any feature work)
+## Tier 0 — Security ✅ COMPLETE
 
-### S1 · `approval-rls-fix` · `[READY]` ← APPLY M3 FIRST
+### S1 · `approval-rls-fix` · `[DONE]` — 2026-04-24
 
-**Assignee:** Nikola (manual SQL apply)
-**Goal:** Migration 014 replaces the wide-open `USING (true)` policies on `approval_records`
-with project-scoped policies. Until M3 is applied, any authenticated user can read/modify
-approval records across all tenants.
-
-**Acceptance criteria:**
-- [ ] M3 applied in Supabase SQL Editor
-- [ ] Run verify query from migration comment — confirms only 3 named policies remain
-- [ ] No regression: submitter can still create and view own approvals; approver can still update
+M3 applied. Verified: `approval_records_select`, `approval_records_insert`, `approval_records_update`
+all present with project-scoped USING clauses. `approval_records_block_self_approval` trigger live.
 
 ---
 
-### S2 · `move-approval-token-signing-server-side` · `[READY]`
+### S2 · `move-approval-token-signing-server-side` · `[DONE]` — 2026-04-24
 
-**Assignee:** Codex `backend-developer`
-**Files:**
-- `src/utils/tokens/approval-tokens.ts` (replace client signing with lookup-token pattern)
-- `supabase/functions/server/invitations-api.tsx` or new `approval-email-api.tsx`
+- `SECRET_KEY` removed from `approval-tokens.ts` (type definitions only)
+- `supabase/functions/server/approval-tokens-api.tsx` created: HMAC-SHA256 signing + timing-safe verify
+- `APPROVAL_TOKEN_SECRET` read from `Deno.env.get()`; `crypto.randomUUID()` for IDs
+- Wired into `index.tsx` as `registerApprovalTokenRoutes(app)`
+- `npm run build` passes
 
-**Problem:** `approval-tokens.ts` has a hardcoded HMAC secret + `Math.random()` UUIDs in the
-client bundle. Anyone can extract it and forge email approval tokens.
-
-**Fix:**
-- Remove all signing from client. Client only generates a random opaque lookup ID.
-- Backend (edge function) signs and verifies tokens using `APPROVAL_TOKEN_SECRET` env var.
-- Use `crypto.getRandomValues()` not `Math.random()` for ID generation.
-
-**Acceptance criteria:**
-- [ ] `SECRET_KEY` constant no longer exists in `approval-tokens.ts`
-- [ ] Signing + verification lives in a single edge function handler
-- [ ] `APPROVAL_TOKEN_SECRET` read from Deno `Deno.env.get('APPROVAL_TOKEN_SECRET')`
-- [ ] `npm run build` passes
+⚠️ **Nikola action required:** Set `APPROVAL_TOKEN_SECRET` in Supabase Dashboard → Settings → Edge Functions → Secrets before deploying.
 
 ---
 
-## Tier 1 — Dead Code Purge (do before any new features)
+## Tier 1 — Dead Code Purge ✅ COMPLETE
 
-### D1 · `delete-dead-timesheet-views` · `[READY]`
+### D1 · `delete-dead-timesheet-views` · `[DONE]` — 2026-04-24
 
-**Assignee:** Codex `reviewer`
-**Goal:** Delete every timesheet component that has zero imports outside its own folder.
-Confirmed dead (zero live imports):
-- `src/components/timesheets/TimesheetCalendarView.tsx`
-- `src/components/timesheets/TimesheetManagerCalendarView.tsx`
-- `src/components/timesheets/MultiPersonTimesheetCalendar.tsx`
-- `src/components/timesheets/EnhancedTimesheetCalendar.tsx`
-- `src/components/timesheets/IndividualTimesheet.tsx`
-- `src/components/timesheets/TimesheetApprovalView.tsx`
-- `src/components/timesheets/UnifiedTimesheetView.tsx`
-- `src/components/timesheets/TimesheetModule.tsx`
-- `src/components/timesheets/approval/` (entire folder — 12 files, zero external imports)
-- `src/components/timesheets/approval-v2/` (entire folder — zero external imports)
-
-**Instructions:** Grep each file for external imports first to confirm zero hits, then delete.
-Do not delete `src/components/timesheets/ProjectTimesheetsView.tsx` — that is live.
-
-**Acceptance criteria:**
-- [ ] All listed files/folders deleted
-- [ ] `npm run build` passes (confirms no live code referenced them)
-- [ ] AGENT_WORKLOG updated with final deleted file list
+All listed files/folders deleted. `ProjectTimesheetsView.tsx` preserved. Build passes.
 
 ---
 
-### D2 · `delete-dead-approval-components` · `[READY]`
+### D2 · `delete-dead-approval-components` · `[DONE]` — 2026-04-24
 
-**Assignee:** Codex `reviewer`
-**Goal:** Delete dead approval API files. Confirmed dead (zero live imports from app shell):
-- `src/utils/api/timesheets-approval.ts` — confirm no import except `approval-v2/` (also dead)
-- `src/utils/api/timesheets-approval-hooks.ts` — confirm same
-
-**Instruct:** Grep before deleting. If found imported anywhere live, STOP and report to Claude.
-
-**Acceptance criteria:**
-- [ ] Files deleted or confirmed still needed (with evidence)
-- [ ] `npm run build` passes
+`timesheets-approval.ts` and `timesheets-approval-hooks.ts` deleted. Build passes.
 
 ---
 
-### D3 · `kill-local-only-project-mode` · `[READY]`
+### D3 · `kill-local-only-project-mode` · `[DONE]` — 2026-04-26
 
-**Assignee:** Codex `backend-developer` + `frontend-developer` (coordinate)
-**Problem:** `proj_local_*` projects live only in the browser. This doubles every write path
-(timesheets, approvals, etc. all branch on `isLocalOnlyProjectId()`). In a real B2B SaaS this
-mode has no place — it's a demo artifact.
-
-**Fix:**
-- Remove `isLocalOnlyProjectId()` branches from `timesheets-api.ts`, `approvals-supabase.ts`,
-  `TimesheetDataContext.tsx`, `projects-api.ts`.
-- Projects must either be saved to Supabase (real) or not exist. No local-only mode.
-- If the user is offline/unauthenticated, show an error, don't silently persist locally.
-
-**Files:**
-- `src/utils/api/timesheets-api.ts`
-- `src/utils/api/approvals-supabase.ts` (Claude-owned — Codex may edit D3 scope with clearance)
-- `src/utils/api/projects-api.ts`
-- `src/contexts/TimesheetDataContext.tsx`
-
-**Acceptance criteria:**
-- [ ] `isLocalOnlyProjectId` is deleted everywhere
-- [ ] `LOCAL_APPROVALS_KEY`, `readLocalApprovals`, `writeLocalApprovals` deleted
-- [ ] `workgraph-local-approvals` localStorage key no longer used
-- [ ] `npm run build` passes
+- `isLocalOnlyProjectId`, `isLocalProjectId`, `LOCAL_APPROVALS_KEY`, `readLocalApprovals`,
+  `writeLocalApprovals`, `createLocalApprovalId`, `filterLocalApprovals` all deleted
+- Local-storage branches removed from `createApproval`, `getApprovalQueue`,
+  `getLatestPendingApproval`, `approveItem`, `rejectItem`, `bulkApprove`, `getPendingCount`
+- `proj_local_` guards removed from `timesheets-api.ts`
+- `isLocalProjectId` and all call sites removed from `TimesheetDataContext.tsx`
+- Zero references to `proj_local_` remain in `src/`
+- `npm run build` passes
 
 ---
 
@@ -253,7 +192,7 @@ status chip consistency; empty-state message.
 
 ## Phase 4 Queue — Invoice Generation
 
-Held until Tier 0–1 (security + dead code) are resolved.
+Tier 0–1 complete. Phase 4 is now unblocked but deprioritized until Sprint A–C are done.
 
 | Task | Description | Owner | Status |
 |---|---|---|---|
@@ -270,7 +209,11 @@ Spec: `src/docs/specs/PHASE4_INVOICE_SPEC.md`
 
 | Task | Completed |
 |---|---|
-| approval-rls-fix migration written (014) | 2026-04-24 |
+| S1 approval-rls-fix (M3/014 applied + verified) | 2026-04-24 |
+| S2 move-approval-token-signing-server-side | 2026-04-24 |
+| D1 delete-dead-timesheet-views (30 files, ~13k LOC) | 2026-04-24 |
+| D2 delete-dead-approval-components | 2026-04-24 |
+| D3 kill-local-only-project-mode | 2026-04-26 |
 | approval-submissions-redesign | 2026-04-22 |
 | project-workspace-role-gating | 2026-04-22 |
 | atomic-project-create-path | 2026-04-22 |
