@@ -13,6 +13,18 @@
 - **Migration 013** pending apply (Nikola) — blocks B3.
 - **Edge functions** not deployed (`SUPABASE_ACCESS_TOKEN` missing).
 
+## 2026-05-30 — [DONE] Supabase CLI setup + migration audit (Claude)
+
+- Supabase CLI v2.102.0 installed globally via `npm install -g supabase`.
+- Logged in via `supabase login --token` and linked project `gcdtimasyknakdojiufl`.
+- `SUPABASE_ACCESS_TOKEN` saved to `~/.claude/settings.json` env (resolves Blocker #2).
+- `supabase migration list` run: all local migrations (001–015) show in Local column, Remote column empty (expected — all were applied via SQL Editor, not CLI).
+- **Migration 015 discovered** (`015_purge_dead_legacy_tables.sql`): drops legacy pre-`wg_` tables and views. Verified safe — only `workgraph-supabase.ts`, `projects-supabase.ts`, `timesheets.ts`, `supabase-setup-check.ts` reference those tables and none are imported anywhere in live code. Added M4 to TASK_BACKLOG as `[READY]`.
+- **Supabase Advisor findings** (from dashboard, Severity 2): Auth RLS Initialization Plan warnings on `wg_projects`, `wg_invoice_templates`, `wg_invoices`, `wg_project_members`, `wg_project_invitations`, `wg_contracts`, `wg_timesheet_weeks`, `approval_records` (use `(select auth.uid())` in RLS to cache per query); Duplicate Index on `kv_store_f8b491be`; Function Search Path Mutable on `approval_records_set_updated_at` and `wg_set_updated_at`. Not blocking but worth a future cleanup pass.
+- `SUPABASE_ACCESS_TOKEN` still needs to be set in Supabase Dashboard → Settings → Edge Functions → Secrets to unblock edge function deployment (Blocker #2 in config only; not yet in Supabase secrets).
+
+---
+
 ## Current Blockers
 
 | # | Blocker | Owner | Status |
@@ -96,3 +108,14 @@
 ## 2026-04-20 — [DONE] task5-invite-email (Codex)
 
 - `invitations-api.tsx`, `ProjectInviteMemberDialog.tsx`: invite router with create/lookup/accept routes, email send or log.
+
+## 2026-05-30 — [DONE] dashboard-launchpad-onboarding (Codex)
+
+- **Files modified**: [DashboardPage.tsx](file:///c:/Users/nikol/Projects/HybridSocialApp-run/src/components/dashboard/DashboardPage.tsx)
+- **Logic added**:
+  - Integrated the "WorkGraph Launch Pad" onboarding checklist banner into the main [DashboardPage](file:///c:/Users/nikol/Projects/HybridSocialApp-run/src/components/dashboard/DashboardPage.tsx) layout.
+  - Dynamically switches checklist steps depending on user role/persona (`agency`, `company`, or `freelancer`) matching our Bullhorn-inspired onboarding proposal.
+  - Progress checks are reactive to database stats (e.g. automatically checks off items when projects/contracts/earnings exist).
+  - Saved completion states and dismiss settings in `localStorage` per `userId` to ensure seamless persistence.
+  - Fixed a React Rules of Hooks violation by moving all `useState` declarations above the loading/error early return statements.
+- **Residual Risk**: None.
