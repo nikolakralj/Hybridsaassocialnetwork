@@ -388,7 +388,9 @@ projectsRouter.delete("/make-server-f8b491be/api/projects/:projectId", async (c)
       .single();
 
     if (pe || !projectRow) return c.json({ error: "Project not found" }, 404);
-    if (projectRow.owner_id !== user.id) return c.json({ error: "Only the project owner can delete" }, 403);
+
+    const role = await getCallerRole(projectRow.owner_id, projectId, user.id);
+    if (role !== "Owner") return c.json({ error: "Forbidden" }, 403);
 
     // ON DELETE CASCADE handles wg_project_members and wg_project_invitations
     const { error: de } = await db().from("wg_projects").delete().eq("id", projectId);

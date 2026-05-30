@@ -130,6 +130,16 @@
 
 - `invitations-api.tsx`, `ProjectInviteMemberDialog.tsx`: invite router with create/lookup/accept routes, email send or log.
 
+## 2026-05-30 — [DONE] B3 server-side-role-enforcement (Codex)
+
+- **Files modified**: `supabase/functions/server/projects-api.tsx`, `src/components/ui/dialog.tsx`
+- **Changes**:
+  - `DELETE /projects/:id`: replaced direct `owner_id === user.id` check with `getCallerRole()` helper and returns `{"error":"Forbidden"}` (standardised) instead of custom message. Callers with no `wg_project_members` row are now also covered since `getCallerRole` returns null for non-owners not in the table.
+  - `PUT /projects/:id`: guard was already correct (`role !== "Owner" && role !== "Editor"` → 403). No functional change needed; confirmed in code review.
+  - `dialog.tsx`: fixed a pre-existing extra `(` on line 36 (`>((({` → `>(({`) that was causing the Vite build to fail. Not related to B3.
+- **How the guard works**: `getCallerRole` queries `wg_project_members` with the service-role client (bypasses RLS). Returns `"Owner"` for the project's `owner_id`, otherwise returns the member's role or `null` if no accepted membership row exists. No row → `null` → 403.
+- **Residual risks**: Edge functions are not yet deployed to Supabase (blocked on deploy step). These guards only take effect once `supabase functions deploy server` is run.
+
 ## 2026-05-30 — [DONE] dashboard-launchpad-onboarding (Codex)
 
 - **Files modified**: [DashboardPage.tsx](file:///c:/Users/nikol/Projects/HybridSocialApp-run/src/components/dashboard/DashboardPage.tsx)
