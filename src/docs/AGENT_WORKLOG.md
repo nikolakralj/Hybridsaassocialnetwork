@@ -27,12 +27,23 @@
 
 ---
 
+## 2026-05-30 — [DONE] Migration 013 verified applied (Claude)
+
+- Attempted to run `013_graph_node_id_and_invite_link.sql` in SQL Editor — syntax error indicated re-run of already-applied migration.
+- Queried live DB via Supabase MCP. Confirmed all columns present: `graph_node_id`, `can_approve`, `can_view_rates`, `can_edit_timesheets`, `visible_to_chain`, `scope`, `accepted_at`, `invitation_id`.
+- Confirmed FK `wg_project_members_invitation_id_fkey` exists.
+- Confirmed RLS policy `wg_members_scope_contributor` present with correct definition.
+- Migration 013 was fully applied in an earlier untracked session. M2 marked `[DONE]`, B3 unblocked → status changed to `[READY]`.
+
+---
+
 ## Current Blockers
 
 | # | Blocker | Owner | Status |
 |---|---|---|---|
-| 1 | Migration 013 not applied — blocks B3 | Nikola | Pending |
-| 2 | Edge functions not deployed | Nikola/Claude | Ready (token configured) |
+| — | ~~All prior blockers resolved~~ | — | — |
+
+**No active blockers.** All migrations applied. Secrets configured. CLI linked. B3 ready to implement.
 
 ---
 

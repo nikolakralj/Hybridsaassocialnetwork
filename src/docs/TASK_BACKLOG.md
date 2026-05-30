@@ -11,7 +11,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | # | Migration | Status |
 |---|---|---|
 | M1 | `012_approval_submitter_id.sql` | `[DONE]` |
-| M2 | `013_graph_node_id_and_invite_link.sql` — blocks B3 | `[READY]` |
+| M2 | `013_graph_node_id_and_invite_link.sql` — verified applied 2026-05-30 | `[DONE]` |
 | M3 | `014_approval_records_rls_fix.sql` — applied 2026-04-24 | `[DONE]` |
 | M4 | `015_purge_dead_legacy_tables.sql` — drops orphaned pre-wg_ tables, safe to apply | `[READY]` |
 
@@ -155,9 +155,9 @@ status chip consistency; empty-state message.
 
 ---
 
-### B3 · `server-side-role-enforcement` · `[BLOCKED]`
+### B3 · `server-side-role-enforcement` · `[READY]`
 
-**Blocked by:** M2 (migration 013 must be applied first)
+**Blocked by:** ~~M2~~ — unblocked 2026-05-30, 013 confirmed applied
 **Assignee:** Codex `backend-developer`
 **Files:** `supabase/functions/server/projects-api.tsx`
 
