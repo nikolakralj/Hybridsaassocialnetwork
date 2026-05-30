@@ -5,23 +5,25 @@
 
 ---
 
-## Current State (2026-04-24)
+## Current State (2026-05-30)
 
-- **All Tier 0 + Tier 1 tasks complete.** S1 (RLS fix), S2 (token signing), D1 (dead timesheet views), D2 (dead approval APIs), D3 (local-only project mode) all done.
-- **Migration 014 applied.** RLS now project-scoped.
-- **Migration 012 applied.** Self-approval trigger live.
+- **All Tier 0 + Tier 1 tasks complete.** S1 (RLS fix), S2 (token signing), D1 (dead timesheet views), D2 (dead approval APIs), D3 (local-only project mode), dashboard-launchpad-onboarding all done.
+- **Migrations 012 + 014 applied.** Self-approval trigger + project-scoped RLS live.
 - **Migration 013** pending apply (Nikola) — blocks B3.
-- **Edge functions** not deployed (`SUPABASE_ACCESS_TOKEN` missing).
+- **Migration 015** pending apply (Nikola) — safe, drops dead legacy tables.
+- **Supabase CLI** installed (v2.102.0) and linked to `gcdtimasyknakdojiufl`.
+- **`SUPABASE_ACCESS_TOKEN`** in `~/.claude/settings.json` — CLI can deploy edge functions.
+- **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ✅ — token signing unblocked.
+- **Edge functions** not yet deployed (pending explicit deploy command).
 
-## 2026-05-30 — [DONE] Supabase CLI setup + migration audit (Claude)
+## 2026-05-30 — [DONE] Supabase secrets + CLI setup (Nikola + Claude)
 
-- Supabase CLI v2.102.0 installed globally via `npm install -g supabase`.
-- Logged in via `supabase login --token` and linked project `gcdtimasyknakdojiufl`.
-- `SUPABASE_ACCESS_TOKEN` saved to `~/.claude/settings.json` env (resolves Blocker #2).
-- `supabase migration list` run: all local migrations (001–015) show in Local column, Remote column empty (expected — all were applied via SQL Editor, not CLI).
-- **Migration 015 discovered** (`015_purge_dead_legacy_tables.sql`): drops legacy pre-`wg_` tables and views. Verified safe — only `workgraph-supabase.ts`, `projects-supabase.ts`, `timesheets.ts`, `supabase-setup-check.ts` reference those tables and none are imported anywhere in live code. Added M4 to TASK_BACKLOG as `[READY]`.
-- **Supabase Advisor findings** (from dashboard, Severity 2): Auth RLS Initialization Plan warnings on `wg_projects`, `wg_invoice_templates`, `wg_invoices`, `wg_project_members`, `wg_project_invitations`, `wg_contracts`, `wg_timesheet_weeks`, `approval_records` (use `(select auth.uid())` in RLS to cache per query); Duplicate Index on `kv_store_f8b491be`; Function Search Path Mutable on `approval_records_set_updated_at` and `wg_set_updated_at`. Not blocking but worth a future cleanup pass.
-- `SUPABASE_ACCESS_TOKEN` still needs to be set in Supabase Dashboard → Settings → Edge Functions → Secrets to unblock edge function deployment (Blocker #2 in config only; not yet in Supabase secrets).
+- `APPROVAL_TOKEN_SECRET` added to Supabase Dashboard → Settings → Edge Functions → Secrets. Resolves Blocker #3.
+- `SUPABASE_ACCESS_TOKEN` (personal access token) saved to `~/.claude/settings.json` env. Resolves Blocker #2 (token present; deploy still pending).
+- Supabase CLI v2.102.0 installed globally via `npm install -g supabase`, logged in, linked to project.
+- `supabase migration list` run: all local migrations (001–015) in Local column, Remote empty (expected — all applied via SQL Editor, not CLI).
+- Migration 015 discovered and verified safe. Added as M4 `[READY]` in TASK_BACKLOG.
+- Supabase Advisor warnings noted: Auth RLS Initialization Plan (8 tables), Duplicate Index on `kv_store_f8b491be`, Function Search Path Mutable on `approval_records_set_updated_at` + `wg_set_updated_at`. Non-blocking; future cleanup pass.
 
 ---
 
@@ -30,8 +32,7 @@
 | # | Blocker | Owner | Status |
 |---|---|---|---|
 | 1 | Migration 013 not applied — blocks B3 | Nikola | Pending |
-| 2 | `SUPABASE_ACCESS_TOKEN` not set — edge functions cannot deploy | Nikola | Pending |
-| 3 | `APPROVAL_TOKEN_SECRET` not set in Supabase env — token signing edge route not functional | Nikola | Pending |
+| 2 | Edge functions not deployed | Nikola/Claude | Ready (token configured) |
 
 ---
 
