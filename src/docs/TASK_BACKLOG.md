@@ -67,22 +67,9 @@ All listed files/folders deleted. `ProjectTimesheetsView.tsx` preserved. Build p
 
 ## Tier 2 — Sprint A (Approvals UX)
 
-### A1 · `submit-timesheet-project-picker` · `[READY]`
+### A1 · `submit-timesheet-project-picker` · `[DONE]` — 2026-05-30
 
-**Assignee:** Codex `frontend-developer`
-**Goal:** When user clicks "Submit Week" and has 2+ projects, show a project picker modal
-before submitting. Currently it silently uses the last-focused project.
-
-**Files:**
-- `src/components/timesheets/ProjectTimesheetsView.tsx`
-- `src/contexts/TimesheetDataContext.tsx`
-
-**Acceptance criteria:**
-- [ ] 1 project → submit directly (current behavior)
-- [ ] 2+ projects → modal with project list appears
-- [ ] 5+ projects → modal has search/filter
-- [ ] Cancel does not submit
-- [ ] `npm run build` passes
+`ProjectTimesheetsView.tsx`: picker Dialog opens on Submit when 2+ projects; search shown at 5+; cancel does not submit; 1-project path unchanged. Build passes.
 
 ---
 
@@ -155,16 +142,9 @@ status chip consistency; empty-state message.
 
 ---
 
-### B3 · `server-side-role-enforcement` · `[READY]`
+### B3 · `server-side-role-enforcement` · `[DONE]` — 2026-05-30
 
-**Blocked by:** ~~M2~~ — unblocked 2026-05-30, 013 confirmed applied
-**Assignee:** Codex `backend-developer`
-**Files:** `supabase/functions/server/projects-api.tsx`
-
-**Acceptance criteria:**
-- [ ] `PUT /projects/:id` returns 403 if caller is not owner or editor
-- [ ] `DELETE /projects/:id` returns 403 if caller is not owner
-- [ ] `npm run build` passes
+`projects-api.tsx`: DELETE guard updated to use `getCallerRole()` (was owner_id-only check); PUT guard already used `getCallerRole()`. Both return `{"error":"Forbidden"}` 403. Also fixed pre-existing `dialog.tsx` extra-paren bug. Build passes. ⚠️ Takes effect only after `supabase functions deploy server`.
 
 ---
 
@@ -210,6 +190,9 @@ Spec: `src/docs/specs/PHASE4_INVOICE_SPEC.md`
 
 | Task | Completed |
 |---|---|
+| A1 submit-timesheet-project-picker | 2026-05-30 |
+| B3 server-side-role-enforcement (deploy pending) | 2026-05-30 |
+| M4 015_purge_dead_legacy_tables applied | 2026-05-30 |
 | S1 approval-rls-fix (M3/014 applied + verified) | 2026-04-24 |
 | S2 move-approval-token-signing-server-side | 2026-04-24 |
 | D1 delete-dead-timesheet-views (30 files, ~13k LOC) | 2026-04-24 |
