@@ -37,6 +37,15 @@
 
 ---
 
+## 2026-05-30 — [DONE] M4 015_purge_dead_legacy_tables applied (Codex)
+
+- Dropped legacy tables (all existed and were dropped): `allocated_tasks`, `review_flags`, `attachments`, `timesheet_entries`, `timesheet_periods`, `project_contracts`, `organizations`, `workgraph_edges`, `workgraph_nodes`, `graph_versions`, `project_members`, `projects`.
+- Dropped legacy views (all existed and were dropped): `approval_history`, `approval_queue`, `v_contracts_with_orgs`, `v_periods_full`.
+- Verified: 0 legacy table rows remain in `information_schema.tables` for the above names. 0 legacy views remain in `information_schema.views`.
+- All DROP statements used `IF EXISTS CASCADE` — safe, idempotent, no live code references affected.
+
+---
+
 ## Current Blockers
 
 | # | Blocker | Owner | Status |

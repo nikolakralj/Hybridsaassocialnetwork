@@ -13,7 +13,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | M1 | `012_approval_submitter_id.sql` | `[DONE]` |
 | M2 | `013_graph_node_id_and_invite_link.sql` — verified applied 2026-05-30 | `[DONE]` |
 | M3 | `014_approval_records_rls_fix.sql` — applied 2026-04-24 | `[DONE]` |
-| M4 | `015_purge_dead_legacy_tables.sql` — drops orphaned pre-wg_ tables, safe to apply | `[READY]` |
+| M4 | `015_purge_dead_legacy_tables.sql` — drops orphaned pre-wg_ tables, applied 2026-05-30 | `[DONE]` |
 
 ---
 
