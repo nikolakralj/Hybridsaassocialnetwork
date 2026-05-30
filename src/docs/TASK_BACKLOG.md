@@ -224,3 +224,4 @@ Spec: `src/docs/specs/PHASE4_INVOICE_SPEC.md`
 | invoice edge functions scaffolding | 2026-04-20 |
 | graph context fix (no tab-visit required) | 2026-04-20 |
 | invite email edge function | 2026-04-20 |
+| dashboard-launchpad-onboarding (role-based checklist, DashboardPage.tsx) | 2026-05-30 |
