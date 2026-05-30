@@ -22,12 +22,19 @@ import {
   ThumbsDown, Pencil, Send, Save, Undo2, MessageSquare,
   X, Network, ChevronDown, ChevronRight as ChevronRt, Eye,
   ArrowRight, StickyNote, Timer, Coffee, Plus, Trash2,
-  Zap, Copy, GripVertical, ChevronUp,
+  Zap, Copy, GripVertical, ChevronUp, Search, Briefcase,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '../ui/dialog';
 import { EnhancedDayEntryModal } from './EnhancedDayEntryModal';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
@@ -39,6 +46,7 @@ import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
 import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
 import { getLatestPendingApproval } from '../../utils/api/approvals-supabase';
+import { listProjects } from '../../utils/api/projects-api';
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -197,7 +205,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   cachedApprovalParties = projectApprovalParties;
 
   const store = useTimesheetStore();
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
 
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
@@ -711,6 +719,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
                     <div className="divide-y">
                       {people.map(([pid, weeks]) => (
                         <PersonSection key={pid} personId={pid} weeks={weeks} viewerId={viewerId} isAdmin={isAdmin} store={store}
+                          projectId={projectId} accessToken={accessToken}
                           canApprovePerson={canViewerApprovePerson}
                           onClickWeek={(ws) => setDrawerWeek({ personId: pid, weekStart: ws })}
                           onClickDay={(e, ws, di, status) => handleDayClick(e, pid, ws, di, status)}
@@ -730,6 +739,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
             flatPersonWeeks.map(([pid, weeks]) => (
               <div key={pid} className="border rounded-xl overflow-hidden">
                 <PersonSection personId={pid} weeks={weeks} viewerId={viewerId} isAdmin={isAdmin} store={store}
+                  projectId={projectId} accessToken={accessToken}
                   canApprovePerson={canViewerApprovePerson}
                   onClickWeek={(ws) => setDrawerWeek({ personId: pid, weekStart: ws })}
                   onClickDay={(e, ws, di, status) => handleDayClick(e, pid, ws, di, status)}
@@ -865,8 +875,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 // Person Section (with draggable day cells)
 // ============================================================================
 
+// Simple project shape used in the picker
+interface PickerProject { id: string; name: string; }
+
 function PersonSection({
-  personId, weeks, viewerId, isAdmin, store, canApprovePerson, onClickWeek, onClickDay, canEditDay, onViewInGraph,
+  personId, weeks, viewerId, isAdmin, store, projectId, accessToken, canApprovePerson, onClickWeek, onClickDay, canEditDay, onViewInGraph,
   onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, dragSource, dragOverDay,
 }: {
   personId: string;
@@ -874,6 +887,10 @@ function PersonSection({
   viewerId?: string;
   isAdmin: boolean;
   store: ReturnType<typeof useTimesheetStore>;
+  /** Current project this view is scoped to */
+  projectId: string;
+  /** Auth token for fetching project list */
+  accessToken: string | null | undefined;
   canApprovePerson: (personId: string, week?: StoredWeek) => boolean;
   onClickWeek: (weekStart: string) => void;
   onClickDay: (e: React.MouseEvent, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => void;
@@ -896,6 +913,12 @@ function PersonSection({
   const [submittingMonth, setSubmittingMonth] = useState(false);
   const [approvingMonth, setApprovingMonth] = useState(false);
 
+  // Project picker modal state
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerProjects, setPickerProjects] = useState<PickerProject[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState('');
+
   const fireStatusChange = useCallback(async (w: StoredWeek, newStatus: WeekStatus, meta?: { by?: string; note?: string }) => {
     await store.setWeekStatus(personId, w.weekStart, newStatus, meta);
     notifStore.onTimesheetStatusChange(personId, w.weekStart, w.weekLabel, newStatus, sumWeekHours(w), meta);
@@ -904,8 +927,12 @@ function PersonSection({
   // Submit all draft/rejected weeks that have hours logged
   const submitableWeeks = weeks.filter(w => (w.status === 'draft' || w.status === 'rejected') && sumWeekHours(w) > 0);
 
-  const handleSubmitMonth = useCallback(async () => {
+  /** Actually submit weeks, setting currentProjectId in sessionStorage to the chosen project. */
+  const doSubmitWithProject = useCallback(async (chosenProjectId: string) => {
     if (submitableWeeks.length === 0) return;
+    // Temporarily set the active project so setWeekStatus routes approvals correctly
+    const prevProjectId = sessionStorage.getItem('currentProjectId');
+    sessionStorage.setItem('currentProjectId', chosenProjectId);
     setSubmittingMonth(true);
     let submitted = 0;
     for (const w of submitableWeeks) {
@@ -918,11 +945,111 @@ function PersonSection({
       }
     }
     setSubmittingMonth(false);
+    // Restore previous project id
+    if (prevProjectId !== null) {
+      sessionStorage.setItem('currentProjectId', prevProjectId);
+    } else {
+      sessionStorage.removeItem('currentProjectId');
+    }
     if (submitted > 0) toast.success(`Submitted ${submitted} week${submitted > 1 ? 's' : ''} for approval`);
   }, [submitableWeeks, store, personId, notifStore]);
 
+  const handleSubmitMonth = useCallback(async () => {
+    if (submitableWeeks.length === 0) return;
+    setPickerLoading(true);
+    let projects: PickerProject[] = [];
+    try {
+      const raw = await listProjects(accessToken);
+      projects = (raw as PickerProject[]).filter(p => p.id && p.name);
+    } catch {
+      // If we can't fetch projects, fall through to direct submit with current project
+    }
+    setPickerLoading(false);
+
+    if (projects.length < 2) {
+      // 0 or 1 project — submit directly using the current project
+      await doSubmitWithProject(projectId);
+      return;
+    }
+
+    // 2+ projects — show the picker
+    setPickerProjects(projects);
+    setPickerSearch('');
+    setPickerOpen(true);
+  }, [submitableWeeks, accessToken, projectId, doSubmitWithProject]);
+
+  // Filtered project list for the picker (search applies when 5+ projects)
+  const filteredPickerProjects = useMemo(() => {
+    if (!pickerSearch.trim() || pickerProjects.length < 5) return pickerProjects;
+    const q = pickerSearch.toLowerCase();
+    return pickerProjects.filter(p => p.name.toLowerCase().includes(q));
+  }, [pickerProjects, pickerSearch]);
+
   return (
     <div>
+      {/* Project Picker Modal */}
+      <Dialog open={pickerOpen} onOpenChange={(open) => { if (!open) setPickerOpen(false); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Briefcase className="h-4 w-4 text-blue-500" />
+              Select Project
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Choose which project to submit {submitableWeeks.length} week{submitableWeeks.length > 1 ? 's' : ''} under.
+            </p>
+            {pickerProjects.length >= 5 && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search projects…"
+                  value={pickerSearch}
+                  onChange={e => setPickerSearch(e.target.value)}
+                  autoFocus
+                  className="w-full h-8 pl-8 pr-3 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+                />
+              </div>
+            )}
+            <div className="max-h-60 overflow-y-auto space-y-1 rounded-md border border-border p-1">
+              {filteredPickerProjects.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No projects found</p>
+              ) : (
+                filteredPickerProjects.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={async () => {
+                      setPickerOpen(false);
+                      await doSubmitWithProject(p.id);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 ${
+                      p.id === projectId ? 'bg-blue-50 text-blue-700' : 'text-foreground'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold shrink-0 ${
+                      p.id === projectId ? 'bg-blue-200 text-blue-800' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {p.name.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="flex-1 truncate">{p.name}</span>
+                    {p.id === projectId && (
+                      <Badge variant="outline" className="text-[9px] h-4 shrink-0">current</Badge>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setPickerOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex items-center gap-3 px-4 py-2 bg-muted/10">
         <div className={`w-7 h-7 rounded-full ${getOrgForPerson(personId).bgColor} ${getOrgForPerson(personId).color} flex items-center justify-center text-[10px] font-bold`}>{personInitials(personId)}</div>
         <div className="flex-1 min-w-0"><div className="text-xs font-semibold">{personName(personId)}</div></div>
@@ -935,12 +1062,12 @@ function PersonSection({
         {isOwn && submitableWeeks.length > 0 && (
           <button
             onClick={handleSubmitMonth}
-            disabled={submittingMonth}
+            disabled={submittingMonth || pickerLoading}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors disabled:opacity-50"
             title={`Submit ${submitableWeeks.length} week${submitableWeeks.length > 1 ? 's' : ''} for approval`}
           >
             <Send className="h-2.5 w-2.5" />
-            Submit {submitableWeeks.length > 1 ? `${submitableWeeks.length} weeks` : 'week'}
+            {pickerLoading ? 'Loading…' : `Submit ${submitableWeeks.length > 1 ? `${submitableWeeks.length} weeks` : 'week'}`}
           </button>
         )}
         {hasPendingApprovalActions && (

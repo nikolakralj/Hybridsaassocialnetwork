@@ -37,6 +37,22 @@
 
 ---
 
+## 2026-05-30 — [DONE] A1 submit-timesheet-project-picker (Codex)
+
+- `src/components/timesheets/ProjectTimesheetsView.tsx`: added `listProjects` import, `Dialog`/`DialogContent`/`DialogHeader`/`DialogTitle`/`DialogFooter` imports, `Search` + `Briefcase` lucide icons.
+- Added `PickerProject` interface (inline, no new file).
+- `PersonSection` gains two new props: `projectId: string` and `accessToken: string | null | undefined`.
+- New state in `PersonSection`: `pickerOpen`, `pickerProjects`, `pickerLoading`, `pickerSearch`.
+- `handleSubmitMonth` now calls `listProjects` on click; if < 2 projects it submits directly (existing behaviour preserved); if 2+ it opens the picker Dialog.
+- `doSubmitWithProject(chosenProjectId)` sets `sessionStorage.currentProjectId` to the chosen project before calling `store.setWeekStatus` in a loop, then restores the previous value — this routes the approval record to the correct project.
+- Search input shown only when project list has 5+ entries.
+- Cancel button closes modal without submitting.
+- All three `PersonSection` call sites in `ProjectTimesheetsView` updated to pass `projectId` and `accessToken`.
+- `npm run build` passes (4.48 s, no TS errors).
+- Residual risk: `listProjects` is an async network call on every Submit click (even when there is only 1 project). The call is guarded by a try/catch that falls back to direct submit, so network failures are non-fatal. A future optimisation could cache the result.
+
+---
+
 ## 2026-05-30 — [DONE] M4 015_purge_dead_legacy_tables applied (Codex)
 
 - Dropped legacy tables (all existed and were dropped): `allocated_tasks`, `review_flags`, `attachments`, `timesheet_entries`, `timesheet_periods`, `project_contracts`, `organizations`, `workgraph_edges`, `workgraph_nodes`, `graph_versions`, `project_members`, `projects`.
