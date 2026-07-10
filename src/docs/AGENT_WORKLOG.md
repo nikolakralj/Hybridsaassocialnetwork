@@ -15,6 +15,26 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-10 - [DONE] A4 rate UI + queue submitter-visibility (Claude)
+
+- User confusion report (as first real user): submitted week not visible in Queue
+  ("signed in as employer"), generated invoice was 0-amount, asked where rates go,
+  asked about decentralized DB (answered: no — Postgres+RLS is right; audit trail
+  later if multi-party trust becomes a requirement).
+- **A4 built:** PersonRateSection in NodeDetailDrawer — set contract type
+  (hourly/daily/fixed), rate, currency directly on the person's graph node; persists
+  via new `handleUpdateNodeData` in WorkGraphBuilder → `updateProject({ graph })` →
+  `wg_projects.graph` (exact source of `resolveProjectRates()`). Gated by `canEditGraph`;
+  masked rates not editable; amber warning when no rate is set.
+- **Queue UX:** empty state now runs a best-effort lookup of the viewer's own pending
+  submissions and renders "Your N submissions are waiting on {approver} — see My
+  submissions" instead of the misleading "You are caught up".
+- Verified against live data: pending L2 record for week 2026-05-25 (waiting on NAS,
+  submitted 2026-07-10) will trigger the new hint in the user's exact scenario.
+- Noted (not fixed): `useGraphPersistence` still uses a UUID gate + old edge-function
+  graph-version routes — version history is effectively dead for TEXT-id projects.
+  Graph persistence itself is fine (updateProject path). Candidate cleanup card.
+
 ## 2026-07-10 - [DONE] Antigravity template-system review (Claude)
 
 - Reviewed Antigravity's uncommitted changes (invoices-api.ts, InvoicesWorkspace.tsx,

@@ -65,6 +65,161 @@ interface NodeDetailDrawerProps {
   onClose: () => void;
   onSelectNode: (id: string) => void;
   onNavigate: (target: string, context?: Record<string, string>) => void;
+  /** A4: present only when the viewer can edit the graph (owner/editor). Persists node.data patches to wg_projects.graph. */
+  onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
+}
+
+// ============================================================================
+// PersonRateSection (A4) — view + edit the billing rate stored on the person's
+// graph node (contractType / hourlyRate / dailyRate / fixedAmount / currency).
+// These exact keys are what invoices-api resolveProjectRates() reads.
+// ============================================================================
+
+const RATE_MASK = '••••';
+
+function PersonRateSection({
+  node,
+  onUpdateNodeData,
+}: {
+  node: VisibleNode;
+  onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
+}) {
+  const data = (node.data || {}) as Record<string, any>;
+  const masked = data.hourlyRate === RATE_MASK || data.dailyRate === RATE_MASK || data.fixedAmount === RATE_MASK;
+
+  const toNum = (v: any) => {
+    const n = Number(typeof v === 'string' ? v.replace(',', '.') : v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const currentType: 'hourly' | 'daily' | 'fixed' =
+    data.contractType === 'daily' || (!data.contractType && toNum(data.dailyRate) > 0)
+      ? 'daily'
+      : data.contractType === 'fixed' || (!data.contractType && toNum(data.fixedAmount) > 0)
+        ? 'fixed'
+        : 'hourly';
+  const currentRate =
+    currentType === 'daily' ? toNum(data.dailyRate)
+    : currentType === 'fixed' ? toNum(data.fixedAmount)
+    : toNum(data.hourlyRate);
+  const displayCurrency = String(data.currency || 'EUR').toUpperCase();
+  const hasRate = !masked && currentRate > 0;
+
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [rateType, setRateType] = useState<'hourly' | 'daily' | 'fixed'>(currentType);
+  const [rateValue, setRateValue] = useState('');
+  const [currency, setCurrency] = useState(displayCurrency);
+
+  const startEdit = () => {
+    setRateType(currentType);
+    setRateValue(hasRate ? String(currentRate) : '');
+    setCurrency(displayCurrency);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    if (!onUpdateNodeData) return;
+    const value = toNum(rateValue);
+    if (value <= 0) {
+      toast.error('Enter a rate greater than 0.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onUpdateNodeData(node.id, {
+        contractType: rateType,
+        hourlyRate: rateType === 'hourly' ? value : '',
+        dailyRate: rateType === 'daily' ? value : '',
+        fixedAmount: rateType === 'fixed' ? value : '',
+        currency: currency.trim().toUpperCase() || 'EUR',
+      });
+      setEditing(false);
+    } catch (error) {
+      console.error('Failed to save billing rate:', error);
+      toast.error('Could not save the rate — try again or use the graph Save button.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const unitLabel = currentType === 'daily' ? '/day' : currentType === 'fixed' ? ' fixed' : '/hr';
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+          Billing Rate
+        </div>
+        {!editing && !masked && onUpdateNodeData && (
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={startEdit}>
+            <Pencil className="h-3 w-3 mr-1" />
+            {hasRate ? 'Edit' : 'Set rate'}
+          </Button>
+        )}
+      </div>
+
+      {masked ? (
+        <div className="flex items-center gap-1.5 rounded-md bg-muted/30 px-2.5 py-1.5 text-xs text-slate-400">
+          <Lock className="h-3 w-3" /> Rate hidden for your role
+        </div>
+      ) : editing ? (
+        <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+          <div className="grid grid-cols-3 gap-1.5">
+            {(['hourly', 'daily', 'fixed'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setRateType(type)}
+                className={`rounded-md border px-2 py-1 text-[11px] capitalize transition-colors ${
+                  rateType === type
+                    ? 'border-foreground bg-foreground font-medium text-background'
+                    : 'border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              value={rateValue}
+              onChange={(e) => setRateValue(e.target.value)}
+              inputMode="decimal"
+              placeholder={rateType === 'fixed' ? 'Total amount' : rateType === 'daily' ? 'Rate per day' : 'Rate per hour'}
+              className="h-8 w-full min-w-0 rounded-md border border-border bg-background px-2 text-xs"
+            />
+            <input
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              maxLength={3}
+              className="h-8 w-14 rounded-md border border-border bg-background px-2 text-xs uppercase"
+            />
+          </div>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-7 flex-1 text-[11px]" onClick={() => void handleSave()} disabled={saving}>
+              {saving ? 'Saving…' : 'Save rate'}
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : hasRate ? (
+        <div className="flex justify-between rounded-md bg-muted/30 px-2.5 py-1.5 text-xs">
+          <span className="capitalize text-muted-foreground">{currentType}</span>
+          <span className="font-medium text-foreground">
+            {displayCurrency} {currentRate.toLocaleString()}{unitLabel}
+          </span>
+        </div>
+      ) : (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">
+          No rate set — invoices for this person will come out at 0.
+          {onUpdateNodeData ? ' Click "Set rate" above.' : ' Ask the project owner to set it.'}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -1144,6 +1299,7 @@ export function NodeDetailDrawer({
   onClose,
   onSelectNode,
   onNavigate,
+  onUpdateNodeData,
 }: NodeDetailDrawerProps) {
   const node = nodes.find(n => n.id === selectedId);
   
@@ -1302,6 +1458,11 @@ export function NodeDetailDrawer({
           )}
 
           <Separator />
+
+          {/* Billing rate (person) — the source invoice generation prices from */}
+          {node.type === 'person' && (
+            <PersonRateSection node={node} onUpdateNodeData={onUpdateNodeData} />
+          )}
 
           {/* Timesheets (for people) — interactive with inline edit + approval */}
           {node.type === 'person' && (

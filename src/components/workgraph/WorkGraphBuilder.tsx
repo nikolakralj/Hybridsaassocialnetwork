@@ -1893,6 +1893,17 @@ export function WorkGraphBuilder({
     }
   }, [allNodes, allEdges, projectId, accessToken, canEditGraph]);
 
+  // A4: persist node-data edits (e.g. billing rates) straight to wg_projects.graph —
+  // the source resolveProjectRates() reads at invoice generation time.
+  const handleUpdateNodeData = useCallback(async (nodeId: string, patch: Record<string, any>) => {
+    const nextNodes = allNodes.map((n) =>
+      n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n
+    );
+    setAllNodes(nextNodes);
+    await updateProject(projectId, { graph: { nodes: nextNodes, edges: allEdges } }, accessToken);
+    toast.success('Saved to project');
+  }, [allNodes, allEdges, projectId, accessToken]);
+
   // Compute scoped view
   const scopedView = useMemo(
     () => computeScopedView(currentViewer, allNodes, allEdges),
@@ -2178,6 +2189,7 @@ export function WorkGraphBuilder({
                 onClose={() => setSelectedId(null)}
                 onSelectNode={(id) => setSelectedId(id)}
                 onNavigate={handleNavigate}
+                onUpdateNodeData={canEditGraph ? handleUpdateNodeData : undefined}
               />
             </DrawerErrorBoundary>
           </div>

@@ -660,14 +660,51 @@ export function ApprovalsWorkbench({
     return `${formatDate(start)} to ${formatDate(end)}`;
   };
 
+  // The Queue is the APPROVER's inbox. When it's empty but the viewer has their
+  // own submissions pending elsewhere in the chain, say so — otherwise submitters
+  // read "you're caught up" and think their submission vanished.
+  const [myPendingSubmissions, setMyPendingSubmissions] = useState<{ count: number; approvers: string[] }>({ count: 0, approvers: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (loading || viewScope === "submitted" || filteredItems.length > 0 || !user?.id) {
+      setMyPendingSubmissions({ count: 0, approvers: [] });
+      return;
+    }
+    (async () => {
+      try {
+        const mine = await getApprovalQueue({
+          status: "pending",
+          projectId: projectFilter || undefined,
+          submitterUserId: user.id,
+        });
+        if (cancelled) return;
+        const approvers = Array.from(new Set(
+          mine.map((item) => item.approverName).filter((name): name is string => Boolean(name))
+        ));
+        setMyPendingSubmissions({ count: mine.length, approvers });
+      } catch {
+        // Best-effort hint only — never block the empty state on it.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loading, viewScope, filteredItems.length, projectFilter, user?.id]);
+
   const getEmptyTitle = () => {
-    if (effectiveStatusFilter === "pending") return "No pending approvals";
+    if (effectiveStatusFilter === "pending") {
+      return myPendingSubmissions.count > 0 ? "Nothing waiting for your approval" : "No pending approvals";
+    }
     if (searchQuery.trim()) return "No matches for your search";
     return "No approvals found";
   };
 
   const getEmptyDescription = () => {
     if (effectiveStatusFilter === "pending") {
+      if (myPendingSubmissions.count > 0) {
+        const who = myPendingSubmissions.approvers.join(", ") || "the next approver";
+        const plural = myPendingSubmissions.count === 1 ? "submission is" : "submissions are";
+        return `This queue only shows items waiting on YOU. Your ${myPendingSubmissions.count} ${plural} waiting on ${who} — track ${myPendingSubmissions.count === 1 ? "it" : "them"} under "My submissions".`;
+      }
       return "You are caught up for now. New requests will appear here as soon as they are submitted.";
     }
 

@@ -183,13 +183,19 @@ the base line. Data model already supports it (`TimeEntry.category`, `rateMultip
 
 ---
 
-### A4 · `rate-definition-ui` · `[READY]`
+### A4 · `rate-definition-ui` · `[DONE]` — 2026-07-10
 
-**Assignee:** Codex `frontend-developer`
-**Goal:** There is currently NO UI to set rates (NodeDetailDrawer displays them read-only).
-Add editable rate fields (contract type hourly/daily/fixed + rate + currency) to the person
-node drawer, persisting into `wg_projects.graph` node data — the source `resolveProjectRates()`
-reads. Respect `can_view_rates` masking.
+`PersonRateSection` in NodeDetailDrawer: view + edit billing rate on person nodes
+(contract type hourly/daily/fixed + rate + currency), writing the exact keys
+`resolveProjectRates()` reads (`contractType`/`hourlyRate`/`dailyRate`/`fixedAmount`/`currency`).
+Persists immediately via `updateProject(projectId, { graph })` → `wg_projects.graph`.
+Edit affordance only for graph editors (`canEditGraph`); masked (`••••`) rates show
+"hidden for your role" and cannot be edited. Missing rate shows amber warning
+("invoices will come out at 0") — closes the recurring €0-invoice loop. Build passes.
+
+**Also fixed (same session):** approvals Queue empty state now detects the viewer's own
+pending submissions and says who they're waiting on + points to "My submissions"
+(was a misleading "You are caught up").
 
 ---
 
