@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -42,6 +42,7 @@ type ImportedInvoice = {
   id: string;
   sourceFileName: string;
   sourceFileType: string;
+  sourceFile?: File;
   uploadedAt: string;
   invoiceNumber: string;
   issueDate: string;
@@ -120,7 +121,7 @@ type InvoiceImportPanelProps = {
   defaultVendor: string;
   defaultClient: string;
   projectTemplate?: ProjectInvoiceTemplate | null;
-  onTemplateSaved?: (template: ProjectInvoiceTemplate) => void;
+  onTemplateSaved?: (template: ProjectInvoiceTemplate) => Promise<'api' | 'fallback' | void> | 'api' | 'fallback' | void;
 };
 
 function createId(prefix: string): string {
@@ -437,6 +438,7 @@ function createImportedInvoice(
     id: createId('import'),
     sourceFileName: file.name,
     sourceFileType: file.type || 'unknown',
+    sourceFile: file,
     uploadedAt,
     invoiceNumber: hints.invoiceNumber ?? fallbackInvoiceNumber,
     issueDate: hints.issueDate ?? uploadedAt,
@@ -671,7 +673,7 @@ export function InvoiceImportPanel({
       aiMessage: 'Analyzing your invoice template...',
     }));
 
-    const file = new File([''], invoice.sourceFileName, { type: invoice.sourceFileType });
+    const file = invoice.sourceFile ?? new File([''], invoice.sourceFileName, { type: invoice.sourceFileType });
     const result = await requestInvoiceExtraction(file);
 
     updateInvoice(invoiceId, current => {
@@ -697,15 +699,33 @@ export function InvoiceImportPanel({
     if (!selectedInvoice) return;
     setIsSavingTemplate(true);
     const template = toTemplate(selectedInvoice);
-    const saveMode = await createInvoiceTemplate(projectId, template);
-    setLocalTemplate(template);
-    onTemplateSaved?.(template);
-    setIsSavingTemplate(false);
-    toast.success(
-      saveMode === 'api'
-        ? 'Project invoice template saved to the API.'
-        : 'Project invoice template saved locally. API unavailable, so local fallback was used.',
-    );
+    let saveMode: 'api' | 'fallback' = 'fallback';
+
+    try {
+      const upstreamMode = await onTemplateSaved?.(template);
+      if (upstreamMode === 'api' || upstreamMode === 'fallback') {
+        saveMode = upstreamMode;
+      } else if (onTemplateSaved) {
+        // Parent persisted the template through the shared invoice-template API.
+        saveMode = 'api';
+      } else {
+        saveMode = await createInvoiceTemplate(projectId, template);
+      }
+      writeProjectInvoiceTemplate(projectId, template);
+      setLocalTemplate(template);
+      toast.success(
+        saveMode === 'api'
+          ? 'Reusable invoice template saved.'
+          : 'Reusable invoice template saved locally. Cloud API unavailable, so local fallback was used.',
+      );
+    } catch (error) {
+      console.error('Failed to save imported invoice template:', error);
+      writeProjectInvoiceTemplate(projectId, template);
+      setLocalTemplate(template);
+      toast.warning('Template saved locally, but cloud persistence failed.');
+    } finally {
+      setIsSavingTemplate(false);
+    }
   };
 
   const applyTemplateToSelected = () => {

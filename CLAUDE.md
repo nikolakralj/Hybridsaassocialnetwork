@@ -1,6 +1,6 @@
 # CLAUDE.md — WorkGraph Project Context
 
-**Last updated: 2026-04-24**
+**Last updated: 2026-07-08**
 
 ## What This Is
 WorkGraph: graph-aware operational workflow for agencies/consulting firms.
@@ -13,15 +13,21 @@ Multi-tenant supply chain: Global Corp → Agency → DevShop → Contractor
 - **Database**: Supabase Postgres (Frankfurt, project `gcdtimasyknakdojiufl`)
 - **Auth**: Supabase Auth (email/password), wired via `src/contexts/AuthContext.tsx`
 
-## Current Phase: Security Hardening → Dead Code Purge → Phase 4 Invoice
+## Current Phase: Phase 4 — Invoice Money Loop
+
+Tier 0 (Security) and Tier 1 (Dead Code Purge) are complete. **Phase 4 — invoice generation —
+is now the active priority** (approved timesheet → invoice → cash). Sprint A approvals polish
+(A2/A3) is deferred behind it. The social/network surface is gated off behind
+`VITE_SHOW_SOCIAL_FEATURES` (see ROADMAP Phase 9) — this ships as WorkGraph, not a social app.
 
 **Priority order (STRICT):**
-1. **Tier 0 — Security** (S1 apply migration 014, S2 move token signing server-side)
-2. **Tier 1 — Dead Code Purge** (D1 delete dead timesheet views, D2 dead approval APIs, D3 kill local-only project mode)
-3. **Tier 2 — Sprint A** (approvals UX)
-4. **Tier 3 — Sprint B** (graph + permissions)
-5. **Tier 4 — Sprint C** (invitation UI)
-6. **Phase 4** (invoice generation)
+1. ~~🔴 **Migration 016**~~ ✅ applied + verified 2026-07-08 — timesheet submit unblocked
+2. 🔴 **DEPLOY** — `supabase functions deploy server` (a STALE edge build is live; B3 guards + approval-token routes inert until redeploy) (Nikola)
+3. ~~**Tier 0 — Security**~~ ✅ / ~~**Tier 1 — Dead Code Purge**~~ ✅
+4. **Phase 4 — Invoice**: ~~P4-1 orchestrator~~ ✅ · ~~P4-2 list~~ ✅ · **P4-3 PDF export** ← ACTIVE
+5. **Tier 2 — Sprint A** (approvals polish A2/A3) — deferred behind Phase 4
+6. **Tier 3 — Sprint B** (graph + permissions)
+7. **Tier 4 — Sprint C** (invitation UI)
 
 See `src/docs/TASK_BACKLOG.md` for full task cards.
 
@@ -52,20 +58,22 @@ See `src/docs/TASK_BACKLOG.md` for full task cards.
 | All other `src/` files | Codex | Claude reviews output |
 | `supabase/migrations/` | Codex drafts, Nikola applies | Never `supabase db push` — SQL Editor only |
 
-## Database State (as of 2026-04-24)
+## Database State (as of 2026-07-08)
 
-**Applied:**
-- `005` — core tables (`wg_projects`, `wg_project_members`, `wg_timesheet_weeks`, etc.)
-- `006–009` — schema additions, state triggers, approval snapshots
-- `010` — `wg_invoices`, `wg_invoice_templates`
-- `011_fix_rls_recursion.sql` — SECURITY DEFINER helpers for RLS (`wg_user_owns_project`, `wg_user_is_project_member`)
+**ALL migrations 001–016 applied and verified.** Highlights:
+- `010` — `wg_invoices`, `wg_invoice_templates` + project-scoped RLS (verified live 2026-07-08)
+- `012` — `submitter_user_id` + DB-level self-approval trigger
+- `014` — `approval_records` project-scoped RLS (replaced wide-open policies)
+- `015` — legacy pre-`wg_` tables purged
+- `016` — `wg_project_members` RLS recursion fix (SECURITY DEFINER `wg_user_can_read_project_member`)
 
-**Pending — Nikola must apply in SQL Editor:**
-- `012_approval_submitter_id.sql` — adds `submitter_user_id` + DB-level self-approval trigger
-- `013_graph_node_id_and_invite_link.sql` — adds capability flags to `wg_project_members`
-- **`014_approval_records_rls_fix.sql` — CRITICAL. Wide-open policies replaced with project-scoped ones.**
+**Nothing pending in SQL Editor.**
 
 **Note on 011 filename collision:** `011_approval_snapshot.sql` and `011_fix_rls_recursion.sql` both exist. Only `011_fix_rls_recursion.sql` matters — it replaces recursive policies. Do not re-apply `011_approval_snapshot.sql` if already done.
+
+**⚠️ Free-tier auto-pause:** Supabase pauses the project after ~1 week of inactivity
+(status `INACTIVE`, all queries time out). Restore from the dashboard or via MCP
+`restore_project` before debugging "broken" DB access.
 
 ## Critical Architecture
 
@@ -109,8 +117,8 @@ src/components/timesheets/ # ProjectTimesheetsView (ONLY live timesheet UI — r
 src/components/approvals/  # ApprovalsWorkbench, ProjectApprovalsTab, SubmissionsView, ApprovalTimeline
 src/components/invoices/   # InvoicesWorkspace (Phase 4)
 src/utils/api/             # projects-api.ts, approvals-supabase.ts, timesheets-api.ts
-supabase/functions/server/ # Edge function APIs (NOT deployed — direct Supabase JS client used instead)
-supabase/migrations/       # SQL migrations 005–014
+supabase/functions/server/ # Edge function APIs (STALE build deployed — fresh deploy pending; new code uses direct Supabase JS client)
+supabase/migrations/       # SQL migrations 001–016 (all applied)
 src/docs/                  # OPERATIONS.md, ROADMAP.md, TASK_BACKLOG.md, AGENT_WORKLOG.md, specs/
 ```
 
@@ -118,10 +126,10 @@ src/docs/                  # OPERATIONS.md, ROADMAP.md, TASK_BACKLOG.md, AGENT_W
 
 | Issue | Severity | Status | Fix |
 |---|---|---|---|
-| `approval_records` RLS wide open (`USING (true)`) | CRITICAL | ⚠️ Migration 014 written, pending apply | Nikola applies 014 in SQL Editor |
-| HMAC secret hardcoded in client bundle (`approval-tokens.ts`) | HIGH | Open | Task S2 — move signing to edge function |
-| Self-approval guard is client-side only | MEDIUM | Partial — DB trigger in 012, pending apply | Apply 012 migration |
-| Edge functions not deployed — no server-side role enforcement | HIGH | Open | Task B3 (blocked on M2) |
+| `approval_records` RLS wide open (`USING (true)`) | CRITICAL | ✅ RESOLVED — 014 applied + verified | — |
+| HMAC secret hardcoded in client bundle (`approval-tokens.ts`) | HIGH | ✅ RESOLVED — S2 done; `APPROVAL_TOKEN_SECRET` in edge secrets; takes full effect on deploy | — |
+| Self-approval guard is client-side only | MEDIUM | ✅ RESOLVED — 012 trigger live | — |
+| **Stale edge build deployed** (`make-server-f8b491be`) — B3 role guards + approval-token routes not live; old routes (timesheets/contracts/members) still serving | HIGH | Open | `supabase functions deploy server` (Nikola) |
 
 ## Things That Bite You
 

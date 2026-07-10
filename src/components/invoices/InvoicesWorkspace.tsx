@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calendar, CheckCircle2, Clock, DollarSign, FileText, Loader2, Plus, Search } from 'lucide-react';
+﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Calendar, CheckCircle2, ChevronLeft, ChevronRight, Clock, DollarSign, FileCheck2, FileText, Loader2, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { InvoiceDetailPrintView } from './InvoiceDetailPrintView';
 import { InvoiceImportPanel, readProjectInvoiceTemplate, type ProjectInvoiceTemplate } from './InvoiceImportPanel';
 import { useAuth } from '../../contexts/AuthContext';
@@ -14,16 +15,24 @@ import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek } from '../../types/timesheets';
 import {
   createInvoice,
-  isUuidProjectId,
+  deleteDraftInvoice,
   listInvoices,
+  listTemplates,
+  resolveProjectRates,
+  saveTemplate,
+  updateInvoice,
   updateInvoiceStatus,
   type Invoice as PersistedInvoice,
   type InvoiceLineItem,
+  type InvoicePayload,
   type InvoiceStatus as ApiInvoiceStatus,
+  type InvoiceTemplate,
+  type PersonRate,
 } from '../../utils/api/invoices-api';
 
 export type InvoiceDraft = {
   id: string;
+  templateId?: string | null;
   number: string;
   projectId: string;
   projectName: string;
@@ -45,10 +54,27 @@ export type InvoiceDraft = {
   syncState?: 'cloud' | 'local';
   timesheetKey?: string;
   lineItems?: InvoiceLineItem[];
+  fromPartyName?: string | null;
+  toPartyName?: string | null;
+  fromAddress?: string | null;
+  toAddress?: string | null;
+  taxRate?: number;
+  fromTaxId?: string | null;
+  toTaxId?: string | null;
+  fromIban?: string | null;
+  paymentRef?: string | null;
 };
 
 function monthKeyFromDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function addMonths(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function formatMonthLabel(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 function addDays(isoDate: string, days: number): string {
@@ -57,8 +83,11 @@ function addDays(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function isRemoteProject(projectId: string): boolean {
-  return isUuidProjectId(projectId);
+function dayOffset(fromIso: string, toIso: string): number {
+  const from = new Date(`${fromIso}T00:00:00`).getTime();
+  const to = new Date(`${toIso}T00:00:00`).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return 30;
+  return Math.max(0, Math.round((to - from) / (1000 * 60 * 60 * 24)));
 }
 
 function readNameDir(projectId: string): Record<string, { name?: string }> {
@@ -87,14 +116,18 @@ function readClientName(projectId: string): string {
   return client?.name || 'Client';
 }
 
-function readPartyIds(projectId: string): { fromPartyId: string; toPartyId: string } {
+function readPartyIds(projectId: string): { fromPartyId: string; toPartyId: string; fromPartyName: string; toPartyName: string } {
   const parties = readApprovalParties(projectId);
   const seller = parties.find((party) => party?.partyType === 'company' || party?.partyType === 'agency') || parties[0];
-  const buyer = parties.find((party) => party?.partyType === 'client') || parties[1] || parties[0];
+  const buyer = parties.find((party) => party?.partyType === 'client' && party?.id !== seller?.id)
+    || parties.find((party) => party?.id !== seller?.id)
+    || parties[0];
 
   return {
     fromPartyId: seller?.id || projectId,
     toPartyId: buyer?.id || projectId,
+    fromPartyName: seller?.name || '',
+    toPartyName: buyer?.name || '',
   };
 }
 
@@ -155,8 +188,8 @@ function statusBadgeInfo(status: ApiInvoiceStatus | InvoiceDraft['status']) {
   }
 }
 
-function syncBadgeInfo(isCloudProject: boolean) {
-  return isCloudProject
+function syncBadgeInfo(syncState?: 'cloud' | 'local') {
+  return syncState !== 'local'
     ? { label: 'Saved to cloud', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
     : { label: 'Local only', className: 'border-amber-200 bg-amber-50 text-amber-700' };
 }
@@ -179,16 +212,186 @@ function displayCurrency(value: number, currency?: string): string {
 function applyTemplateToDraft(invoice: InvoiceDraft, template: ProjectInvoiceTemplate): InvoiceDraft {
   const dueDateOffset = Number.isFinite(template.dueDateOffsetDays) ? template.dueDateOffsetDays : 30;
   const lineDefault = template.lineDefaults[0];
-  const amount = invoice.hours * invoice.rate;
 
   return {
     ...invoice,
     dueDate: addDays(invoice.date, dueDateOffset),
-    amount,
-    currency: template.currency || invoice.currency || 'USD',
+    currency: template.currency || invoice.currency || 'EUR',
     notes: template.notes || invoice.notes,
     lineItemTemplateDescription: lineDefault?.description || invoice.lineItemTemplateDescription,
   };
+}
+
+function draftLineItems(invoice: InvoiceDraft): InvoiceLineItem[] {
+  if (Array.isArray(invoice.lineItems) && invoice.lineItems.length > 0) return invoice.lineItems;
+  return [
+    {
+      id: `line_${invoice.personId}_${invoice.weekStart}`,
+      description: invoice.lineItemTemplateDescription || `Approved timesheet - ${invoice.weekLabel} (${invoice.personName})`,
+      quantity: invoice.hours,
+      unitPrice: invoice.rate,
+      amount: invoice.amount,
+    },
+  ];
+}
+
+function applyBillingTemplateToDraft(invoice: InvoiceDraft, template: InvoiceTemplate): InvoiceDraft {
+  const defaults = template.billingDefaults ?? {};
+  const dueDateOffset = typeof defaults.dueDateOffsetDays === 'number' && Number.isFinite(defaults.dueDateOffsetDays)
+    ? defaults.dueDateOffsetDays
+    : template.dueDateOffsetDays;
+  const lineDescription = defaults.lineItemDescription || template.lineDefaults?.[0]?.description || invoice.lineItemTemplateDescription;
+  const lineItems = draftLineItems(invoice).map((line, index) => (
+    index === 0 && lineDescription ? { ...line, description: lineDescription } : line
+  ));
+
+  return {
+    ...invoice,
+    templateId: template.id ?? invoice.templateId,
+    dueDate: addDays(invoice.date, typeof dueDateOffset === 'number' && Number.isFinite(dueDateOffset) ? dueDateOffset : 30),
+    currency: (defaults.currency || template.currency || invoice.currency || 'EUR').toUpperCase(),
+    fromPartyName: defaults.fromPartyName || template.vendor || invoice.fromPartyName,
+    fromAddress: defaults.fromAddress || invoice.fromAddress,
+    fromTaxId: defaults.fromTaxId || invoice.fromTaxId,
+    fromIban: defaults.fromIban || invoice.fromIban,
+    toPartyName: defaults.toPartyName || template.client || invoice.toPartyName,
+    toAddress: defaults.toAddress || invoice.toAddress,
+    toTaxId: defaults.toTaxId || invoice.toTaxId,
+    taxRate: typeof defaults.taxRate === 'number' && Number.isFinite(defaults.taxRate) ? defaults.taxRate : invoice.taxRate,
+    paymentRef: defaults.paymentRef || invoice.paymentRef,
+    notes: defaults.notes || template.notes || invoice.notes,
+    lineItemTemplateDescription: lineDescription || invoice.lineItemTemplateDescription,
+    lineItems,
+  };
+}
+
+function buildTemplatePatch(invoice: InvoiceDraft, template: InvoiceTemplate): Partial<InvoicePayload> {
+  const nextInvoice = applyBillingTemplateToDraft(invoice, template);
+  return {
+    templateId: nextInvoice.templateId,
+    dueDate: nextInvoice.dueDate,
+    currency: nextInvoice.currency,
+    fromPartyName: nextInvoice.fromPartyName,
+    fromAddress: nextInvoice.fromAddress,
+    fromTaxId: nextInvoice.fromTaxId,
+    fromIban: nextInvoice.fromIban,
+    toPartyName: nextInvoice.toPartyName,
+    toAddress: nextInvoice.toAddress,
+    toTaxId: nextInvoice.toTaxId,
+    taxRate: nextInvoice.taxRate,
+    paymentRef: nextInvoice.paymentRef,
+    notes: nextInvoice.notes,
+    lineItemTemplateDescription: nextInvoice.lineItemTemplateDescription,
+    lineItems: nextInvoice.lineItems,
+    taxTotal: undefined,
+    total: undefined,
+  };
+}
+
+function buildTemplateFromInvoice(invoice: InvoiceDraft, templateName: string): InvoiceTemplate {
+  const firstLine = draftLineItems(invoice)[0];
+  const dueDateOffsetDays = dayOffset(invoice.date, invoice.dueDate);
+  const billingDefaults = {
+    fromPartyName: invoice.fromPartyName || invoice.projectName,
+    fromAddress: invoice.fromAddress || '',
+    fromTaxId: invoice.fromTaxId || '',
+    fromIban: invoice.fromIban || '',
+    toPartyName: invoice.toPartyName || invoice.clientName,
+    toAddress: invoice.toAddress || '',
+    toTaxId: invoice.toTaxId || '',
+    taxRate: invoice.taxRate ?? 0,
+    paymentRef: invoice.paymentRef || '',
+    notes: invoice.notes || '',
+    currency: (invoice.currency || 'EUR').toUpperCase(),
+    dueDateOffsetDays,
+    lineItemDescription: firstLine?.description || invoice.lineItemTemplateDescription || '',
+  };
+
+  return {
+    projectId: invoice.projectId,
+    templateName: templateName.trim() || `${billingDefaults.fromPartyName || 'Company'} invoice`,
+    vendor: billingDefaults.fromPartyName,
+    client: billingDefaults.toPartyName,
+    currency: billingDefaults.currency,
+    notes: billingDefaults.notes,
+    dueDateOffsetDays,
+    lineDefaults: [
+      {
+        description: firstLine?.description || '',
+        quantity: String(firstLine?.quantity ?? invoice.hours ?? 1),
+        unitPrice: String(firstLine?.unitPrice ?? invoice.rate ?? 0),
+        amount: String(firstLine?.amount ?? invoice.amount ?? 0),
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+    locale: 'hr-HR',
+    compliance: {
+      standard: 'urn:cen.eu:en16931:2017',
+      taxScheme: 'VAT',
+      paymentRefFormat: invoice.paymentRef?.startsWith('HR') ? 'HR' : 'custom',
+    },
+    billingDefaults,
+    layout: { billingDefaults },
+  };
+}
+
+function buildTemplateFromImportedProjectTemplate(projectId: string, template: ProjectInvoiceTemplate): InvoiceTemplate {
+  const firstLine = template.lineDefaults[0];
+  const billingDefaults = {
+    fromPartyName: template.vendor,
+    fromAddress: '',
+    fromTaxId: '',
+    fromIban: '',
+    toPartyName: template.client,
+    toAddress: '',
+    toTaxId: '',
+    taxRate: 0,
+    paymentRef: '',
+    notes: template.notes || '',
+    currency: (template.currency || 'EUR').toUpperCase(),
+    dueDateOffsetDays: Number.isFinite(template.dueDateOffsetDays) ? template.dueDateOffsetDays : 30,
+    lineItemDescription: firstLine?.description || '',
+  };
+
+  return {
+    id: `project_template_${projectId}`,
+    projectId,
+    templateName: template.templateName || 'Project Invoice Template',
+    vendor: template.vendor,
+    client: template.client,
+    currency: billingDefaults.currency,
+    notes: template.notes || '',
+    dueDateOffsetDays: billingDefaults.dueDateOffsetDays,
+    lineDefaults: template.lineDefaults,
+    updatedAt: template.updatedAt || new Date().toISOString(),
+    locale: 'hr-HR',
+    compliance: {
+      standard: 'urn:cen.eu:en16931:2017',
+      taxScheme: 'VAT',
+      paymentRefFormat: 'custom',
+    },
+    billingDefaults,
+    layout: { billingDefaults },
+  };
+}
+
+function buildBillingTemplateOptions(
+  projectId: string,
+  cloudTemplates: InvoiceTemplate[],
+  projectTemplate: ProjectInvoiceTemplate | null,
+): InvoiceTemplate[] {
+  if (!projectTemplate) return cloudTemplates;
+  const localTemplate = buildTemplateFromImportedProjectTemplate(projectId, projectTemplate);
+  const hasEquivalentCloudTemplate = cloudTemplates.some((template) => (
+    template.templateName === localTemplate.templateName
+    && template.vendor === localTemplate.vendor
+    && template.client === localTemplate.client
+  ));
+  return hasEquivalentCloudTemplate ? cloudTemplates : [localTemplate, ...cloudTemplates];
+}
+function countWorkedDays(week: StoredWeek): number {
+  if (!Array.isArray(week.days)) return 0;
+  return week.days.filter((day) => (day.totalHours ?? day.hours ?? 0) > 0).length;
 }
 
 function buildDraftFromWeek(
@@ -197,18 +400,29 @@ function buildDraftFromWeek(
   projectName: string,
   clientName: string,
   personNameLookup: Record<string, { name?: string }>,
-  defaultRate: number,
+  personRate: PersonRate | undefined,
   todayIso: string,
   index: number,
   template?: ProjectInvoiceTemplate | null
 ): InvoiceDraft {
   const personName = personNameLookup[week.personId]?.name || week.personId;
   const hours = sumWeekHours(week);
-  const amount = hours * defaultRate;
+
+  // Graph-defined rate: hourly bills by hours, daily bills by worked days.
+  // No rate on the person's graph node → 0 (caller warns), never a made-up rate.
+  const usableRate = personRate && !personRate.masked ? personRate : undefined;
+  const rateType = usableRate?.rateType ?? 'unknown';
+  const rate = usableRate?.rate ?? 0;
+  const quantity = rateType === 'daily' ? countWorkedDays(week) : hours;
+  const amount = quantity * rate;
+  const unitLabel = rateType === 'daily' ? 'days' : 'hours';
+  const currency = usableRate?.currency || template?.currency || 'EUR';
+
   const shortPerson = week.personId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
   const weekStamp = week.weekStart.replace(/-/g, '');
   const base: InvoiceDraft = {
     id: `inv_${week.personId}_${week.weekStart}`,
+    templateId: null,
     number: `INV-${weekStamp}-${shortPerson || String(index + 1).padStart(3, '0')}`,
     projectId,
     projectName: projectName || 'Project',
@@ -220,17 +434,17 @@ function buildDraftFromWeek(
     date: todayIso,
     dueDate: addDays(todayIso, 30),
     hours,
-    rate: defaultRate,
+    rate,
     amount,
-    currency: 'USD',
+    currency,
     status: 'draft',
     timesheetKey: makeTimesheetKey(week.personId, week.weekStart),
     lineItems: [
       {
         id: `line_${week.personId}_${week.weekStart}`,
-        description: `Approved timesheet - ${week.weekLabel} (${personName})`,
-        quantity: hours,
-        unitPrice: defaultRate,
+        description: `Approved timesheet - ${week.weekLabel} (${personName}, ${quantity} ${unitLabel})`,
+        quantity,
+        unitPrice: rate,
         amount,
       },
     ],
@@ -256,6 +470,7 @@ function toInvoicePayload(invoice: InvoiceDraft) {
 
   return {
     projectId: invoice.projectId,
+    templateId: invoice.templateId ?? null,
     projectName: invoice.projectName,
     clientName: invoice.clientName,
     personId: invoice.personId,
@@ -271,14 +486,23 @@ function toInvoicePayload(invoice: InvoiceDraft) {
     hours: invoice.hours,
     rate: invoice.rate,
     amount: invoice.amount,
-    subtotal: invoice.amount,
-    taxTotal: 0,
-    total: invoice.amount,
+    subtotal: undefined,
+    taxTotal: undefined,
+    total: undefined,
     status: apiStatus,
     notes: invoice.notes,
     lineItemTemplateDescription: invoice.lineItemTemplateDescription,
     fromPartyId: partyIds.fromPartyId,
     toPartyId: partyIds.toPartyId,
+    fromPartyName: invoice.fromPartyName || partyIds.fromPartyName || invoice.projectName,
+    toPartyName: invoice.toPartyName || partyIds.toPartyName || invoice.clientName,
+    fromAddress: invoice.fromAddress ?? undefined,
+    toAddress: invoice.toAddress ?? undefined,
+    taxRate: invoice.taxRate ?? 0,
+    fromTaxId: invoice.fromTaxId ?? undefined,
+    toTaxId: invoice.toTaxId ?? undefined,
+    fromIban: invoice.fromIban ?? undefined,
+    paymentRef: invoice.paymentRef ?? undefined,
     timesheetIds: invoice.timesheetKey ? [invoice.timesheetKey] : [makeTimesheetKey(invoice.personId, invoice.weekStart)],
     lineItems,
   };
@@ -313,10 +537,11 @@ function normalizePersistedInvoice(
       : 0;
   const rate = typeof invoice.rate === 'number' ? invoice.rate : (lineItem ? Number(lineItem.unitPrice || 0) : 0);
   const amount = typeof invoice.amount === 'number' ? invoice.amount : invoice.total;
-  const syncState = invoice.syncState || (isRemoteProject(projectId) ? 'cloud' : 'local');
+  const syncState = invoice.syncState || 'cloud';
 
   return {
     id: invoice.id,
+    templateId: invoice.templateId ?? null,
     number: invoice.invoiceNumber,
     projectId,
     projectName: invoice.projectName || projectName || 'Project',
@@ -338,6 +563,15 @@ function normalizePersistedInvoice(
     syncState,
     timesheetKey,
     lineItems: Array.isArray(invoice.lineItems) ? invoice.lineItems : [],
+    fromPartyName: invoice.fromPartyName ?? null,
+    toPartyName: invoice.toPartyName ?? null,
+    fromAddress: invoice.fromAddress ?? null,
+    toAddress: invoice.toAddress ?? null,
+    taxRate: typeof invoice.taxRate === 'number' ? invoice.taxRate : 0,
+    fromTaxId: invoice.fromTaxId ?? null,
+    toTaxId: invoice.toTaxId ?? null,
+    fromIban: invoice.fromIban ?? null,
+    paymentRef: invoice.paymentRef ?? null,
   };
 }
 
@@ -357,7 +591,7 @@ export function InvoicesWorkspace({
   projectName?: string;
 }) {
   const store = useTimesheetStore();
-  const { selectedMonth } = useMonthContextSafe();
+  const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
   const { accessToken } = useAuth();
 
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -366,7 +600,11 @@ export function InvoicesWorkspace({
   const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
   const [isSavingInvoices, setIsSavingInvoices] = useState(false);
   const [updatingInvoiceId, setUpdatingInvoiceId] = useState<string | null>(null);
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [projectTemplate, setProjectTemplate] = useState<ProjectInvoiceTemplate | null>(() => readProjectInvoiceTemplate(projectId));
+  const [billingTemplates, setBillingTemplates] = useState<InvoiceTemplate[]>([]);
+  const [selectedBillingTemplateId, setSelectedBillingTemplateId] = useState<string>('none');
+  const [isTemplateBusy, setIsTemplateBusy] = useState(false);
 
   const currentProjectName = projectName || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectName') : null) || 'Project';
   const defaultClientName = useMemo(() => readClientName(projectId), [projectId]);
@@ -378,6 +616,16 @@ export function InvoicesWorkspace({
 
   const currentMonth = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
   const monthKey = monthKeyFromDate(currentMonth);
+  const selectedMonthLabel = formatMonthLabel(currentMonth);
+
+  const handleMonthChange = useCallback((nextMonth: Date) => {
+    setSelectedMonth(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 1));
+  }, [setSelectedMonth]);
+
+  const handleMonthInputChange = useCallback((value: string) => {
+    if (!/^\d{4}-\d{2}$/.test(value)) return;
+    handleMonthChange(new Date(`${value}-01T00:00:00`));
+  }, [handleMonthChange]);
 
   const allWeeksForMonth = useMemo(() => store.getAllWeeksForMonth(monthKey), [store, monthKey, store.version]);
   const approvedWeeks = useMemo(() => {
@@ -405,9 +653,26 @@ export function InvoicesWorkspace({
     }
   }, [accessToken, projectId]);
 
+  const refreshTemplates = useCallback(async () => {
+    setIsTemplateBusy(true);
+    try {
+      const data = await listTemplates(projectId, accessToken);
+      setBillingTemplates(data);
+    } catch (error) {
+      console.error('Failed to load invoice templates:', error);
+      toast.error('Could not load invoice templates.');
+    } finally {
+      setIsTemplateBusy(false);
+    }
+  }, [accessToken, projectId]);
+
   useEffect(() => {
     void refreshInvoices();
   }, [refreshInvoices]);
+
+  useEffect(() => {
+    void refreshTemplates();
+  }, [refreshTemplates]);
 
   const monthInvoices = useMemo(() => {
     return storedInvoices
@@ -441,6 +706,16 @@ export function InvoicesWorkspace({
     [monthInvoices, selectedInvoiceId]
   );
 
+  const availableBillingTemplates = useMemo(
+    () => buildBillingTemplateOptions(projectId, billingTemplates, projectTemplate),
+    [billingTemplates, projectId, projectTemplate],
+  );
+
+  const selectedBillingTemplate = useMemo(
+    () => availableBillingTemplates.find((template) => template.id === selectedBillingTemplateId) || null,
+    [availableBillingTemplates, selectedBillingTemplateId],
+  );
+
   useEffect(() => {
     if (selectedInvoiceId && !monthInvoices.some((invoice) => invoice.id === selectedInvoiceId)) {
       setSelectedInvoiceId(null);
@@ -449,24 +724,38 @@ export function InvoicesWorkspace({
 
   const handleGenerateDrafts = useCallback(async () => {
     if (approvedWeeks.length === 0) {
-      toast.info('No approved timesheets found for this month yet.');
+      toast.info(`No approved timesheets found for ${selectedMonthLabel} yet.`);
       return;
     }
 
-    const defaultRate = 95;
+    // Rates come from person nodes in the project graph (wg_projects.graph).
+    const rates = await resolveProjectRates(projectId).catch(() => ({} as Record<string, PersonRate>));
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const approvedDrafts = approvedWeeks.map((week, index) => buildDraftFromWeek(
-      week,
-      projectId,
-      currentProjectName,
-      defaultClientName,
-      personNameLookup,
-      defaultRate,
-      todayIso,
-      index,
-      projectTemplate,
+    const approvedDrafts = approvedWeeks.map((week, index) => {
+      const draft = buildDraftFromWeek(
+        week,
+        projectId,
+        currentProjectName,
+        defaultClientName,
+        personNameLookup,
+        rates[week.personId],
+        todayIso,
+        index,
+        projectTemplate,
+      );
+      return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
+    });
+
+    const missingRateNames = Array.from(new Set(
+      approvedDrafts.filter((draft) => draft.rate <= 0).map((draft) => draft.personName)
     ));
+    if (missingRateNames.length > 0) {
+      toast.warning(
+        `No rate found in the graph for: ${missingRateNames.join(', ')}. Drafts use 0 — set rates on their nodes in the Graph tab.`,
+        { duration: 8000 },
+      );
+    }
 
     const existingKeys = new Set(storedInvoices.map((invoice) => {
       const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, defaultClientName, personNameLookup, weekLookup);
@@ -499,7 +788,66 @@ export function InvoicesWorkspace({
     } finally {
       setIsSavingInvoices(false);
     }
-  }, [accessToken, approvedWeeks, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, storedInvoices, weekLookup]);
+  }, [accessToken, approvedWeeks, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
+
+  const handleSaveInvoice = useCallback(async (invoiceId: string, patch: Partial<InvoicePayload>) => {
+    await updateInvoice(invoiceId, patch, accessToken);
+    await refreshInvoices();
+    toast.success('Invoice updated.');
+  }, [accessToken, refreshInvoices]);
+
+  const handleApplyInvoiceTemplate = useCallback(async (invoice: InvoiceDraft, templateId: string) => {
+    const template = availableBillingTemplates.find((item) => item.id === templateId);
+    if (!template) {
+      toast.error('Template not found.');
+      return;
+    }
+
+    setIsTemplateBusy(true);
+    try {
+      await updateInvoice(invoice.id, buildTemplatePatch(invoice, template), accessToken);
+      await refreshInvoices();
+      toast.success(`Applied ${template.templateName}.`);
+    } catch (error) {
+      console.error('Failed to apply invoice template:', error);
+      const message = error instanceof Error ? error.message : 'Could not apply the template.';
+      toast.error(message);
+    } finally {
+      setIsTemplateBusy(false);
+    }
+  }, [accessToken, availableBillingTemplates, refreshInvoices]);
+
+  const handleSaveInvoiceTemplate = useCallback(async (invoice: InvoiceDraft, templateName: string) => {
+    setIsTemplateBusy(true);
+    try {
+      const saved = await saveTemplate(buildTemplateFromInvoice(invoice, templateName), accessToken);
+      await refreshTemplates();
+      if (saved.id) setSelectedBillingTemplateId(saved.id);
+      toast.success(`Saved ${saved.templateName} as a reusable invoice template.`);
+    } catch (error) {
+      console.error('Failed to save invoice template:', error);
+      const message = error instanceof Error ? error.message : 'Could not save the template.';
+      toast.error(message);
+    } finally {
+      setIsTemplateBusy(false);
+    }
+  }, [accessToken, refreshTemplates]);
+
+  const handleImportedTemplateSaved = useCallback(async (template: ProjectInvoiceTemplate): Promise<'api' | 'fallback'> => {
+    setProjectTemplate(template);
+    setIsTemplateBusy(true);
+    try {
+      const saved = await saveTemplate(buildTemplateFromImportedProjectTemplate(projectId, template), accessToken);
+      await refreshTemplates();
+      if (saved.id) setSelectedBillingTemplateId(saved.id);
+      return saved.id?.startsWith('tpl_') ? 'api' : 'fallback';
+    } catch (error) {
+      console.error('Failed to persist imported invoice template:', error);
+      return 'fallback';
+    } finally {
+      setIsTemplateBusy(false);
+    }
+  }, [accessToken, projectId, refreshTemplates]);
 
   const handleMarkIssued = useCallback(async (invoice: InvoiceDraft) => {
     setUpdatingInvoiceId(invoice.id);
@@ -515,31 +863,76 @@ export function InvoicesWorkspace({
     }
   }, [accessToken, refreshInvoices]);
 
-  const isCloudProject = isRemoteProject(projectId);
-  const syncBadge = syncBadgeInfo(isCloudProject);
+  const handleDeleteDraftInvoice = useCallback(async (invoice: InvoiceDraft) => {
+    const invoiceStatus = invoice.apiStatus ?? apiStatusFromUiStatus(invoice.status);
+    if (invoiceStatus !== 'draft') {
+      toast.info('Only draft invoices can be deleted. Use cancel/void for issued invoices.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete draft invoice ${invoice.number}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingInvoiceId(invoice.id);
+    try {
+      await deleteDraftInvoice(invoice.id, accessToken);
+      if (selectedInvoiceId === invoice.id) setSelectedInvoiceId(null);
+      await refreshInvoices();
+      toast.success(`Deleted draft invoice ${invoice.number}.`);
+    } catch (error) {
+      console.error('Failed to delete draft invoice:', error);
+      const message = error instanceof Error ? error.message : 'Could not delete the draft invoice.';
+      toast.error(message);
+    } finally {
+      setDeletingInvoiceId(null);
+    }
+  }, [accessToken, refreshInvoices, selectedInvoiceId]);
 
   if (selectedInvoice) {
+    const detailSyncBadge = syncBadgeInfo(selectedInvoice.syncState);
     return (
       <div className="flex h-full flex-col space-y-4">
         <div className="flex items-center justify-end gap-2">
-          <Badge variant="outline" className={syncBadge.className}>
-            {syncBadge.label}
+          <Badge variant="outline" className={detailSyncBadge.className}>
+            {detailSyncBadge.label}
           </Badge>
           {(selectedInvoice.apiStatus || selectedInvoice.status) === 'draft' ? (
-            <Button
-              variant="default"
-              className="bg-indigo-600 hover:bg-indigo-700"
-              onClick={() => void handleMarkIssued(selectedInvoice)}
-              disabled={updatingInvoiceId === selectedInvoice.id}
-            >
-              {updatingInvoiceId === selectedInvoice.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Mark issued
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                onClick={() => void handleDeleteDraftInvoice(selectedInvoice)}
+                disabled={deletingInvoiceId === selectedInvoice.id}
+              >
+                {deletingInvoiceId === selectedInvoice.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                Delete draft
+              </Button>
+              <Button
+                variant="default"
+                className="bg-indigo-600 hover:bg-indigo-700"
+                onClick={() => void handleMarkIssued(selectedInvoice)}
+                disabled={updatingInvoiceId === selectedInvoice.id}
+              >
+                {updatingInvoiceId === selectedInvoice.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Mark issued
+              </Button>
+            </>
           ) : null}
         </div>
         <InvoiceDetailPrintView
           invoice={selectedInvoice}
           onBack={() => setSelectedInvoiceId(null)}
+          onSave={selectedInvoice.syncState !== 'local'
+            ? (patch) => handleSaveInvoice(selectedInvoice.id, patch)
+            : undefined}
+          templates={availableBillingTemplates}
+          onApplyTemplate={selectedInvoice.syncState !== 'local'
+            ? (templateId) => handleApplyInvoiceTemplate(selectedInvoice, templateId)
+            : undefined}
+          onSaveTemplate={selectedInvoice.syncState !== 'local'
+            ? (templateName) => handleSaveInvoiceTemplate(selectedInvoice, templateName)
+            : undefined}
+          templateBusy={isTemplateBusy}
         />
       </div>
     );
@@ -554,10 +947,37 @@ export function InvoicesWorkspace({
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Invoices</h2>
           <p className="text-sm text-slate-500">
-            Generate invoice drafts directly from approved timesheets and persist them to Supabase.
+            Generate invoice drafts for {selectedMonthLabel} from approved timesheets and persist them to Supabase.
           </p>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex items-center rounded-md border border-slate-200 bg-white shadow-sm">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-r-none"
+              onClick={() => handleMonthChange(addMonths(currentMonth, -1))}
+              aria-label="Previous invoice month"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Input
+              type="month"
+              className="h-9 w-[145px] rounded-none border-0 px-2 text-center shadow-none focus-visible:ring-0"
+              value={monthKey}
+              onChange={(event) => handleMonthInputChange(event.target.value)}
+              aria-label="Invoice month"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-l-none"
+              onClick={() => handleMonthChange(addMonths(currentMonth, 1))}
+              aria-label="Next invoice month"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
             <Input
@@ -568,6 +988,19 @@ export function InvoicesWorkspace({
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
+          <Select value={selectedBillingTemplateId} onValueChange={setSelectedBillingTemplateId} disabled={isTemplateBusy}>
+            <SelectTrigger className="w-[220px] bg-white shadow-sm">
+              <SelectValue placeholder="Invoice template" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No saved template</SelectItem>
+              {availableBillingTemplates.map((template) => (
+                <SelectItem key={template.id || template.templateName} value={template.id || template.templateName}>
+                  {template.templateName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="default"
             className="bg-indigo-600 shadow-sm hover:bg-indigo-700"
@@ -575,7 +1008,7 @@ export function InvoicesWorkspace({
             disabled={isSavingInvoices}
           >
             {isSavingInvoices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-            Generate from Approved
+            Generate for {selectedMonthLabel}
           </Button>
         </div>
       </div>
@@ -585,7 +1018,7 @@ export function InvoicesWorkspace({
         defaultVendor={currentProjectName}
         defaultClient={defaultClientName}
         projectTemplate={projectTemplate}
-        onTemplateSaved={setProjectTemplate}
+        onTemplateSaved={handleImportedTemplateSaved}
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -593,6 +1026,7 @@ export function InvoicesWorkspace({
           <CardContent className="flex items-center justify-between p-4">
             <div className="space-y-1">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Approved Weeks</p>
+              <p className="text-[11px] text-slate-400">{selectedMonthLabel}</p>
               <p className="text-2xl font-bold text-slate-900">{approvedWeeks.length}</p>
             </div>
             <div className="rounded-full bg-emerald-100 p-3">
@@ -604,6 +1038,7 @@ export function InvoicesWorkspace({
           <CardContent className="flex items-center justify-between p-4">
             <div className="space-y-1">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Invoices</p>
+              <p className="text-[11px] text-slate-400">{selectedMonthLabel}</p>
               <p className="text-2xl font-bold text-slate-900">{visibleInvoices.length}</p>
             </div>
             <div className="rounded-full bg-slate-100 p-3">
@@ -615,6 +1050,7 @@ export function InvoicesWorkspace({
           <CardContent className="flex items-center justify-between p-4">
             <div className="space-y-1">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Invoice Hours</p>
+              <p className="text-[11px] text-slate-400">{selectedMonthLabel}</p>
               <p className="text-2xl font-bold text-slate-900">{totalInvoiceHours.toFixed(1)}h</p>
             </div>
             <div className="rounded-full bg-indigo-100 p-3">
@@ -626,6 +1062,7 @@ export function InvoicesWorkspace({
           <CardContent className="flex items-center justify-between p-4">
             <div className="space-y-1">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Invoice Amount</p>
+              <p className="text-[11px] text-slate-400">{selectedMonthLabel}</p>
               <p className="text-2xl font-bold text-slate-900">
                 {displayCurrency(totalInvoiceAmount, monthInvoices[0]?.currency)}
               </p>
@@ -650,13 +1087,16 @@ export function InvoicesWorkspace({
           ) : visibleInvoices.length === 0 ? (
             <div className="p-8 text-center">
               <p className="text-slate-500">
-                No invoice records yet. Click <strong>Generate from Approved</strong> to create and persist invoices.
+                No invoice records for {selectedMonthLabel}. Click <strong>Generate for {selectedMonthLabel}</strong> to create invoices from approved timesheets in this month.
               </p>
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
               {visibleInvoices.map((invoice) => {
                 const badgeInfo = statusBadgeInfo(invoice.apiStatus || invoice.status);
+                const rowSyncBadge = syncBadgeInfo(invoice.syncState);
+                const invoiceStatus = invoice.apiStatus ?? apiStatusFromUiStatus(invoice.status);
+                const canDeleteDraft = invoiceStatus === 'draft';
                 return (
                   <div
                     key={invoice.id}
@@ -688,13 +1128,30 @@ export function InvoicesWorkspace({
                         <Badge variant="outline" className={badgeInfo.className}>
                           {badgeInfo.label}
                         </Badge>
-                        <Badge variant="outline" className={syncBadge.className}>
-                          {syncBadge.label}
+                        <Badge variant="outline" className={rowSyncBadge.className}>
+                          {rowSyncBadge.label}
                         </Badge>
                       </div>
-                      <Button variant="ghost" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100">
-                        View
-                      </Button>
+                      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                        {canDeleteDraft ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleDeleteDraftInvoice(invoice);
+                            }}
+                            disabled={deletingInvoiceId === invoice.id}
+                          >
+                            {deletingInvoiceId === invoice.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1 h-3 w-3" />}
+                            Delete
+                          </Button>
+                        ) : null}
+                        <Button variant="ghost" size="sm">
+                          View
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );

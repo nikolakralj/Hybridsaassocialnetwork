@@ -21,6 +21,8 @@ import { listProjects } from './projects-api';
 import { listContracts } from './contracts-api';
 import { listTimesheets } from './timesheets-api';
 
+const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
+
 // ============================================================================
 // Real Data Fetchers
 // ============================================================================
@@ -488,17 +490,18 @@ function generateInsights(workStats: WorkStats): Insight[] {
     });
   }
 
-  // Always show social insight
-  insights.push({
-    id: 'insight-network',
-    type: 'network',
-    title: 'Grow your network',
-    description: 'Connect with other freelancers and companies to discover new opportunities.',
-    action_label: 'Browse Feed',
-    action_url: '/app/feed',
-    icon: 'Eye',
-    color: 'text-purple-600',
-  });
+  if (SHOW_SOCIAL_FEATURES) {
+    insights.push({
+      id: 'insight-network',
+      type: 'network',
+      title: 'Grow your network',
+      description: 'Connect with other freelancers and companies to discover new opportunities.',
+      action_label: 'Browse Feed',
+      action_url: '/app/feed',
+      icon: 'Eye',
+      color: 'text-purple-600',
+    });
+  }
 
   return insights.slice(0, 4);
 }
@@ -516,14 +519,17 @@ function generateQuickActions(workStats: WorkStats): QuickAction[] {
       color: 'bg-blue-500',
       route: '/app/approvals',
     },
-    {
+  ];
+
+  if (SHOW_SOCIAL_FEATURES) {
+    actions.push({
       id: 'action-2',
       label: 'Browse Jobs',
       icon: 'Briefcase',
       color: 'bg-purple-500',
       route: '/app/feed',
-    },
-  ];
+    });
+  }
 
   if (workStats.pending_approvals.count > 0) {
     actions.push({

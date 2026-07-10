@@ -20,6 +20,7 @@ import {
   ArrowRight,
   ChevronRight,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { EarningsChart } from './EarningsChart';
@@ -34,6 +35,12 @@ import type { DashboardData, RecentConnection, MessagePreview, Insight } from '.
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../../contexts/AuthContext';
 
+// Social/network surface (feed, connections, messaging, job board) is a
+// pre-product stub with no backend. Hidden until the WorkGraph billing loop
+// ships and the social layer is built for real (see ROADMAP.md Phase 9).
+// Set VITE_SHOW_SOCIAL_FEATURES=true to restore the social dashboard surface.
+const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user, accessToken } = useAuth();
@@ -41,6 +48,15 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => {
+    return localStorage.getItem(`workgraph-launchpad-dismissed:${userId}`) === 'true';
+  });
+
+  const [completedItems, setCompletedItems] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem(`workgraph-launchpad-completed:${userId}`);
+    return saved ? JSON.parse(saved) : {};
+  });
 
   useEffect(() => {
     loadDashboard();
@@ -94,6 +110,48 @@ export function DashboardPage() {
   const { work_stats, social_stats } = data;
   const firstName = user?.name ? user.name.split(' ')[0] : '';
 
+  const persona = user?.persona_type || 'freelancer';
+
+  const defaultItems = {
+    agency: [
+      { id: 'agency-org', label: 'Create or join your agency organization', actionText: 'Setup Org', route: '/app/settings', autoDone: !!user?.organization_id },
+      { id: 'agency-client', label: 'Add your first Client organization to the project graph', actionText: 'Add Client', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
+      { id: 'agency-roles', label: 'Define billing contract roles on your project workspace', actionText: 'Define Roles', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
+      { id: 'agency-invite', label: 'Invite your first Contractor to log hours', actionText: 'Invite Team', route: '/app/projects', autoDone: work_stats.active_contracts.count > 1 },
+      { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: work_stats.earnings.current_period > 0 },
+    ],
+    company: [
+      { id: 'company-profile', label: 'Set up your company profile and details', actionText: 'Profile Setup', route: '/app/company-profile', autoDone: !!user?.headline || !!user?.bio },
+      { id: 'company-project', label: 'Create your first project and define requirements', actionText: 'New Project', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
+      { id: 'company-approval', label: 'Configure timesheet approval chain pathways', actionText: 'Review Approvals', route: '/app/approvals', autoDone: work_stats.pending_approvals.count > 0 || work_stats.hours.total > 0 },
+      { id: 'company-finance', label: 'Invite a manager or finance team member', actionText: 'Add Teammate', route: '/app/settings', autoDone: false },
+    ],
+    freelancer: [
+      { id: 'free-profile', label: 'Complete your professional profile details', actionText: 'Update Profile', route: '/app/profile', autoDone: !!user?.headline || !!user?.bio || (user?.skills && user.skills.length > 0) },
+      { id: 'free-project', label: 'Create or join your first project workspace', actionText: 'Open Projects', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
+      { id: 'free-log', label: 'Log your hours for the current week', actionText: 'Enter Hours', route: '/app/approvals', autoDone: work_stats.hours.total > 0 },
+      { id: 'free-submit', label: 'Submit your timesheet for review', actionText: 'Submit Week', route: '/app/approvals', autoDone: work_stats.pending_approvals.count > 0 },
+    ],
+  };
+
+  const currentItems = defaultItems[persona] || defaultItems.freelancer;
+
+  const completedCount = currentItems.filter(item => item.autoDone || !!completedItems[item.id]).length;
+  const percentComplete = currentItems.length > 0 ? (completedCount / currentItems.length) * 100 : 0;
+
+  const toggleItem = (itemId: string) => {
+    setCompletedItems(prev => {
+      const next = { ...prev, [itemId]: !prev[itemId] };
+      localStorage.setItem(`workgraph-launchpad-completed:${userId}`, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleDismiss = () => {
+    setOnboardingDismissed(true);
+    localStorage.setItem(`workgraph-launchpad-dismissed:${userId}`, 'true');
+  };
+
   return (
     <div className="space-y-6 pb-8">
       {/* Header */}
@@ -107,15 +165,17 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 gap-2 text-sm"
-            onClick={() => handleNavigate('/app/feed')}
-          >
-            <Briefcase className="w-3.5 h-3.5" />
-            Browse Jobs
-          </Button>
+          {SHOW_SOCIAL_FEATURES && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-2 text-sm"
+              onClick={() => handleNavigate('/app/feed')}
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              Browse Jobs
+            </Button>
+          )}
           <Button
             size="sm"
             className="h-9 gap-2 text-sm"
@@ -126,6 +186,86 @@ export function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Launch Checklist */}
+      {!onboardingDismissed && (
+        <Card className="border-border/60 overflow-hidden bg-gradient-to-br from-card to-accent/5 relative group/checklist shadow-sm transition-all duration-200">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="absolute top-3 right-3 text-muted-foreground hover:text-foreground hover:bg-accent/40 w-7 h-7"
+            onClick={handleDismiss}
+          >
+            <X className="w-4 h-4" />
+          </Button>
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-accent-brand/10 flex items-center justify-center text-accent-brand">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground m-0 font-sans">WorkGraph Launch Pad</h3>
+                <p className="text-xs text-muted-foreground m-0 mt-0.5">Complete these setup steps to activate your workflow.</p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-4">
+            {/* Progress Section */}
+            <div>
+              <div className="flex justify-between items-center text-xs mb-1.5 font-medium">
+                <span className="text-muted-foreground">Setup Progress</span>
+                <span className="text-foreground font-semibold">{Math.round(percentComplete)}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-accent-brand to-violet-500 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${percentComplete}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Checklist items */}
+            <div className="grid md:grid-cols-2 gap-3 pt-2">
+              {currentItems.map((item) => {
+                const isChecked = item.autoDone || !!completedItems[item.id];
+                return (
+                  <div 
+                    key={item.id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-background/50 hover:bg-background/80 hover:border-border transition-all duration-150 group/item"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 pr-2">
+                      <button 
+                        type="button"
+                        onClick={() => toggleItem(item.id)}
+                        disabled={item.autoDone}
+                        className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-all ${
+                          isChecked 
+                            ? 'bg-emerald-500 border-emerald-500 text-white' 
+                            : 'border-muted-foreground/30 hover:border-accent-brand/80'
+                        } ${item.autoDone ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                      >
+                        {isChecked && <CheckCircle className="w-3.5 h-3.5 fill-white text-emerald-500" />}
+                      </button>
+                      <span className={`text-xs font-medium truncate ${isChecked ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                        {item.label}
+                      </span>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 px-2.5 text-[11px] font-medium text-accent-brand hover:text-accent-brand hover:bg-accent-brand/10 transition-colors"
+                      onClick={() => handleNavigate(item.route)}
+                    >
+                      {item.actionText}
+                      <ArrowRight className="w-3 h-3 ml-1 transition-transform group-hover/item:translate-x-0.5" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Top Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -200,13 +340,13 @@ export function DashboardPage() {
             ))}
           </div>
 
-          {/* Network Feed */}
-          <NetworkFeed items={data.network_feed} />
+          {SHOW_SOCIAL_FEATURES && <NetworkFeed items={data.network_feed} />}
         </div>
 
         {/* Right Sidebar */}
         <div className="space-y-6">
           {/* Profile Card */}
+          {SHOW_SOCIAL_FEATURES && (
           <Card className="border-border/60 overflow-hidden">
             <CardHeader className="pb-3">
               <h3 className="text-sm font-semibold text-foreground">Your Profile</h3>
@@ -250,6 +390,7 @@ export function DashboardPage() {
               </div>
             </CardContent>
           </Card>
+          )}
 
           {/* Insights */}
           <Card className="border-border/60">
@@ -271,6 +412,7 @@ export function DashboardPage() {
           </Card>
 
           {/* Recent Connections */}
+          {SHOW_SOCIAL_FEATURES && (
           <Card className="border-border/60">
             <CardHeader className="pb-3">
               <h3 className="text-sm font-semibold text-foreground">Recent Connections</h3>
@@ -281,14 +423,18 @@ export function DashboardPage() {
               ))}
             </CardContent>
           </Card>
+          )}
 
           {/* Job Opportunities */}
-          <JobOpportunitiesCard
-            opportunities={data.job_opportunities}
-            onViewAll={() => handleNavigate('/app/feed')}
-          />
+          {SHOW_SOCIAL_FEATURES && (
+            <JobOpportunitiesCard
+              opportunities={data.job_opportunities}
+              onViewAll={() => handleNavigate('/app/feed')}
+            />
+          )}
 
           {/* Messages */}
+          {SHOW_SOCIAL_FEATURES && (
           <Card className="border-border/60">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -306,6 +452,7 @@ export function DashboardPage() {
               ))}
             </CardContent>
           </Card>
+          )}
         </div>
       </div>
     </div>

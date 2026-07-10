@@ -36,12 +36,15 @@ export function AppHeader() {
         .slice(0, 2)
     : "??";
 
+  // Feed is a pre-product social stub — hidden until the social layer ships
+  // for real (ROADMAP Phase 9). Same gate as the dashboard social sections.
+  const showSocial = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
   const navItems = [
     { label: "Dashboard", path: "/app" },
     { label: "Projects", path: "/app/projects" },
     { label: "Approvals", path: "/app/approvals" },
     { label: "Contracts", path: "/app/contracts" },
-    { label: "Feed", path: "/app/feed" },
+    ...(showSocial ? [{ label: "Feed", path: "/app/feed" }] : []),
   ];
 
   return (
@@ -149,10 +152,12 @@ export function AppHeader() {
                 <FileText className="w-4 h-4 mr-2" />
                 New Contract
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/app/feed')} className="cursor-pointer">
-                <Users className="w-4 h-4 mr-2" />
-                Write a Post
-              </DropdownMenuItem>
+              {showSocial && (
+                <DropdownMenuItem onClick={() => navigate('/app/feed')} className="cursor-pointer">
+                  <Users className="w-4 h-4 mr-2" />
+                  Write a Post
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 

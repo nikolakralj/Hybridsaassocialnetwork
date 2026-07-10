@@ -421,7 +421,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       const entries = await Promise.all(
         submittedWeekRefs.map(async ({ key }) => {
           try {
-            const pending = await getLatestPendingApproval('timesheet', key);
+            const pending = await getLatestPendingApproval('timesheet', key, projectId);
             return [key, {
               approverNodeId: pending?.approverNodeId,
               approverUserId: pending?.approverUserId,

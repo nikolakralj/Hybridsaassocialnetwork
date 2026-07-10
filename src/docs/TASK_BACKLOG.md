@@ -1,8 +1,26 @@
-# WorkGraph Task Backlog
+﻿# WorkGraph Task Backlog
 
-**Version:** 2.1 · **Date:** 2026-04-26 · **Owner:** Claude (writes) / Codex (status updates)
+**Version:** 3.0 · **Date:** 2026-05-30 · **Owner:** Claude (writes) / Codex (status updates)
 
 Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]`
+
+> **Refocus (2026-05-30):** Phase 4 invoice (money loop) promoted ahead of
+> A2/A3 cosmetic polish. Social dashboard sections already gated behind
+> `VITE_SHOW_SOCIAL_FEATURES=true` (off by default). See ROADMAP Phase 9.
+
+---
+
+## 🔴 CRITICAL — Do These First
+
+| # | Action | Owner | Status |
+|---|---|---|---|
+| M5 | Apply `016_fix_wg_project_members_scope_recursion.sql` — applied 2026-07-08 via Supabase MCP, policy + fn verified live | Claude | `[DONE]` |
+| DEPLOY | Run `supabase functions deploy server` — **an OLD edge build (`make-server-f8b491be`) is live**; B3 guards + approval-token routes need a fresh deploy | Nikola | `[READY]` |
+| M6 | `010_phase4_invoice_schema.sql` — verified already applied (wg_invoices + wg_invoice_templates + RLS live, 2026-07-08) | — | `[DONE]` |
+
+> **Note (2026-07-08):** Supabase free tier **auto-paused** the project (status INACTIVE) —
+> this is what "broke" timesheet submit alongside the 016 recursion. Restored via MCP.
+> If the app suddenly can't reach the DB, check project status first.
 
 ---
 
@@ -14,6 +32,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | M2 | `013_graph_node_id_and_invite_link.sql` — verified applied 2026-05-30 | `[DONE]` |
 | M3 | `014_approval_records_rls_fix.sql` — applied 2026-04-24 | `[DONE]` |
 | M4 | `015_purge_dead_legacy_tables.sql` — drops orphaned pre-wg_ tables, applied 2026-05-30 | `[DONE]` |
+| M5 | `016_fix_wg_project_members_scope_recursion.sql` — RLS recursion fix, applied 2026-07-08 | `[DONE]` |
 
 ---
 
@@ -65,7 +84,116 @@ All listed files/folders deleted. `ProjectTimesheetsView.tsx` preserved. Build p
 
 ---
 
-## Tier 2 — Sprint A (Approvals UX)
+## Tier 2a — Phase 4: Invoice / Money Loop (PROMOTED)
+
+> Moved ahead of A2/A3 cosmetic polish. The money loop is the revenue.
+
+### P4-1 · `invoice-orchestrator` · `[DONE]` — 2026-07-08
+
+Implemented by Claude. `invoices-api.ts` fully rewritten:
+- **Was double-broken:** used `isUuid()` as the cloud gate (all real `proj_*` TEXT-id projects
+  silently went to localStorage) AND called undeployed edge-function routes.
+- Now uses the shared Supabase client directly against `wg_invoices` / `wg_invoice_templates`
+  (same pattern as projects-api). localStorage kept only as offline fallback (`syncState: 'local'`).
+- New `resolveProjectRates()`: reads hourly/daily rates from person nodes in `wg_projects.graph`
+  (unmasked source of truth). `InvoicesWorkspace` generate flow uses per-person graph rates —
+  the hardcoded `defaultRate = 95` is gone. Missing/masked rate → 0 + warning toast, never a fake rate.
+- Daily contracts bill by worked-day count; hourly by hours. Currency: person → template → EUR.
+- Constraint handling: due_date clamp, template FK retry, duplicate invoice-number retry,
+  `.update().eq()` row-count check per CLAUDE.md rule #1.
+- **Live-verified in browser:** `GET /rest/v1/wg_invoices?project_id=eq.proj_1780…` → 200 via RLS.
+  Empty-state guard verified. Build passes.
+
+⚠️ Graphs currently have **0 person nodes with rates set** — set rates in the Graph tab
+before generating real invoices, or drafts will be 0-amount with a warning.
+
+---
+
+### P4-2 · `invoice-list-view` · `[DONE]` — 2026-07-08
+
+Already existed in `InvoicesWorkspace.tsx` (project-scoped list, month filter, search,
+status chips: Draft grey / Issued blue / Paid green / Partially paid amber / Overdue rose)
+— verified rendering live against `wg_invoices` with the rewritten API. Per-invoice
+cloud/local sync badge now reflects actual `syncState` instead of a project-level guess.
+
+---
+
+### P4-3 · `invoice-pdf-export` · `[READY]`
+
+**Assignee:** Codex `frontend-developer`
+**Goal:** Generate downloadable PDF from invoice data.
+
+**Acceptance criteria:**
+- [ ] PDF export button on invoice detail
+- [ ] PDF includes line items, totals, parties, VAT, tax IDs, IBAN, payment ref (all now on the record)
+- [ ] `npm run build` passes
+
+---
+
+### P4-4 · `editable-invoice-draft` · `[DONE]` — 2026-07-10
+
+Migration 017 (`from_party_name`, `to_party_name`, `from_address`, `to_address`, `tax_rate`) applied.
+`updateInvoice()` added to invoices-api (fetch-merge-recompute; totals always consistent with
+line items + VAT %; permission/duplicate-number errors surfaced). `InvoiceDetailPrintView`
+edit mode: invoice number, dates, From/Bill-To (name, address, OIB, IBAN), per-line
+description/qty/rate with live amounts, VAT %, payment reference, notes. Hardcoded
+"WorkGraph Billing / billing@workgraph.com" removed; party names prefill from graph parties.
+**Live-verified:** rate €85 + VAT 25% on a 32h week → €2,720 + €680 = €3,400 persisted
+(user edited in parallel — concurrent saves merged correctly). Build passes.
+
+---
+
+### P4-4b - `invoice-template-profiles` - `[DONE]` - 2026-07-10
+
+Implemented by Codex. Reusable invoice billing templates now sit on top of the existing
+`wg_invoice_templates` table using `layout.billingDefaults`; no migration required.
+Saved templates capture repeat-client invoice defaults: seller/buyer legal names, addresses,
+tax IDs/OIB, IBAN, VAT %, payment reference, notes, currency, due-date offset, and first-line
+wording. Draft invoice detail can save the current draft as a template and apply a saved
+template to a draft. The main invoice toolbar can select a saved template before generating
+new drafts from approved timesheets. Issued/finalized invoices stay immutable; totals still
+recompute from line items + VAT through the API layer. Build passes.
+
+Strategic note: this is the Stripe-like foundation - canonical invoice data plus reusable
+rendering/business defaults now; EN16931/Peppol XML export and country-specific delivery
+networks belong in a later compliance/export layer.
+
+---
+### P4-5 · `contract-rate-extraction` · `[READY]`
+
+**Assignee:** Claude (AI integration) — needs edge deploy + `ANTHROPIC_API_KEY` secret
+**Goal:** Upload a contract PDF → Claude extracts rate, rate type (hourly/daily/fixed),
+currency, overtime multiplier → prefills a review form → **human confirms** → applies to
+the person's graph node / invoice defaults. AI reads, human decides — never auto-applied.
+
+**Acceptance criteria:**
+- [ ] Upload PDF/image on project → extraction returns {rate, rateType, currency, overtimeMultiplier?}
+- [ ] Review/edit form before anything is saved
+- [ ] Confirmed values written to person node data (graph) so P4-1 resolver picks them up
+- [ ] Graceful failure when nothing found (manual entry fallback)
+
+---
+
+### P4-6 · `overtime-invoice-lines` · `[READY]`
+
+**Assignee:** Codex `frontend-developer`
+**Goal:** Weeks containing `TimeEntry.category === 'overtime'` produce a separate invoice
+line: overtime hours × `rateMultiplier` (default 1.5) × base rate. Regular hours stay on
+the base line. Data model already supports it (`TimeEntry.category`, `rateMultiplier`).
+
+---
+
+### A4 · `rate-definition-ui` · `[READY]`
+
+**Assignee:** Codex `frontend-developer`
+**Goal:** There is currently NO UI to set rates (NodeDetailDrawer displays them read-only).
+Add editable rate fields (contract type hourly/daily/fixed + rate + currency) to the person
+node drawer, persisting into `wg_projects.graph` node data — the source `resolveProjectRates()`
+reads. Respect `can_view_rates` masking.
+
+---
+
+## Tier 2b — Sprint A (Approvals UX)
 
 ### A1 · `submit-timesheet-project-picker` · `[DONE]` — 2026-05-30
 
@@ -73,41 +201,26 @@ All listed files/folders deleted. `ProjectTimesheetsView.tsx` preserved. Build p
 
 ---
 
-### A2 · `approval-queue-chain-visualization` · `[READY]`
+### A2 · `approval-queue-chain-visualization` · `[DONE]` — 2026-07-10 (workbench) / follow-up: SubmissionsView
 
-**Assignee:** Codex `frontend-developer`
-**Goal:** Each approval queue row shows a mini chain: `Submitter → Party1 → Party2` with
-filled/faded dots showing the current step.
-
-**Files:**
-- `src/components/approvals/ApprovalsWorkbench.tsx`
-- `src/components/approvals/SubmissionsView.tsx`
-
-**Spec:** `src/docs/specs/APPROVAL_SUBMISSIONS_SPEC.md`
-
-**Acceptance criteria:**
-- [ ] Queue rows show truncated chain with current step highlighted
-- [ ] Works for 2-party and 3-party chains
-- [ ] Does not break 6-column grid layout
-- [ ] `npm run build` passes
+`ApprovalChainMini` in `ApprovalsWorkbench.tsx`: per-row chain `Submitter → Party1 → Party2`
+with dots — done steps emerald, current step amber ring (or emerald/rose once decided),
+future steps faded. Uses `subject_snapshot.approvalRoute`; synthesizes steps for
+pre-route records. Serves both queue and my-submissions scopes of the workbench.
+Build passes. **Follow-up `[READY]`:** reuse in `SubmissionsView.tsx` card list.
 
 ---
 
-### A3 · `approval-queue-ux-polish` · `[READY]`
+### A3 · `approval-queue-ux-polish` · `[DONE]` — 2026-07-10
 
-**Assignee:** Codex `frontend-developer`
-**Goal:** Column headers sentence case; org name from snapshot (not "Unknown organization");
-status chip consistency; empty-state message.
-
-**Files:**
-- `src/components/approvals/ApprovalsWorkbench.tsx`
-
-**Acceptance criteria:**
-- [ ] Sentence-case headers
-- [ ] Real org name from `subject_snapshot.orgName` or nameDirectory
-- [ ] Status chips: Pending (yellow), Approved (green), Rejected (red), Draft (grey)
-- [ ] Empty state: "No pending approvals" with icon
-- [ ] `npm run build` passes
+- Sentence-case headers; "Current Approver" column → "Approval chain" (hosts A2 viz)
+- Organization column now uses resolved `item.submitterOrg` (was duplicating person.role)
+- Status chips colored: Pending amber, Approved green, Rejected rose, other grey (`statusChipClass`)
+- Duplicate filter rows merged into ONE segmented control with counts (standalone);
+  embedded variant renders no inner filter row (host owns pills)
+- Removed noise: explainer paragraph, "Captured at submission", "Step x of y" duplicates;
+  day mini-grid em-dashes → dots
+- Empty state already present ("No pending approvals"), verified live. Build passes.
 
 ---
 
@@ -173,14 +286,8 @@ status chip consistency; empty-state message.
 
 ## Phase 4 Queue — Invoice Generation
 
-Tier 0–1 complete. Phase 4 is now unblocked but deprioritized until Sprint A–C are done.
-
-| Task | Description | Owner | Status |
-|---|---|---|---|
-| P4-1 | Invoice orchestrator: approved timesheet → invoice draft | Codex backend | `[READY]` |
-| P4-2 | Invoice list view with status chips | Codex frontend | `[READY]` |
-| P4-3 | Invoice PDF export | Codex frontend | `[READY]` |
-| P4-4 | Apply migration 010 (`wg_invoices`) | Nikola | `[READY]` |
+**PROMOTED to Tier 2a above.** P4-1, P4-2, P4-3 now take priority over A2/A3 cosmetic polish.
+P4-4 (migration 010) is in the CRITICAL section at the top of this document.
 
 Spec: `src/docs/specs/PHASE4_INVOICE_SPEC.md`
 
@@ -190,6 +297,11 @@ Spec: `src/docs/specs/PHASE4_INVOICE_SPEC.md`
 
 | Task | Completed |
 |---|---|
+| P4-1 invoice-orchestrator (graph rates, direct Supabase persistence) | 2026-07-08 |
+| P4-2 invoice-list-view (verified live) | 2026-07-08 |
+| M5 016 RLS recursion fix applied + verified | 2026-07-08 |
+| M6 010 invoice schema verified applied | 2026-07-08 |
+| Social gate extended: AppHeader Feed nav + Write-a-Post + onboarding redirect + page title | 2026-07-08 |
 | A1 submit-timesheet-project-picker | 2026-05-30 |
 | B3 server-side-role-enforcement (deploy pending) | 2026-05-30 |
 | M4 015_purge_dead_legacy_tables applied | 2026-05-30 |

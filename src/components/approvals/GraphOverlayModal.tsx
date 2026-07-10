@@ -75,6 +75,13 @@ export function GraphOverlayModal({
 
   if (!item) return null;
 
+  const actorId =
+    item.approverUserId
+    || item.subjectSnapshot?.currentApproverUserRef
+    || item.approverNodeId
+    || item.partyId
+    || 'current-user';
+
   // Handle approve from graph
   async function handleApprove() {
     if (!item) return;
@@ -82,7 +89,7 @@ export function GraphOverlayModal({
     setIsApproving(true);
     try {
       await approveItem(item.id, {
-        approvedBy: 'current-user',
+        approvedBy: actorId,
         notes: 'Approved from graph overlay',
       });
       
@@ -109,7 +116,7 @@ export function GraphOverlayModal({
     setIsRejecting(true);
     try {
       await rejectItem(item.id, {
-        rejectedBy: 'current-user',
+        rejectedBy: actorId,
         reason,
       });
       

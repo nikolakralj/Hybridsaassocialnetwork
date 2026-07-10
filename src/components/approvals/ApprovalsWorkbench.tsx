@@ -75,6 +75,8 @@ export interface UIApprovalItem {
   amount: number | null;
   canViewRates: boolean;
   currentApproverName?: string;
+  approverUserId?: string;
+  approverNodeId?: string;
   submitterOrg?: string;
   routeLabel?: string;
   approvalTrail?: Array<{
@@ -389,7 +391,10 @@ export function ApprovalsWorkbench({
           name: item.projectName || item.projectId || "Unknown Project",
         },
         stepOrder: item.approvalLayer,
-        totalSteps: item.approvalLayer,
+        totalSteps: Math.max(
+          item.approvalLayer,
+          Array.isArray(subjectSnapshot?.approvalRoute) ? subjectSnapshot.approvalRoute.length : 0,
+        ),
         policyVersion: 1,
         partyId: item.approverNodeId || item.approverUserId,
         partyName: item.approverName,
@@ -410,6 +415,8 @@ export function ApprovalsWorkbench({
             : null),
         canViewRates: subjectSnapshot?.canViewRates ?? !!item.timesheetData?.hourlyRate,
         currentApproverName: subjectSnapshot?.currentApproverName || item.approverName,
+        approverUserId: item.approverUserId,
+        approverNodeId: item.approverNodeId,
         submitterOrg: subjectSnapshot?.submitterOrg || submitterOrgName || "Unknown organization",
         routeLabel: subjectSnapshot?.routeLabel,
         approvalTrail: item.approvalTrail,
@@ -482,9 +489,29 @@ export function ApprovalsWorkbench({
   const hasActiveFilters =
     searchQuery.trim().length > 0 || typeFilter !== "all" || effectiveStatusFilter !== "all" || sortBy !== "newest";
 
+  const isItemActionableByViewer = (item: UIApprovalItem) => {
+    if (item.status !== "pending" || item.gating.blocked) return false;
+
+    if (viewerNodeId) {
+      const itemApproverNodeIds = new Set([
+        item.partyId,
+        item.approverNodeId,
+        item.subjectSnapshot?.currentApproverNodeId,
+      ].filter(Boolean));
+
+      if (itemApproverNodeIds.has(viewerNodeId)) return true;
+
+      const party = approvalDirectory[item.project.id]?.find((entry) => itemApproverNodeIds.has(entry.id));
+      const viewerMembership = party?.people?.find((person) => person.id === viewerNodeId);
+      return viewerMembership?.canApprove === true;
+    }
+
+    return Boolean(user?.id && item.approverUserId === user.id);
+  };
+
   const selectableItemIds = useMemo(
-    () => filteredItems.filter((item) => item.status === "pending" && !item.gating.blocked).map((item) => item.id),
-    [filteredItems],
+    () => filteredItems.filter(isItemActionableByViewer).map((item) => item.id),
+    [approvalDirectory, filteredItems, user?.id, viewerNodeId],
   );
 
   const selectableItemIdsKey = selectableItemIds.join("|");
@@ -517,11 +544,19 @@ export function ApprovalsWorkbench({
     });
   };
 
-  const handleApprove = async (itemId: string) => {
-    setApprovingItemId(itemId);
+  const resolveApprovalActorId = (item: UIApprovalItem) => (
+    item.approverUserId
+    || item.subjectSnapshot?.currentApproverUserRef
+    || viewerNodeId
+    || user?.id
+    || "current-user"
+  );
+
+  const handleApprove = async (item: UIApprovalItem) => {
+    setApprovingItemId(item.id);
 
     try {
-      await approveItem(itemId, { approvedBy: user?.id || "current-user" });
+      await approveItem(item.id, { approvedBy: resolveApprovalActorId(item) });
       toast.success("Approval recorded");
       notifyApprovalMutation();
       await loadApprovals();
@@ -570,10 +605,11 @@ export function ApprovalsWorkbench({
     setBulkApproving(true);
 
     try {
-      await bulkApprove({
-        approvedBy: user?.id || "current-user",
-        itemIds: Array.from(selectedItems),
-      });
+      const selectedApprovals = items.filter((item) => selectedItems.has(item.id));
+      const approvedBy = selectedApprovals.length === 1
+        ? resolveApprovalActorId(selectedApprovals[0])
+        : viewerNodeId || user?.id || "current-user";
+      await bulkApprove({ approvedBy, itemIds: Array.from(selectedItems) });
       toast.success(`Approved ${selectedItems.size} item${selectedItems.size === 1 ? "" : "s"}`);
       setSelectedItems(new Set());
       notifyApprovalMutation();
@@ -690,50 +726,38 @@ export function ApprovalsWorkbench({
         )}
       >
         <div className="flex flex-col gap-4 border-b border-border/60 pb-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={effectiveStatusFilter === "pending" ? "default" : "secondary"} className="rounded-full px-3">
-                Pending {stats.pending}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3">
-                Total {stats.total}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3">
-                Approved {stats.approved}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-3">
-                Rejected {stats.rejected}
-              </Badge>
+          {/* Embedded hosts (ProjectApprovalsTab) render their own status filter pills. */}
+          {externalStatusFilter ? null : (
+            <div className="inline-flex w-fit items-center rounded-full border border-border/60 bg-background/80 p-1">
+              {([
+                { value: "pending" as const, label: "Pending", count: stats.pending },
+                { value: "all" as const, label: "All", count: stats.total },
+                { value: "approved" as const, label: "Approved", count: stats.approved },
+                { value: "rejected" as const, label: "Rejected", count: stats.rejected },
+              ]).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setStatusFilter(option.value)}
+                  className={cn(
+                    "rounded-full px-3.5 py-1.5 text-sm transition-colors",
+                    statusFilter === option.value
+                      ? "bg-foreground text-background font-medium"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                  <span
+                    className={cn(
+                      "ml-1.5 tabular-nums text-xs",
+                      statusFilter === option.value ? "text-background/70" : "text-muted-foreground/60",
+                    )}
+                  >
+                    {option.count}
+                  </span>
+                </button>
+              ))}
             </div>
-
-            {!externalStatusFilter && (
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                <Button
-                  size="sm"
-                  variant={statusFilter === "all" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("all")}
-                  className="rounded-full"
-                >
-                  All statuses
-                </Button>
-                <Button
-                  size="sm"
-                  variant={statusFilter === "pending" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("pending")}
-                  className="rounded-full"
-                >
-                  Pending first
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {effectiveStatusFilter === "pending" && (
-            <p className="m-0 text-xs text-muted-foreground">
-              {viewScope === "submitted"
-                ? "Showing submitted items only. Switch to All statuses to see the full approval trail for your submissions."
-                : "Showing pending items only. Switch to All statuses to see approved/rejected history."}
-            </p>
           )}
 
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -747,21 +771,7 @@ export function ApprovalsWorkbench({
               />
             </div>
 
-            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-[repeat(4,minmax(0,1fr))]">
-              {!externalStatusFilter && (
-                <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as WorkbenchStatus)}>
-                  <SelectTrigger className="h-10 w-full min-w-0 text-sm xl:min-w-[150px]">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-
+            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 xl:w-auto xl:grid-cols-[repeat(3,minmax(0,1fr))]">
               <Select value={typeFilter} onValueChange={setTypeFilter}>
                 <SelectTrigger className="h-10 w-full min-w-0 text-sm xl:min-w-[140px]">
                   <SelectValue placeholder="Type" />
@@ -859,11 +869,6 @@ export function ApprovalsWorkbench({
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                Approvers can review items row-by-row or bulk approve a whole month. Open a detail packet for context, keep the
-                table as the fast scan surface, and use history for the audit trail.
-              </div>
-
               <div className="rounded-xl border border-border/60 bg-background/80 px-4 py-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
@@ -888,23 +893,23 @@ export function ApprovalsWorkbench({
                   <thead className="sticky top-0 z-10 bg-background/95 text-left backdrop-blur supports-[backdrop-filter]:bg-background/85">
                     <tr className="border-b border-border/60">
                       <th className="px-3 py-2.5 w-[42px]"></th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Type</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Person</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Organization</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Project</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Period</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Hours / Amount</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Current Approver</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Submitted</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Status</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground text-right">Actions</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Type</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Person</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Organization</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Project</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Period</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Hours / amount</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Approval chain</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Submitted</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                      <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredItems.map((item) => {
                       const isPending = item.status === "pending";
                       const isBlocked = item.gating.blocked;
-                      const isSelectable = isPending && !isBlocked;
+                      const isSelectable = isItemActionableByViewer(item);
                       const isApproving = approvingItemId === item.id;
                       const showAmount = item.canViewRates && item.amount !== null;
                       return (
@@ -920,19 +925,16 @@ export function ApprovalsWorkbench({
                             />
                           </td>
                           <td className="px-3 py-3 align-top">
-                            <div className="space-y-1">
-                              <div className="font-medium text-foreground">{formatObjectType(item.objectType)}</div>
-                              <div className="text-xs text-muted-foreground">Step {item.stepOrder} of {item.totalSteps}</div>
-                            </div>
+                            <div className="font-medium text-foreground">{formatObjectType(item.objectType)}</div>
                           </td>
                           <td className="px-3 py-3 align-top">
                             <div className="space-y-0.5">
                               <div className="font-medium text-foreground">{item.person.name}</div>
-                              <div className="text-xs text-muted-foreground">{item.person.role || "Unknown person role"}</div>
+                              <div className="text-xs text-muted-foreground">{item.person.role || "—"}</div>
                             </div>
                           </td>
                           <td className="px-3 py-3 align-top">
-                            <div className="font-medium text-foreground">{item.person.role || "—"}</div>
+                            <div className="font-medium text-foreground">{item.submitterOrg || "—"}</div>
                           </td>
                           <td className="px-3 py-3 align-top">
                             <div className="font-medium text-foreground">
@@ -957,28 +959,27 @@ export function ApprovalsWorkbench({
                           </td>
                           <td className="px-3 py-3 align-top">
                             <div className="space-y-1">
-                              <div className="font-medium text-foreground">{item.partyName || "Unassigned"}</div>
-                              <div className="text-xs text-muted-foreground">Step {item.stepOrder} of {item.totalSteps}</div>
+                              <ApprovalChainMini
+                                submitterName={item.person.name}
+                                route={item.subjectSnapshot?.approvalRoute || null}
+                                currentStep={item.stepOrder}
+                                totalSteps={item.totalSteps}
+                                currentPartyName={item.partyName || "Unassigned"}
+                                status={item.status}
+                              />
+                              <div className="text-xs text-muted-foreground">
+                                {item.status === "pending"
+                                  ? `Waiting on ${item.partyName || "unassigned"}`
+                                  : `Step ${item.stepOrder} of ${item.totalSteps}`}
+                              </div>
                             </div>
                           </td>
                           <td className="px-3 py-3 align-top">
-                            <div className="space-y-0.5">
-                              <div className="font-medium text-foreground">{formatDate(item.submittedAt)}</div>
-                              <div className="text-xs text-muted-foreground">Captured at submission</div>
-                            </div>
+                            <div className="font-medium text-foreground">{formatDate(item.submittedAt)}</div>
                           </td>
                           <td className="px-3 py-3 align-top">
                             <div className="flex flex-wrap gap-1.5">
-                              <Badge
-                                variant={
-                                  item.status === "approved"
-                                    ? "default"
-                                    : item.status === "rejected"
-                                      ? "destructive"
-                                      : "secondary"
-                                }
-                                className="capitalize"
-                              >
+                              <Badge variant="outline" className={cn("capitalize", statusChipClass(item.status))}>
                                 {item.status.replace("_", " ")}
                               </Badge>
                               {item.sla.breached ? <Badge variant="destructive">SLA</Badge> : null}
@@ -1000,9 +1001,9 @@ export function ApprovalsWorkbench({
                                 <>
                                   <Button
                                     size="sm"
-                                    onClick={() => void handleApprove(item.id)}
+                                    onClick={() => void handleApprove(item)}
                                     className="h-8 bg-emerald-600 hover:bg-emerald-700"
-                                    disabled={isBlocked || isApproving}
+                                    disabled={!isSelectable || isApproving}
                                   >
                                     {isApproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Approve"}
                                   </Button>
@@ -1011,7 +1012,7 @@ export function ApprovalsWorkbench({
                                     variant="destructive"
                                     onClick={() => openRejectDialog(item)}
                                     className="h-8"
-                                    disabled={isApproving}
+                                    disabled={!isSelectable || isApproving}
                                   >
                                     Reject
                                   </Button>
@@ -1319,7 +1320,7 @@ export function ApprovalsWorkbench({
                         className="bg-emerald-600 hover:bg-emerald-700 text-white"
                         onClick={() => {
                           setSelectedDetailItem(null);
-                          void handleApprove(selectedDetailItem.id);
+                          void handleApprove(selectedDetailItem);
                         }}
                       >
                         <CheckCircle className="h-4 w-4" />
@@ -1368,13 +1369,90 @@ function DayMiniGrid({ daySummary }: { daySummary: Array<{ day: string; hours: n
         const hrs = entry?.hours ?? 0;
         return (
           <div key={label} className="flex flex-col items-center gap-0.5">
-            <span className={cn("text-[10px] leading-none font-medium", hrs > 0 ? "text-foreground" : "text-muted-foreground/40")}>
-              {hrs > 0 ? `${hrs}h` : "—"}
+            <span className={cn("text-[10px] leading-none font-medium", hrs > 0 ? "text-foreground" : "text-muted-foreground/30")}>
+              {hrs > 0 ? `${hrs}h` : "·"}
             </span>
             <span className="text-[9px] leading-none text-muted-foreground/50">{label[0]}</span>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Colored status chips: Pending amber, Approved green, Rejected red, everything else grey.
+function statusChipClass(status: string): string {
+  switch (status) {
+    case "approved":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "rejected":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "pending":
+      return "border-amber-300 bg-amber-50 text-amber-800";
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
+}
+
+// A2: compact chain "Submitter → Party1 → Party2" with filled/faded dots and
+// the current step highlighted. Falls back to synthetic steps when the record
+// predates route snapshots.
+function ApprovalChainMini({
+  submitterName,
+  route,
+  currentStep,
+  totalSteps,
+  currentPartyName,
+  status,
+}: {
+  submitterName: string;
+  route: Array<{ step: number; partyName?: string; approverName?: string }> | null;
+  currentStep: number;
+  totalSteps: number;
+  currentPartyName: string;
+  status: string;
+}) {
+  const steps = route && route.length > 0
+    ? [...route]
+        .sort((a, b) => Number(a.step) - Number(b.step))
+        .map((entry) => ({
+          step: Number(entry.step),
+          label: entry.partyName || entry.approverName || `Step ${entry.step}`,
+        }))
+    : Array.from({ length: Math.max(totalSteps, 1) }, (_, index) => ({
+        step: index + 1,
+        label: index + 1 === currentStep ? currentPartyName : `Step ${index + 1}`,
+      }));
+
+  const dotClass = (step: number) => {
+    if (step < currentStep) return "bg-emerald-500 border-emerald-500";
+    if (step === currentStep) {
+      if (status === "approved") return "bg-emerald-500 border-emerald-500";
+      if (status === "rejected") return "bg-rose-500 border-rose-500";
+      return "bg-amber-400 border-amber-400 ring-2 ring-amber-200/70";
+    }
+    return "bg-background border-border";
+  };
+
+  const labelClass = (step: number) => {
+    if (step === currentStep && status === "pending") return "font-medium text-foreground";
+    if (step < currentStep) return "text-muted-foreground";
+    return "text-muted-foreground/60";
+  };
+
+  return (
+    <div className="flex items-center gap-1" title={`Step ${currentStep} of ${steps.length}`}>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="h-2 w-2 flex-shrink-0 rounded-full border border-foreground/60 bg-foreground/60" />
+        <span className="max-w-[64px] truncate text-[11px] text-muted-foreground">{submitterName}</span>
+      </span>
+      {steps.map((entry) => (
+        <span key={entry.step} className="flex min-w-0 items-center gap-1">
+          <span className="h-px w-3 flex-shrink-0 bg-border" />
+          <span className={cn("h-2 w-2 flex-shrink-0 rounded-full border", dotClass(entry.step))} />
+          <span className={cn("max-w-[72px] truncate text-[11px]", labelClass(entry.step))}>{entry.label}</span>
+        </span>
+      ))}
     </div>
   );
 }

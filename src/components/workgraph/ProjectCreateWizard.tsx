@@ -382,7 +382,7 @@ export function ProjectCreateWizard({
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="!max-w-[96vw] lg:!max-w-6xl !max-h-[92vh] !grid !grid-rows-[auto_auto_auto_1fr_auto] overflow-hidden !w-[96vw] lg:!w-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-b from-white to-slate-50/70 dark:from-slate-950 dark:to-slate-950 shadow-2xl">
+        <DialogContent className="!max-w-[96vw] lg:!max-w-6xl !max-h-[92vh] !grid !grid-rows-[auto_auto_auto_1fr_auto] overflow-hidden !w-[96vw] lg:!w-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-b from-white to-slate-50 dark:from-slate-950 dark:to-slate-950 shadow-2xl">
           <DialogHeader className="pb-1">
             <DialogTitle className="flex items-center gap-2 text-lg font-semibold tracking-tight">
               <Network className="w-5 h-5 text-blue-600" />

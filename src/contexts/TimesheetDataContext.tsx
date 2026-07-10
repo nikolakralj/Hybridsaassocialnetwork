@@ -125,6 +125,16 @@ interface ApprovalRoute {
   approverName: string;
   approverNodeId: string;
   approverUserRef: string;
+  steps: ApprovalRouteStep[];
+}
+
+interface ApprovalRouteStep {
+  step: number;
+  partyId: string;
+  partyName?: string;
+  approverNodeId: string;
+  approverUserRef: string;
+  approverName: string;
 }
 
 function mkDays(hours: number[]): StoredDay[] {
@@ -351,6 +361,55 @@ function findNextApprovalParty(
   return null;
 }
 
+function buildApprovalRouteSteps(
+  submitterPartyId: string,
+  parties: ApprovalParty[],
+  submitterPersonId: string,
+): ApprovalRouteStep[] {
+  const partyMap = new Map(parties.map((party) => [party.id, party]));
+  const submitterParty = partyMap.get(submitterPartyId);
+  if (!submitterParty) return [];
+
+  const routeParties: ApprovalParty[] = [];
+  const visited = new Set<string>([submitterPartyId]);
+  const queue = [...submitterParty.billsTo];
+
+  while (queue.length > 0) {
+    const partyId = queue.shift();
+    if (!partyId || visited.has(partyId)) continue;
+    visited.add(partyId);
+
+    const party = partyMap.get(partyId);
+    if (!party) continue;
+
+    routeParties.push(party);
+    for (const nextPartyId of party.billsTo) {
+      if (!visited.has(nextPartyId)) queue.push(nextPartyId);
+    }
+  }
+
+  const steps: ApprovalRouteStep[] = [];
+
+  for (const party of routeParties) {
+    const approvers = [...party.people]
+      .filter((person) => person.canApprove && person.id !== submitterPersonId)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
+    const approver = approvers[0];
+    if (!approver) continue;
+
+    steps.push({
+      step: steps.length + 1,
+      partyId: party.id,
+      partyName: party.name,
+      approverNodeId: party.id,
+      approverUserRef: approver.id,
+      approverName: party.name || approver.name || approver.id,
+    });
+  }
+
+  return steps;
+}
+
 async function getApprovalRouteForSubmitter(projectId: string, personId: string, accessToken?: string | null): Promise<ApprovalRoute | null> {
   const parties = await loadApprovalParties(projectId, accessToken);
   if (parties.length === 0) {
@@ -485,15 +544,30 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
     return null;
   }
 
-  const approverUserRef = [...eligibleApprovers].sort()[0] || resolvedStep.partyId;
+  let routeSteps = buildApprovalRouteSteps(submitterParty.id, parties, personId);
+
+  if (routeSteps.length === 0) {
+    routeSteps = [{
+      step: 1,
+      partyId: resolvedStep.partyId,
+      partyName: parties.find((party) => party.id === resolvedStep.partyId)?.name,
+      approverNodeId: resolvedStep.partyId,
+      approverUserRef: [...eligibleApprovers].sort()[0] || resolvedStep.partyId,
+      approverName: parties.find((party) => party.id === resolvedStep.partyId)?.name || [...eligibleApprovers].sort()[0] || resolvedStep.partyId,
+    }];
+  }
+
+  const firstRouteStep = routeSteps[0];
+  const approverUserRef = firstRouteStep.approverUserRef;
   const partyName = parties.find((party) => party.id === resolvedStep.partyId)?.name;
-  const approverName = partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
+  const approverName = firstRouteStep.approverName || partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
 
   return {
-    approvalLayer: resolvedStep.step,
+    approvalLayer: firstRouteStep.step,
     approverName,
-    approverNodeId: resolvedStep.partyId,
+    approverNodeId: firstRouteStep.approverNodeId,
     approverUserRef,
+    steps: routeSteps,
   };
 }
 
@@ -1152,6 +1226,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
           currentApproverNodeId: approvalRoute.approverNodeId,
           currentApproverUserRef: approvalRoute.approverUserRef,
           approvalLayer: approvalRoute.approvalLayer,
+          approvalRoute: approvalRoute.steps,
           daySummary,
         };
 
@@ -1218,6 +1293,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
           currentApproverNodeId: approvalRoute.approverNodeId,
           currentApproverUserRef: approvalRoute.approverUserRef,
           approvalLayer: approvalRoute.approvalLayer,
+          approvalRoute: approvalRoute.steps,
           daySummary,
         };
 
@@ -1252,7 +1328,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       }
 
       if (status === 'approved' || status === 'rejected') {
-        const pendingApproval = await getLatestPendingApproval('timesheet', subjectId);
+        const pendingApproval = await getLatestPendingApproval('timesheet', subjectId, projectId);
         if (!pendingApproval) {
           throw new Error(`No pending approval record was found for ${subjectId}`);
         }

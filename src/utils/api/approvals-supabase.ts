@@ -54,6 +54,14 @@ export interface ApprovalSubjectSnapshot {
   currentApproverUserRef?: string;
   approvalLayer?: number;
   routeLabel?: string;
+  approvalRoute?: Array<{
+    step: number;
+    partyId: string;
+    partyName?: string;
+    approverNodeId: string;
+    approverUserRef: string;
+    approverName: string;
+  }>;
   daySummary?: Array<{
     day: string;
     hours: number;
@@ -425,6 +433,55 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
   if (!dbApproval || dbApproval.subject_type !== 'timesheet') return false;
   if (!dbApproval.project_id || !dbApproval.subject_id) return false;
 
+  const subjectSnapshot = dbApproval.subject_snapshot && typeof dbApproval.subject_snapshot === 'object'
+    ? dbApproval.subject_snapshot as ApprovalSubjectSnapshot
+    : null;
+  const snapshotRoute = Array.isArray(subjectSnapshot?.approvalRoute)
+    ? subjectSnapshot.approvalRoute
+    : [];
+
+  if (snapshotRoute.length > 0) {
+    const currentLayer = Number(dbApproval.approval_layer || subjectSnapshot?.approvalLayer || 1);
+    const nextStep = snapshotRoute
+      .filter((step) => Number(step.step) > currentLayer)
+      .sort((a, b) => Number(a.step) - Number(b.step))[0];
+
+    if (!nextStep) return false;
+
+    await createApproval({
+      projectId: String(dbApproval.project_id),
+      subjectType: dbApproval.subject_type,
+      subjectId: String(dbApproval.subject_id),
+      subjectSnapshot: {
+        ...subjectSnapshot,
+        currentApproverName: nextStep.approverName,
+        currentApproverNodeId: nextStep.approverNodeId,
+        currentApproverUserRef: nextStep.approverUserRef,
+        approvalLayer: nextStep.step,
+      },
+      approverUserId: nextStep.approverUserRef,
+      approverName: nextStep.approverName,
+      approverNodeId: nextStep.approverNodeId,
+      approvalLayer: nextStep.step,
+      status: 'pending',
+      submittedAt: new Date().toISOString(),
+      graphVersionId: dbApproval.graph_version_id || undefined,
+      submitterUserId: dbApproval.submitter_user_id || undefined,
+    });
+
+    await supabase
+      .from('wg_timesheet_weeks')
+      .update({
+        status: 'submitted',
+        approved_at: null,
+        approved_by: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', String(dbApproval.subject_id));
+
+    return true;
+  }
+
   const parsed = parseTimesheetSubject(String(dbApproval.subject_id));
   if (!parsed) return false;
 
@@ -498,10 +555,6 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
   const approverRef = selectedApprover?.id || nextParty.id;
   const approverNodeId = selectedApprover?.id || nextParty.id;
   const approverName = selectedApprover?.name || nextParty.name || approverRef;
-  const subjectSnapshot = dbApproval.subject_snapshot && typeof dbApproval.subject_snapshot === 'object'
-    ? dbApproval.subject_snapshot as ApprovalSubjectSnapshot
-    : null;
-
   await createApproval({
     projectId: String(dbApproval.project_id),
     subjectType: dbApproval.subject_type,
@@ -923,7 +976,7 @@ export async function createApproval(
         }
         console.warn(
           `[Approvals] Could not resolve approver UUID for node ${approval.approverUserId || approval.approverNodeId}. ` +
-          `Using approver reference token as placeholder â€” project must be saved to DB for UUID routing.`
+          `Using approver reference token as placeholder Ã¢â‚¬â€ project must be saved to DB for UUID routing.`
         );
         const attempt = await insertApprovalRecordWithFallback({
           project_id: approval.projectId,
@@ -1287,15 +1340,22 @@ export async function getApprovalQueue(
 
 export async function getLatestPendingApproval(
   subjectType: ApprovalRecord['subjectType'],
-  subjectId: string
+  subjectId: string,
+  projectId?: string
 ): Promise<ApprovalRecord | null> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('approval_records')
       .select('*')
       .eq('subject_type', subjectType)
       .eq('subject_id', subjectId)
-      .eq('status', 'pending')
+      .eq('status', 'pending');
+
+    if (projectId) {
+      query = query.eq('project_id', projectId);
+    }
+
+    const { data, error } = await query
       .order('approval_layer', { ascending: true })
       .order('created_at', { ascending: false })
       .limit(1)

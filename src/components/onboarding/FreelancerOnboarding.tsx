@@ -103,7 +103,8 @@ export function FreelancerOnboarding({ onComplete }: FreelancerOnboardingProps) 
 
   const handleComplete = () => {
     onComplete?.();
-    navigate('/app/feed');
+    // Land on the dashboard — the feed is gated off (social stub, ROADMAP Phase 9).
+    navigate('/app');
   };
 
   const handleViewProfile = () => {
