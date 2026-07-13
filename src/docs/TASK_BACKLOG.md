@@ -16,6 +16,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 |---|---|---|---|
 | M5 | Apply `016_fix_wg_project_members_scope_recursion.sql` — applied 2026-07-08 via Supabase MCP, policy + fn verified live | Claude | `[DONE]` |
 | DEPLOY | Run `supabase functions deploy server` — **an OLD edge build (`make-server-f8b491be`) is live**; B3 guards + approval-token routes need a fresh deploy | Nikola | `[READY]` |
+| GSEC | Implement graph confidentiality model from `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md`: project role != rate visibility, org role != project role, contract rates signatory-scoped. G0/G1 UI containment started 2026-07-10; RLS-backed contract/rate tables still required. | Claude/Codex | `[IN PROGRESS]` |
 | M6 | `010_phase4_invoice_schema.sql` — verified already applied (wg_invoices + wg_invoice_templates + RLS live, 2026-07-08) | — | `[DONE]` |
 
 > **Note (2026-07-08):** Supabase free tier **auto-paused** the project (status INACTIVE) —
@@ -183,6 +184,50 @@ the base line. Data model already supports it (`TimeEntry.category`, `rateMultip
 
 ---
 
+### P4-7 · `engagement-type-employee-vs-contractor` · `[READY]`
+
+**Assignee:** Claude (data-model decision) → Codex implementation
+**Why:** Employees don't write invoices — they only submit timesheets. Today the
+orchestrator treats every person as a self-billing contractor (one invoice per
+person-week at the person's rate). Wrong for employees.
+
+**Design:**
+- `engagementType: 'employee' | 'contractor'` on person graph nodes (default `contractor`
+  for backward compat); editable next to the A4 rate editor in `PersonRateSection`
+- For **employees**, the person-node rate = internal *pay* rate (never on an invoice);
+  their approved hours roll up into the **company's** invoice to its counterparty,
+  priced from the company↔agency contract edge (sell rate)
+- For **contractors**, current behavior stands (self-invoice at person rate)
+- Generate-from-approved groups employee weeks by (company, counterparty, month)
+  into one aggregate invoice with per-person lines
+
+**Acceptance criteria:**
+- [ ] Engagement type editable on person node (graph editors only)
+- [ ] Employee weeks never produce a person-billed invoice
+- [ ] Aggregate company invoice from employee weeks with per-person lines
+- [ ] Contractor path unchanged; `npm run build` passes
+
+---
+
+### DOC-1 · `signatory-scoped-documents-and-invoices` · `[READY]` (lands with/after C1)
+
+**Assignee:** Claude (RLS) + Codex (UI)
+**Spec:** `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md` (data classes + org roles)
+**Why:** Confidentiality is about documents in general, not just rates. Found concrete
+gap: `wg_invoices` SELECT RLS (migration 010) lets **any accepted project member** read
+every project invoice — an employee-member would see the company↔agency invoice.
+Acceptable under single-account personas; must be fixed before real worker accounts.
+
+**Scope:**
+- Tighten `wg_invoices` SELECT to: creator, project owner, or members of a signatory org
+  (needs org-membership mapping → C1 dependency)
+- Documents model: every stored document (contract PDF, PO, invoice, NDA) belongs to a
+  signatory pair (party_a, party_b) + optional explicit shares; RLS scoped accordingly
+- Server-side graph redaction per GRAPH_CONFIDENTIALITY_SPEC (rates masked in the
+  payload, not just client-side `computeScopedView`)
+
+---
+
 ### A4 · `rate-definition-ui` · `[DONE]` — 2026-07-10
 
 `PersonRateSection` in NodeDetailDrawer: view + edit billing rate on person nodes
@@ -269,7 +314,7 @@ Build passes. **Follow-up `[READY]`:** reuse in `SubmissionsView.tsx` card list.
 
 ## Tier 4 — Sprint C (Invitation Flow)
 
-### C1 · `invitation-acceptance-ui` · `[READY]`
+### C1 · `invitation-acceptance-ui` · `[DONE]` — 2026-07-10
 
 **Assignee:** Codex `frontend-developer`
 **Goal:** `/invite/:token` page — shows project name + role, Accept/Decline, redirects on accept.
@@ -278,15 +323,21 @@ Build passes. **Follow-up `[READY]`:** reuse in `SubmissionsView.tsx` card list.
 - `src/components/invitations/InviteAcceptPage.tsx` (new)
 - `src/routes.tsx`
 
-**Backend:** `supabase/functions/server/invitations-api.tsx` — `GET /invitations/:token`, `POST /invitations/:token/accept`
+**Backend:** `supabase/functions/server/invitations-api.tsx` — `GET /invitations/:token`, `POST /invitations/:token/accept`, `POST /invitations/:token/decline`
 
 **Acceptance criteria:**
-- [ ] Shows project name, inviting org, role offered
-- [ ] Accept calls `POST /invitations/:token/accept`
-- [ ] Success → redirect to workspace
-- [ ] Expired/invalid token → clear error
-- [ ] Unauthenticated → prompt sign-in, redirect back
-- [ ] `npm run build` passes
+- [x] Shows project name, inviting org, role offered
+- [x] Accept calls `POST /invitations/:token/accept`
+- [x] Success → redirect to workspace
+- [x] Expired/invalid token → clear error
+- [x] Unauthenticated → prompt sign-in, redirect back
+- [x] `npm run build` passes
+
+Implemented in `InviteAcceptPage.tsx` with `/invite/:token` and legacy
+`/accept-invite?token=...` route support. Added token client in
+`project-invitations.ts`; added missing source decline route in
+`supabase/functions/server/invitations-api.tsx`. Requires fresh edge deploy
+because the currently live function build is documented as old.
 
 ---
 
