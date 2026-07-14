@@ -1086,7 +1086,7 @@ function PersonSection({
             title={`Submit ${submitableWeeks.length} week${submitableWeeks.length > 1 ? 's' : ''} for approval`}
           >
             <Send className="h-2.5 w-2.5" />
-            {pickerLoading ? 'Loading…' : `Submit ${submitableWeeks.length > 1 ? `${submitableWeeks.length} weeks` : 'week'}`}
+            {pickerLoading ? 'Loading…' : `Submit ${submitableWeeks.length > 1 ? `month (${submitableWeeks.length} weeks)` : 'week'}`}
           </button>
         )}
         {hasPendingApprovalActions && (

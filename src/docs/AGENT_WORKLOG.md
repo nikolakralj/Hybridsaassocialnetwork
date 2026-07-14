@@ -15,6 +15,24 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-14 - [DONE] P4-8 consolidated monthly invoices + month-submit label (Claude)
+
+- User: "why independent weeks in my submissions — can I submit whole month?" →
+  batch submit ALREADY existed (handleSubmitMonth submits all draft weeks via the A1
+  picker); relabeled "Submit month (N weeks)" so it reads as what it does. Approval
+  records stay per-week by design (granular dispute cycles).
+- User: "one invoice for all my employees to the agency, not one per person" →
+  built P4-8: "One invoice per organization" toggle (default ON). Weeks grouped by
+  seller org via approval directory; per person-week lines; buyer from billsTo edge;
+  orphans fall back to per-person. Dedup moved BEFORE building and now honors
+  timesheet_ids arrays (a consolidated week can't be re-invoiced). InvoiceDraft +
+  toInvoicePayload carry timesheetIds[].
+- User: "hotel/rent-a-car/gasoline costs, agency should approve" → designed P4-9
+  billable-expenses card (wg_expenses migration 018, approval via existing chain with
+  subject_type 'expense', approved billable expenses → invoice lines at cost,
+  double-billing guard). Ready for next session.
+- Build passes; toggle verified rendering in live Invoices tab.
+
 ## 2026-07-14 - [DONE] Pay-rate org-boundary confidentiality fix (Claude)
 
 - **User-found hole:** logged in as Nikola (viewer "Me", org your-org), James's (G2)

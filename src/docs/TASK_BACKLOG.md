@@ -209,6 +209,49 @@ person-week at the person's rate). Wrong for employees.
 
 ---
 
+### P4-8 · `consolidated-monthly-invoice` · `[DONE]` — 2026-07-14
+
+"One invoice per organization" toggle (default ON) on invoice generation:
+`groupWeeksBySellerOrg()` groups approved weeks by the submitter's party (via approval
+directory), one invoice per seller org per month with a line per person-week; buyer
+resolved from the org's `billsTo` edge. Unresolvable people fall back to per-person
+invoices. Dedup now happens BEFORE building and honors `timesheet_ids` arrays, so a
+week inside a consolidated invoice can never be re-invoiced. Also: timesheets
+batch-submit button relabeled "Submit month (N weeks)" — the capability existed but
+read as single-week. Build passes; toggle verified rendering live.
+
+---
+
+### P4-9 · `billable-expenses` · `[READY]`
+
+**Assignee:** Claude (migration + approval wiring) → Codex (UI)
+**User story:** "I have additional costs — hotel, rent-a-car, gasoline — the agency
+should approve them and they belong on the invoice."
+
+**Design (industry standard: Harvest/Deel/Expensify):**
+- Migration 018: `wg_expenses` (id, project_id, person_id, date, category
+  travel/lodging/transport/materials/other, description, amount NUMERIC, currency,
+  billable BOOLEAN default true, receipt_url TEXT null for now, status
+  draft/submitted/approved/rejected, timestamps) + project-scoped RLS
+- **Approval reuses the existing chain**: submit creates an `approval_records` row with
+  `subject_type: 'expense'` + snapshot (amount/category/receipt) — same queue, same
+  route resolution, same per-layer spawning as timesheet weeks; renders in
+  ApprovalsWorkbench with a receipt/amount cell instead of the day grid
+- Expense entry UI on project (Timesheets tab section or own tab): date, category,
+  amount, currency, description, billable flag
+- Invoice generation appends approved billable expenses of the month as separate
+  lines below hours ("Expenses — Hotel, Jul 3: €140.00"), at cost (no markup v1),
+  marks them invoiced (expense → invoice_id link) to prevent double-billing
+
+**Acceptance criteria:**
+- [ ] Expense CRUD + submit for approval
+- [ ] Expense rows appear in approver queue and complete the chain
+- [ ] Approved billable expenses land on the next generated invoice as lines
+- [ ] An expense can never be invoiced twice
+- [ ] `npm run build` passes
+
+---
+
 ### DOC-1 · `signatory-scoped-documents-and-invoices` · `[READY]` (lands with/after C1)
 
 **Assignee:** Claude (RLS) + Codex (UI)

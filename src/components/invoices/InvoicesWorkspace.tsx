@@ -53,6 +53,8 @@ export type InvoiceDraft = {
   apiStatus?: ApiInvoiceStatus;
   syncState?: 'cloud' | 'local';
   timesheetKey?: string;
+  /** All timesheet keys covered by this invoice (consolidated invoices span several weeks/people). */
+  timesheetIds?: string[];
   lineItems?: InvoiceLineItem[];
   fromPartyName?: string | null;
   toPartyName?: string | null;
@@ -453,6 +455,102 @@ function buildDraftFromWeek(
   return template ? applyTemplateToDraft(base, template) : base;
 }
 
+// ---------------------------------------------------------------------------
+// Consolidated invoicing (P4-7 lite): one invoice per SELLER ORG per month,
+// with a line per person-week — a company bills the agency once for all of
+// its employees, instead of one invoice per person-week. People whose org
+// can't be resolved fall back to their own per-person invoice.
+// ---------------------------------------------------------------------------
+
+interface SellerWeekGroup {
+  sellerId?: string;
+  sellerName?: string;
+  buyerId?: string;
+  buyerName?: string;
+  weeks: StoredWeek[];
+}
+
+function groupWeeksBySellerOrg(weeks: StoredWeek[], projectId: string): SellerWeekGroup[] {
+  const parties: any[] = readApprovalParties(projectId);
+  const personToParty = new Map<string, any>();
+  parties.forEach((party) => (party?.people || []).forEach((person: { id: string }) => {
+    if (person?.id) personToParty.set(person.id, party);
+  }));
+
+  const groups = new Map<string, SellerWeekGroup>();
+  weeks.forEach((week) => {
+    const party = personToParty.get(week.personId);
+    const key = party?.id || `solo:${week.personId}`;
+    if (!groups.has(key)) {
+      const buyer = party
+        ? parties.find((p) => p?.id && Array.isArray(party.billsTo) && party.billsTo.includes(p.id))
+        : undefined;
+      groups.set(key, {
+        sellerId: party?.id,
+        sellerName: party?.name,
+        buyerId: buyer?.id,
+        buyerName: buyer?.name,
+        weeks: [],
+      });
+    }
+    groups.get(key)!.weeks.push(week);
+  });
+  return Array.from(groups.values());
+}
+
+function buildConsolidatedDraft(
+  group: SellerWeekGroup,
+  projectId: string,
+  projectName: string,
+  clientName: string,
+  personNameLookup: Record<string, { name?: string }>,
+  rates: Record<string, PersonRate>,
+  todayIso: string,
+  index: number,
+  monthLabel: string,
+  template?: ProjectInvoiceTemplate | null,
+): InvoiceDraft {
+  const perWeek = group.weeks.map((week, i) =>
+    buildDraftFromWeek(week, projectId, projectName, clientName, personNameLookup, rates[week.personId], todayIso, index * 100 + i, null)
+  );
+
+  const lineItems: InvoiceLineItem[] = perWeek.map((draft) => ({
+    id: `line_${draft.personId}_${draft.weekStart}`,
+    description: draft.lineItems?.[0]?.description
+      || `Approved timesheet - ${draft.weekLabel} (${draft.personName})`,
+    quantity: draft.lineItems?.[0]?.quantity ?? draft.hours,
+    unitPrice: draft.rate,
+    amount: draft.amount,
+  }));
+
+  const totalAmount = perWeek.reduce((acc, draft) => acc + draft.amount, 0);
+  const totalHours = perWeek.reduce((acc, draft) => acc + draft.hours, 0);
+  const earliest = [...group.weeks].sort((a, b) => a.weekStart.localeCompare(b.weekStart))[0];
+  const currency = perWeek.find((draft) => draft.currency)?.currency || 'EUR';
+  const monthStamp = earliest.weekStart.slice(0, 7).replace('-', '');
+  const sellerSlug = (group.sellerName || perWeek[0].personName).replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+
+  const base: InvoiceDraft = {
+    ...perWeek[0],
+    id: `inv_month_${group.sellerId || perWeek[0].personId}_${monthStamp}`,
+    number: `INV-${monthStamp}-${sellerSlug || String(index + 1).padStart(3, '0')}`,
+    personName: group.sellerName || perWeek[0].personName,
+    weekStart: earliest.weekStart,
+    weekLabel: `${monthLabel} · ${group.weeks.length} week${group.weeks.length === 1 ? '' : 's'}`,
+    hours: totalHours,
+    rate: 0, // multi-line invoice: pricing lives on the per-week lines
+    amount: totalAmount,
+    currency,
+    fromPartyName: group.sellerName || perWeek[0].fromPartyName,
+    toPartyName: group.buyerName || perWeek[0].toPartyName || clientName,
+    timesheetKey: makeTimesheetKey(perWeek[0].personId, perWeek[0].weekStart),
+    timesheetIds: group.weeks.map((week) => makeTimesheetKey(week.personId, week.weekStart)),
+    lineItems,
+  };
+
+  return template ? applyTemplateToDraft(base, template) : base;
+}
+
 function toInvoicePayload(invoice: InvoiceDraft) {
   const apiStatus = invoice.apiStatus || apiStatusFromUiStatus(invoice.status);
   const partyIds = readPartyIds(invoice.projectId);
@@ -503,7 +601,9 @@ function toInvoicePayload(invoice: InvoiceDraft) {
     toTaxId: invoice.toTaxId ?? undefined,
     fromIban: invoice.fromIban ?? undefined,
     paymentRef: invoice.paymentRef ?? undefined,
-    timesheetIds: invoice.timesheetKey ? [invoice.timesheetKey] : [makeTimesheetKey(invoice.personId, invoice.weekStart)],
+    timesheetIds: invoice.timesheetIds && invoice.timesheetIds.length > 0
+      ? invoice.timesheetIds
+      : invoice.timesheetKey ? [invoice.timesheetKey] : [makeTimesheetKey(invoice.personId, invoice.weekStart)],
     lineItems,
   };
 }
@@ -599,6 +699,8 @@ export function InvoicesWorkspace({
   const [storedInvoices, setStoredInvoices] = useState<PersistedInvoice[]>([]);
   const [isLoadingInvoices, setIsLoadingInvoices] = useState(false);
   const [isSavingInvoices, setIsSavingInvoices] = useState(false);
+  // One invoice per seller org per month (lines per person-week) vs one per person-week.
+  const [consolidateInvoices, setConsolidateInvoices] = useState(true);
   const [updatingInvoiceId, setUpdatingInvoiceId] = useState<string | null>(null);
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [projectTemplate, setProjectTemplate] = useState<ProjectInvoiceTemplate | null>(() => readProjectInvoiceTemplate(projectId));
@@ -732,23 +834,28 @@ export function InvoicesWorkspace({
     const rates = await resolveProjectRates(projectId).catch(() => ({} as Record<string, PersonRate>));
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const approvedDrafts = approvedWeeks.map((week, index) => {
-      const draft = buildDraftFromWeek(
-        week,
-        projectId,
-        currentProjectName,
-        defaultClientName,
-        personNameLookup,
-        rates[week.personId],
-        todayIso,
-        index,
-        projectTemplate,
-      );
-      return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
+    // Dedup BEFORE building: a week already covered by any stored invoice
+    // (including inside a consolidated invoice's timesheetIds) is skipped.
+    const existingKeys = new Set<string>();
+    storedInvoices.forEach((invoice) => {
+      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, defaultClientName, personNameLookup, weekLookup);
+      existingKeys.add(getInvoiceKey(normalized));
+      (invoice.timesheetIds || []).forEach((key) => existingKeys.add(key));
     });
 
+    const weeksToInvoice = approvedWeeks.filter((week) => !existingKeys.has(makeTimesheetKey(week.personId, week.weekStart)));
+    if (weeksToInvoice.length === 0) {
+      toast.info('All approved weeks already have invoices.');
+      return;
+    }
+
     const missingRateNames = Array.from(new Set(
-      approvedDrafts.filter((draft) => draft.rate <= 0).map((draft) => draft.personName)
+      weeksToInvoice
+        .filter((week) => {
+          const rate = rates[week.personId];
+          return !rate || rate.masked || rate.rate <= 0;
+        })
+        .map((week) => personNameLookup[week.personId]?.name || week.personId)
     ));
     if (missingRateNames.length > 0) {
       toast.warning(
@@ -757,16 +864,36 @@ export function InvoicesWorkspace({
       );
     }
 
-    const existingKeys = new Set(storedInvoices.map((invoice) => {
-      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, defaultClientName, personNameLookup, weekLookup);
-      return getInvoiceKey(normalized);
-    }));
-
-    const draftsToCreate = approvedDrafts.filter((draft) => !existingKeys.has(getInvoiceKey(draft)));
-    if (draftsToCreate.length === 0) {
-      toast.info('All approved weeks already have invoices.');
-      return;
-    }
+    const draftsToCreate = consolidateInvoices
+      ? groupWeeksBySellerOrg(weeksToInvoice, projectId).map((group, index) => {
+          const draft = buildConsolidatedDraft(
+            group,
+            projectId,
+            currentProjectName,
+            defaultClientName,
+            personNameLookup,
+            rates,
+            todayIso,
+            index,
+            selectedMonthLabel,
+            projectTemplate,
+          );
+          return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
+        })
+      : weeksToInvoice.map((week, index) => {
+          const draft = buildDraftFromWeek(
+            week,
+            projectId,
+            currentProjectName,
+            defaultClientName,
+            personNameLookup,
+            rates[week.personId],
+            todayIso,
+            index,
+            projectTemplate,
+          );
+          return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
+        });
 
     setIsSavingInvoices(true);
     try {
@@ -788,7 +915,7 @@ export function InvoicesWorkspace({
     } finally {
       setIsSavingInvoices(false);
     }
-  }, [accessToken, approvedWeeks, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
+  }, [accessToken, approvedWeeks, consolidateInvoices, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
 
   const handleSaveInvoice = useCallback(async (invoiceId: string, patch: Partial<InvoicePayload>) => {
     await updateInvoice(invoiceId, patch, accessToken);
@@ -1001,6 +1128,15 @@ export function InvoicesWorkspace({
               ))}
             </SelectContent>
           </Select>
+          <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground" title="One monthly invoice per organization with a line per person-week — instead of a separate invoice for every week.">
+            <input
+              type="checkbox"
+              checked={consolidateInvoices}
+              onChange={(e) => setConsolidateInvoices(e.target.checked)}
+              className="h-3.5 w-3.5 accent-indigo-600"
+            />
+            One invoice per organization
+          </label>
           <Button
             variant="default"
             className="bg-indigo-600 shadow-sm hover:bg-indigo-700"
