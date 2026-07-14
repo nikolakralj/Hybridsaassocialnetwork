@@ -43,6 +43,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
+import { buildPersonToOrgMap } from './graph-visibility';
 import type { ViewerIdentity, VisibleNode, VisibleEdge } from './graph-visibility';
 import {
   getSnapshotForMonth,
@@ -79,13 +80,32 @@ const RATE_MASK = '••••';
 
 function PersonRateSection({
   node,
+  viewer,
+  nodes,
+  edges,
   onUpdateNodeData,
 }: {
   node: VisibleNode;
+  viewer: ViewerIdentity;
+  nodes: VisibleNode[];
+  edges: VisibleEdge[];
   onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
 }) {
   const data = (node.data || {}) as Record<string, any>;
   const masked = data.hourlyRate === RATE_MASK || data.dailyRate === RATE_MASK || data.fixedAmount === RATE_MASK;
+
+  // Pay is org-internal (GRAPH_CONFIDENTIALITY_SPEC): editing requires graph-edit
+  // permission AND that the person belongs to the viewer's own org (admin dev-view
+  // excepted). Masking alone isn't enough — a counterparty person with no rate yet
+  // has nothing to mask, but must still not be editable from outside their org.
+  const canEditRate = useMemo(() => {
+    if (!onUpdateNodeData || masked) return false;
+    if (viewer.type === 'admin') return true;
+    if (viewer.type === 'freelancer') return false; // employees never set pay rates
+    const personOrg = buildPersonToOrgMap(nodes as any, edges as any).get(node.id);
+    const viewerOrg = viewer.orgId || viewer.nodeId; // org-seat viewers: nodeId IS the org
+    return Boolean(personOrg && viewerOrg && personOrg === viewerOrg);
+  }, [onUpdateNodeData, masked, viewer, nodes, edges, node.id]);
 
   const toNum = (v: any) => {
     const n = Number(typeof v === 'string' ? v.replace(',', '.') : v);
@@ -151,7 +171,7 @@ function PersonRateSection({
         <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
           Billing Rate
         </div>
-        {!editing && !masked && onUpdateNodeData && (
+        {!editing && canEditRate && (
           <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={startEdit}>
             <Pencil className="h-3 w-3 mr-1" />
             {hasRate ? 'Edit' : 'Set rate'}
@@ -215,7 +235,7 @@ function PersonRateSection({
       ) : (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">
           No rate set — invoices for this person will come out at 0.
-          {onUpdateNodeData ? ' Click "Set rate" above.' : ' Ask the project owner to set it.'}
+          {canEditRate ? ' Click "Set rate" above.' : " Their own organization sets it (pay is org-internal)."}
         </div>
       )}
     </div>
@@ -1461,7 +1481,13 @@ export function NodeDetailDrawer({
 
           {/* Billing rate (person) — the source invoice generation prices from */}
           {node.type === 'person' && (
-            <PersonRateSection node={node} onUpdateNodeData={onUpdateNodeData} />
+            <PersonRateSection
+              node={node}
+              viewer={viewer}
+              nodes={nodes}
+              edges={edges}
+              onUpdateNodeData={onUpdateNodeData}
+            />
           )}
 
           {/* Timesheets (for people) — interactive with inline edit + approval */}

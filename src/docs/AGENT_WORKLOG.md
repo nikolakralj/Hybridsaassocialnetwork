@@ -15,6 +15,25 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-14 - [DONE] Pay-rate org-boundary confidentiality fix (Claude)
+
+- **User-found hole:** logged in as Nikola (viewer "Me", org your-org), James's (G2)
+  internal rate was visible AND editable. Two causes: (1) graph-visibility masked
+  contract-node rates for non-signatories but had NO person-node rate rule for
+  company/agency/client viewers; (2) A4 edit gate checked only canEditGraph (project
+  axis), ignoring the org axis — "project ownership is not commercial omniscience".
+- **Fix 1 (graph-visibility.ts):** universal rule before per-type rules — person-node
+  hourlyRate/dailyRate/fixedAmount masked unless target IS the viewer or belongs to the
+  viewer's own org (freelancer viewers additionally never see coworker pay). Orphan
+  persons (unresolvable org) default-deny.
+- **Fix 2 (NodeDetailDrawer):** `canEditRate` = onUpdateNodeData && !masked && (admin
+  view || same-org via buildPersonToOrgMap, now exported). Freelancer viewers never
+  edit pay. Cross-org "No rate set" hint no longer offers "Set rate".
+- **Verified live as "Me":** James → "Rate hidden for your role", no Edit button.
+  Directory check: Me=self visible/editable, James (G2) + John (NAS) masked/locked,
+  Admin (Full View) remains the pre-C1 escape hatch for configuring all rates.
+- Still client-side enforcement — server-side redaction remains DOC-1 (post-C1).
+
 ## 2026-07-14 - [DONE] EDGE DEPLOY unblocked + C1 invitation read path live (Claude)
 
 - **Deploy mystery solved:** the CLI derives the function slug from the folder name, so

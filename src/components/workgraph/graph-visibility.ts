@@ -65,7 +65,7 @@ function normalizeName(value: unknown): string {
  * We prefer explicit membership edges, then person node references,
  * then a company-name match to party names for legacy graphs.
  */
-function buildPersonToOrgMap(nodes: BaseNode[], edges: BaseEdge[]): Map<string, string> {
+export function buildPersonToOrgMap(nodes: BaseNode[], edges: BaseEdge[]): Map<string, string> {
   const personToOrg = new Map<string, string>();
   const partyIds = new Set(nodes.filter((n) => n.type === 'party').map((n) => n.id));
   const partyNameToId = new Map<string, string>();
@@ -188,6 +188,22 @@ function getMaskedFields(
   const masked: string[] = [];
 
   if (viewer.type === 'admin') return []; // Admin sees everything
+
+  // Personal compensation is ORG-INTERNAL (GRAPH_CONFIDENTIALITY_SPEC):
+  // a person's pay rate is visible only to themselves and viewers from their
+  // own organization. Project ownership or being a counterparty grants NO
+  // access — "project ownership is not commercial omniscience".
+  // Freelancer viewers never see coworkers' pay either.
+  if (targetNode.type === 'person' && targetNode.id !== viewer.nodeId) {
+    const personOrg = getPersonOrg(targetNode, edges, nodes);
+    const viewerOrg = viewer.type === 'freelancer'
+      ? null // employees don't see coworker pay even inside their own org
+      : (viewer.orgId || viewer.nodeId); // org-seat viewers: nodeId IS the org
+    const sameOrg = Boolean(personOrg && viewerOrg && personOrg === viewerOrg);
+    if (!sameOrg) {
+      masked.push('hourlyRate', 'dailyRate', 'fixedAmount');
+    }
+  }
 
   // Client can't see internal rates
   if (viewer.type === 'client') {
