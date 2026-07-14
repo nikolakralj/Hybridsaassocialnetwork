@@ -137,6 +137,14 @@ function canManageMembers(role: ProjectRole | null) {
   return role === "Owner" || role === "Editor";
 }
 
+function canInviteRole(inviterRole: ProjectRole | null, inviteeRole: ProjectRole) {
+  if (inviterRole === "Owner") return inviteeRole !== "Owner";
+  if (inviterRole === "Editor") {
+    return inviteeRole === "Contributor" || inviteeRole === "Commenter" || inviteeRole === "Viewer";
+  }
+  return false;
+}
+
 async function getCallerRole(
   projectOwnerId: string,
   projectId: string,
@@ -195,7 +203,7 @@ async function resolveProjectForInvite(user: AuthUser, body: InvitationBody) {
 
 function buildInviteEmail(projectName: string, token: string) {
   const appUrl = getAppUrl();
-  const acceptUrl = `${appUrl}/accept-invite?token=${encodeURIComponent(token)}`;
+  const acceptUrl = `${appUrl}/invite/${encodeURIComponent(token)}`;
   const safeProjectName = escapeHtml(projectName);
 
   const html = `
@@ -254,8 +262,12 @@ invitationsRouter.post("/", async (c) => {
       return c.json({ error: projectResult.error }, getInvitationErrorStatus(projectResult.error));
     }
 
-    const { project } = projectResult;
+    const { project, role: callerRole } = projectResult;
     const role = sanitizeRole(body.role);
+    if (!canInviteRole(callerRole, role)) {
+      return c.json({ error: "Your project role cannot invite members with that role" }, 403);
+    }
+
     const now = new Date().toISOString();
     const token = crypto.randomUUID();
     const invitationData = {
@@ -482,6 +494,10 @@ invitationsRouter.post("/:token/accept", async (c) => {
         .insert({
           id: crypto.randomUUID(),
           ...memberBase,
+          can_approve: false,
+          can_view_rates: false,
+          can_edit_timesheets: false,
+          visible_to_chain: true,
         })
         .select("*")
         .single();
@@ -514,5 +530,61 @@ invitationsRouter.post("/:token/accept", async (c) => {
   } catch (err: any) {
     console.error("[INVITATIONS] Accept error:", err);
     return c.json({ error: `Failed to accept invitation: ${err.message}` }, 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /invitations/:token/decline
+// ---------------------------------------------------------------------------
+invitationsRouter.post("/:token/decline", async (c) => {
+  try {
+    const user = await getAuthUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const token = c.req.param("token");
+    const { data: invitation, error } = await db()
+      .from("wg_project_invitations")
+      .select("*")
+      .eq("id", token)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invitation) return c.json({ error: "Invitation not found" }, 404);
+
+    if (invitation.status !== "pending") {
+      return c.json({ error: "Invitation already processed" }, 409);
+    }
+
+    if (invitation.expires_at && new Date(invitation.expires_at).getTime() < Date.now()) {
+      return c.json({ error: "Invitation expired" }, 410);
+    }
+
+    const normalizedEmail = normalizeEmail(user.email);
+    if (invitation.email && normalizedEmail !== normalizeEmail(invitation.email)) {
+      return c.json({ error: "Invitation email does not match signed-in account" }, 403);
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateError } = await db()
+      .from("wg_project_invitations")
+      .update({
+        status: "declined",
+        declined_at: now,
+      })
+      .eq("id", invitation.id);
+
+    if (updateError) throw updateError;
+
+    return c.json({
+      success: true,
+      invitation: rowToInvitation({
+        ...invitation,
+        status: "declined",
+        declined_at: now,
+      }),
+    });
+  } catch (err: any) {
+    console.error("[INVITATIONS] Decline error:", err);
+    return c.json({ error: `Failed to decline invitation: ${err.message}` }, 500);
   }
 });

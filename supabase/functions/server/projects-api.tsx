@@ -117,6 +117,14 @@ function canManageMembers(role: ProjectRole | null) {
   return role === "Owner" || role === "Editor";
 }
 
+function canInviteRole(inviterRole: ProjectRole | null, inviteeRole: ProjectRole) {
+  if (inviterRole === "Owner") return inviteeRole !== "Owner";
+  if (inviterRole === "Editor") {
+    return inviteeRole === "Contributor" || inviteeRole === "Commenter" || inviteeRole === "Viewer";
+  }
+  return false;
+}
+
 async function getCallerRole(projectOwnerId: string, projectId: string, userId: string): Promise<ProjectRole | null> {
   if (projectOwnerId === userId) return "Owner";
   const { data } = await db()
@@ -457,6 +465,10 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
     if (!canManageMembers(callerRole)) return c.json({ error: "Forbidden" }, 403);
 
     const now = new Date().toISOString();
+    const inviteeRole = sanitizeRole(body.role);
+    if (!canInviteRole(callerRole, inviteeRole)) {
+      return c.json({ error: "Your project role cannot invite members with that role" }, 403);
+    }
 
     if (body.userId) {
       const newMember = {
@@ -465,11 +477,15 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
         user_id: body.userId,
         user_name: body.userName || body.name || "Member",
         user_email: normalizeEmail(body.userEmail || body.email),
-        role: sanitizeRole(body.role),
+        role: inviteeRole,
         scope: body.scope || null,
         invited_by: user.id,
         invited_at: now,
         accepted_at: now,
+        can_approve: false,
+        can_view_rates: false,
+        can_edit_timesheets: false,
+        visible_to_chain: true,
       };
       const { error: ie } = await db().from("wg_project_members").insert(newMember);
       if (ie) throw ie;
@@ -485,7 +501,7 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       project_id: projectId,
       project_name: projectRow.name,
       email,
-      role: sanitizeRole(body.role),
+      role: inviteeRole,
       scope: body.scope || null,
       invited_by: user.id,
       invited_by_name: user.name,
@@ -499,12 +515,16 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       user_id: null,
       user_name: body.userName || body.name || email,
       user_email: email,
-      role: sanitizeRole(body.role),
+      role: inviteeRole,
       scope: body.scope || null,
       invited_by: user.id,
       invited_at: now,
       accepted_at: null,
       invitation_id: invitationId,
+      can_approve: false,
+      can_view_rates: false,
+      can_edit_timesheets: false,
+      visible_to_chain: true,
     };
 
     const { error: invErr } = await db().from("wg_project_invitations").insert(invitation);
@@ -641,6 +661,10 @@ projectsRouter.post("/make-server-f8b491be/api/invitations/:invitationId/accept"
         invited_at: invRow.invited_at,
         accepted_at: now,
         invitation_id: invitationId,
+        can_approve: false,
+        can_view_rates: false,
+        can_edit_timesheets: false,
+        visible_to_chain: true,
       });
     }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
@@ -8,6 +8,7 @@ import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { createClient } from '../../utils/supabase/client';
 import { projectId as supabaseProjectId } from '../../utils/supabase/info';
+import { getInvitableRolesForRole, getRoleDescription } from '../../utils/collaboration/permissions';
 import type { ProjectRole } from '../../types/collaboration';
 
 const supabase = createClient();
@@ -17,15 +18,15 @@ const INVITATIONS_ENDPOINT = `${BASE}/invitations`;
 interface ProjectInviteMemberDialogProps {
   open: boolean;
   projectName?: string;
+  currentUserRole?: ProjectRole | null;
   onOpenChange: (open: boolean) => void;
   onInvite: (payload: { userName?: string; userEmail: string; role: ProjectRole }) => Promise<void>;
 }
 
-const INVITABLE_ROLES: ProjectRole[] = ['Editor', 'Contributor', 'Commenter', 'Viewer'];
-
 export function ProjectInviteMemberDialog({
   open,
   projectName,
+  currentUserRole,
   onOpenChange,
   onInvite,
 }: ProjectInviteMemberDialogProps) {
@@ -34,15 +35,22 @@ export function ProjectInviteMemberDialog({
   const [role, setRole] = useState<ProjectRole>('Viewer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const availableRoles = useMemo(() => getInvitableRolesForRole(currentUserRole), [currentUserRole]);
+  const canSendInvite = availableRoles.length > 0;
 
   // Legacy callback is retained for existing callers, but this dialog now owns
   // the submission flow directly.
   void onInvite;
 
+  useEffect(() => {
+    if (!open || availableRoles.length === 0 || availableRoles.includes(role)) return;
+    setRole(availableRoles.includes('Viewer') ? 'Viewer' : availableRoles[0]);
+  }, [availableRoles, open, role]);
+
   function resetForm() {
     setUserName('');
     setUserEmail('');
-    setRole('Viewer');
+    setRole(availableRoles.includes('Viewer') ? 'Viewer' : availableRoles[0] || 'Viewer');
     setError('');
   }
 
@@ -54,6 +62,13 @@ export function ProjectInviteMemberDialog({
     const normalizedEmail = userEmail.trim().toLowerCase();
     if (!trimmedProjectName) {
       const message = 'Project name is required to send invitations.';
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
+    if (!availableRoles.includes(role)) {
+      const message = 'Your project role cannot invite members with that role.';
       setError(message);
       toast.error(message);
       return;
@@ -130,6 +145,20 @@ export function ProjectInviteMemberDialog({
         </DialogHeader>
 
         <form onSubmit={handleInvite} className="space-y-4">
+          {!canSendInvite ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Only project Owners and Editors can invite members. Editors can invite Contributor,
+              Commenter, or Viewer roles only.
+            </p>
+          ) : (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Your role: <span className="font-medium text-foreground">{currentUserRole}</span>.{' '}
+              {currentUserRole === 'Editor'
+                ? 'You can add collaborators, but not another Editor or Owner.'
+                : 'Owner transfer is kept separate from normal invitations.'}
+            </p>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="invite-name">Name (optional)</Label>
             <Input
@@ -137,6 +166,7 @@ export function ProjectInviteMemberDialog({
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
               placeholder="Alex Rivera"
+              disabled={!canSendInvite || loading}
             />
           </div>
 
@@ -148,24 +178,32 @@ export function ProjectInviteMemberDialog({
               value={userEmail}
               onChange={(e) => setUserEmail(e.target.value)}
               placeholder="alex@company.com"
+              disabled={!canSendInvite || loading}
               required
             />
           </div>
 
           <div className="space-y-2">
             <Label>Role</Label>
-            <Select value={role} onValueChange={(value) => setRole(value as ProjectRole)}>
+            <Select
+              value={role}
+              onValueChange={(value) => setRole(value as ProjectRole)}
+              disabled={!canSendInvite || loading}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select role" />
               </SelectTrigger>
               <SelectContent>
-                {INVITABLE_ROLES.map((projectRole) => (
+                {availableRoles.map((projectRole) => (
                   <SelectItem key={projectRole} value={projectRole}>
                     {projectRole}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {availableRoles.includes(role) ? (
+              <p className="text-xs text-muted-foreground">{getRoleDescription(role)}</p>
+            ) : null}
           </div>
 
           {error && (
@@ -178,7 +216,7 @@ export function ProjectInviteMemberDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || !canSendInvite}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Send Invite
             </Button>

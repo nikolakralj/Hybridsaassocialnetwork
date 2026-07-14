@@ -39,6 +39,7 @@ import { ProjectCreateWizard } from './ProjectCreateWizard';
 import {
   computeScopedView,
   buildViewerOptions,
+  ALLOW_GRAPH_ADMIN_VIEW,
   type ViewerIdentity,
   type VisibleNode,
   type VisibleEdge,
@@ -1573,9 +1574,9 @@ export function WorkGraphBuilder({
 
   const [internalViewer, setInternalViewer] = useState<ViewerIdentity | null>(null);
   const fallbackViewer: ViewerIdentity = viewerOptions[0] ?? authViewerFallback ?? {
-    nodeId: '__admin__',
-    type: 'admin',
-    name: 'Admin (Full View)',
+    nodeId: '__no_viewer__',
+    type: 'company',
+    name: 'Select a viewer',
   };
   const currentViewer = controlledViewer ?? internalViewer ?? fallbackViewer;
   const viewerStorageKey = `workgraph-viewer:${projectId}`;
@@ -1694,6 +1695,7 @@ export function WorkGraphBuilder({
 
   // Keep selected viewer valid after graph/viewer changes.
   useEffect(() => {
+    if (controlledViewer !== undefined) return;
     if (viewerOptions.length === 0) return;
     const exists = currentViewer ? viewerOptions.some(v => v.nodeId === currentViewer.nodeId) : false;
     if (exists) return;
@@ -1707,16 +1709,22 @@ export function WorkGraphBuilder({
     } else {
       setInternalViewer(nextViewer);
     }
-  }, [viewerOptions, currentViewer?.nodeId, user?.id, externalViewerChange]);
+  }, [viewerOptions, currentViewer?.nodeId, user?.id, externalViewerChange, controlledViewer]);
 
   // Restore previously selected viewer once per project key.
   useEffect(() => {
+    if (controlledViewer !== undefined) return;
     if (viewerOptions.length === 0) return;
     if (restoredViewerKeyRef.current === viewerStorageKey) return;
     restoredViewerKeyRef.current = viewerStorageKey;
 
     const savedViewerId = sessionStorage.getItem(viewerStorageKey);
     if (!savedViewerId) return;
+    if (!ALLOW_GRAPH_ADMIN_VIEW && savedViewerId === '__admin__') {
+      sessionStorage.removeItem(viewerStorageKey);
+      sessionStorage.removeItem(viewerMetaStorageKey);
+      return;
+    }
     const savedViewer = viewerOptions.find(v => v.nodeId === savedViewerId);
     if (savedViewer && savedViewer.nodeId !== currentViewer?.nodeId) {
       skipNextViewerPersistRef.current = true;
@@ -1731,10 +1739,11 @@ export function WorkGraphBuilder({
       }));
     }
     hasRestoredViewerRef.current = true;
-  }, [viewerOptions, viewerStorageKey, viewerMetaStorageKey, currentViewer?.nodeId, projectId, externalViewerChange]);
+  }, [viewerOptions, viewerStorageKey, viewerMetaStorageKey, currentViewer?.nodeId, projectId, externalViewerChange, controlledViewer]);
 
   // Persist selected viewer per project.
   useEffect(() => {
+    if (controlledViewer !== undefined) return;
     if (!hasRestoredViewerRef.current) return;
     if (!currentViewer?.nodeId) return;
     if (skipNextViewerPersistRef.current) {
@@ -1746,7 +1755,7 @@ export function WorkGraphBuilder({
     window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', {
       detail: { projectId, viewer: currentViewer }
     }));
-  }, [currentViewer, viewerStorageKey, viewerMetaStorageKey, projectId]);
+  }, [currentViewer, viewerStorageKey, viewerMetaStorageKey, projectId, controlledViewer]);
 
   useEffect(() => {
     const syncProjectStartDate = (event?: Event) => {

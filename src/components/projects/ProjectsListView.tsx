@@ -16,6 +16,7 @@ import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
 import { ProjectInviteMemberDialog } from './ProjectInviteMemberDialog';
 import { ProjectInvitationsPanel } from './ProjectInvitationsPanel';
 import { useAuth } from '../../contexts/AuthContext';
+import { getInvitableRolesForRole } from '../../utils/collaboration/permissions';
 import {
   addProjectMember,
   acceptProjectInvitation,
@@ -73,6 +74,7 @@ export function ProjectsListView() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [invitations, setInvitations] = useState<StoredProjectInvitation[]>([]);
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
+  const [projectRoles, setProjectRoles] = useState<Record<string, ProjectRole | null>>({});
   const [isLoading, setIsLoading] = useState(true);
 
   const loadProjects = async () => {
@@ -88,17 +90,30 @@ export function ProjectsListView() {
       
       // Load member counts in parallel
       const memberCounts: Record<string, number> = {};
+      const roleByProject: Record<string, ProjectRole | null> = {};
+      const currentUserEmail = user?.email?.toLowerCase();
       await Promise.all(
         userProjects.map(async (project: ProjectListItem) => {
           try {
             const members = await getProjectMembers(project.id, accessToken);
             memberCounts[project.id] = members.length;
+            if (project.ownerId && user?.id && project.ownerId === user.id) {
+              roleByProject[project.id] = 'Owner';
+              return;
+            }
+            const currentMember = members.find((member) =>
+              (user?.id && member.userId === user.id) ||
+              (currentUserEmail && member.userEmail?.toLowerCase() === currentUserEmail)
+            );
+            roleByProject[project.id] = (currentMember?.role as ProjectRole | undefined) || null;
           } catch {
             memberCounts[project.id] = 0;
+            roleByProject[project.id] = project.ownerId && user?.id && project.ownerId === user.id ? 'Owner' : null;
           }
         })
       );
       setProjectMembers(memberCounts);
+      setProjectRoles(roleByProject);
     } catch (error) {
       console.error('Error loading projects:', error);
       // Don't toast on initial load if there's just no data
@@ -191,6 +206,15 @@ export function ProjectsListView() {
     if (!user?.id || !project.ownerId) return false;
     return project.ownerId === user.id;
   };
+
+  const getCurrentRoleForProject = (project?: ProjectListItem | null): ProjectRole | null => {
+    if (!project) return null;
+    if (project.ownerId && user?.id && project.ownerId === user.id) return 'Owner';
+    return projectRoles[project.id] || null;
+  };
+
+  const canInviteProjectMembers = (project: ProjectListItem) =>
+    getInvitableRolesForRole(getCurrentRoleForProject(project)).length > 0;
 
   const handleDeleteProject = async (project: ProjectListItem) => {
     if (!canDeleteProject(project)) {
@@ -383,15 +407,17 @@ export function ProjectsListView() {
                       <Eye className="mr-2 h-4 w-4" />
                       Open in Builder
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setInviteProject(project);
-                      }}
-                    >
-                      <Users className="mr-2 h-4 w-4" />
-                      Invite Member
-                    </DropdownMenuItem>
+                    {canInviteProjectMembers(project) ? (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInviteProject(project);
+                        }}
+                      >
+                        <Users className="mr-2 h-4 w-4" />
+                        Invite Member
+                      </DropdownMenuItem>
+                    ) : null}
                   <DropdownMenuSeparator />
                     {canDeleteProject(project) ? (
                       <DropdownMenuItem
@@ -487,6 +513,7 @@ export function ProjectsListView() {
       <ProjectInviteMemberDialog
         open={!!inviteProject}
         projectName={inviteProject?.name}
+        currentUserRole={getCurrentRoleForProject(inviteProject)}
         onOpenChange={(open) => {
           if (!open) setInviteProject(null);
         }}

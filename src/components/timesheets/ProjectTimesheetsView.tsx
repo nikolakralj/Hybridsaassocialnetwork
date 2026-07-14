@@ -45,6 +45,7 @@ import { useWorkGraphContext } from '../../contexts/WorkGraphContext';
 import { useNotificationStore } from '../../contexts/NotificationContext';
 import { ApprovalChainTracker, ApprovalChainEmpty } from '../notifications/ApprovalChainTracker';
 import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph/approval-fallback';
+import { ALLOW_GRAPH_ADMIN_VIEW } from '../workgraph/graph-visibility';
 import { getLatestPendingApproval } from '../../utils/api/approvals-supabase';
 import { listProjects } from '../../utils/api/projects-api';
 
@@ -286,6 +287,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       const raw = sessionStorage.getItem(`workgraph-viewer-meta:${projectId}`);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
+      if (!ALLOW_GRAPH_ADMIN_VIEW && (parsed?.nodeId === '__admin__' || parsed?.type === 'admin')) {
+        sessionStorage.removeItem(`workgraph-viewer-meta:${projectId}`);
+        sessionStorage.removeItem(`workgraph-viewer:${projectId}`);
+        return null;
+      }
       if (parsed?.nodeId && parsed?.type) return parsed;
       return null;
     } catch {
@@ -339,7 +345,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     viewerType === 'freelancer' ||
     (viewerEntry && viewerEntry.type !== 'party' && viewerEntry.orgId)
   );
-  const isAdmin = viewerType === 'admin';
+  const isAdmin = ALLOW_GRAPH_ADMIN_VIEW && viewerType === 'admin';
   // Org/party viewer: an org, agency, or client party node (not a person)
   const isOrgViewer = !isPersonViewer && !isAdmin && (
     viewerType === 'company' ||
@@ -474,10 +480,21 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
   // Build list of switchable people/orgs from graph name directory
   const viewerOptions = useMemo(() => {
+    if (viewerOverride && !ALLOW_GRAPH_ADMIN_VIEW) {
+      return [{
+        id: viewerOverride.id,
+        name: viewerOverride.name || 'Current viewer',
+        type: viewerOverride.type,
+        label: viewerOverride.name || 'Current viewer',
+        orgId: viewerOverride.orgId,
+      }];
+    }
+
     const dir = getNameDir();
     const options: Array<{ id: string; name: string; type: string; label: string; orgId?: string }> = [];
-    // Add "Admin" option
-    options.push({ id: '__admin__', name: 'Admin', type: 'admin', label: 'Admin (Full View)' });
+    if (ALLOW_GRAPH_ADMIN_VIEW) {
+      options.push({ id: '__admin__', name: 'Admin', type: 'admin', label: 'Admin (Full View)' });
+    }
     // Add people and orgs from graph
     // People have orgId set (they belong to an org); orgs don't have orgId
     Object.entries(dir).forEach(([id, entry]) => {
@@ -493,19 +510,21 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       options.push({ id, name: entry.name, type: entry.type, label: `${entry.name} (${suffix})` });
     });
     return options;
-  }, [projectNameDir]);
+  }, [projectNameDir, viewerOverride]);
 
   const switchViewer = useCallback((option: { id: string; name: string; type: string; orgId?: string }) => {
+    if (viewerOverride && !ALLOW_GRAPH_ADMIN_VIEW && option.id !== viewerOverride.id) {
+      toast.error('Viewer switching is restricted to your mapped project identity.');
+      return;
+    }
     // Write to sessionStorage so the rest of the app picks it up
-    const meta = option.id === '__admin__'
-      ? { nodeId: '__admin__', type: 'admin', name: 'Admin' }
-      : { nodeId: option.id, type: option.type, name: option.name, orgId: option.orgId };
+    const meta = { nodeId: option.id, type: option.type, name: option.name, orgId: option.orgId };
     sessionStorage.setItem(`workgraph-viewer-meta:${projectId}`, JSON.stringify(meta));
     setStoredViewerMeta(meta);
     setViewerPickerOpen(false);
     // Also fire the event so other components stay in sync
     window.dispatchEvent(new CustomEvent('workgraph-viewer-changed', { detail: { projectId } }));
-  }, [projectId]);
+  }, [projectId, viewerOverride]);
 
   const drawerWeekData = useMemo(() => {
     if (!drawerWeek) return null;

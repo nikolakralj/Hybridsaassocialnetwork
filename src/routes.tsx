@@ -18,12 +18,21 @@ import { SettingsPage } from "./components/SettingsPage";
 import { PublicProfilePage } from "./components/PublicProfilePage";
 import { AppLayout } from "./components/AppLayout";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
+import { InviteAcceptPage } from "./components/invitations/InviteAcceptPage";
 
 // WorkGraph Routes - Phase 1 with real data APIs
 export const router = createBrowserRouter([
   {
     path: "/",
     Component: Landing,
+  },
+  {
+    path: "/invite/:token",
+    Component: InviteAcceptPage,
+  },
+  {
+    path: "/accept-invite",
+    Component: InviteAcceptPage,
   },
   {
     path: "/onboarding",

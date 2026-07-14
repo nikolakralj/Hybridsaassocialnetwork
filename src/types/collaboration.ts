@@ -43,6 +43,11 @@ export interface ProjectMember {
   userEmail?: string;
   role: ProjectRole;
   scope?: string; // For Contributor: which org they represent
+  graphNodeId?: string;
+  canApprove?: boolean;
+  canViewRates?: boolean;
+  canEditTimesheets?: boolean;
+  visibleToChain?: boolean;
   invitedBy: string;
   invitedAt: string;
   acceptedAt?: string;

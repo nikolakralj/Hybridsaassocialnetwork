@@ -21,13 +21,17 @@ is now the active priority** (approved timesheet → invoice → cash). Sprint A
 `VITE_SHOW_SOCIAL_FEATURES` (see ROADMAP Phase 9) — this ships as WorkGraph, not a social app.
 
 **Priority order (STRICT):**
-1. ~~🔴 **Migration 016**~~ ✅ applied + verified 2026-07-08 — timesheet submit unblocked
-2. 🔴 **DEPLOY** — `supabase functions deploy server` (a STALE edge build is live; B3 guards + approval-token routes inert until redeploy) (Nikola)
+1. ~~🔴 **Migration 016**~~ ✅ applied + verified 2026-07-08
+2. ~~🔴 **DEPLOY**~~ ✅ **done 2026-07-14** — deployed under legacy slug `make-server-f8b491be`
+   via shim (`supabase/functions/make-server-f8b491be/index.ts` imports `../server/index.tsx`).
+   **Always deploy `make-server-f8b491be`, NOT `server`** — client URLs AND internal Hono
+   route prefixes both use the legacy slug; a `server`-slug deploy is unreachable.
 3. ~~**Tier 0 — Security**~~ ✅ / ~~**Tier 1 — Dead Code Purge**~~ ✅
-4. **Phase 4 — Invoice**: ~~P4-1 orchestrator~~ ✅ · ~~P4-2 list~~ ✅ · **P4-3 PDF export** ← ACTIVE
-5. **Tier 2 — Sprint A** (approvals polish A2/A3) — deferred behind Phase 4
-6. **Tier 3 — Sprint B** (graph + permissions)
-7. **Tier 4 — Sprint C** (invitation UI)
+4. **C1 — Invitations** ← ACTIVE (read path live + verified 2026-07-14; accept/decline
+   needs a real second-account test)
+5. **Phase 4 — Invoice**: ~~P4-1~~ ✅ · ~~P4-2~~ ✅ · ~~P4-4 editable~~ ✅ · ~~P4-4b templates~~ ✅ · **P4-3 PDF export**
+6. **Tier 3 — Sprint B** (graph + permissions, DOC-1 signatory scoping)
+7. P4-5 contract extraction · P4-6 overtime · P4-7 engagement type
 
 See `src/docs/TASK_BACKLOG.md` for full task cards.
 
@@ -129,7 +133,8 @@ src/docs/                  # OPERATIONS.md, ROADMAP.md, TASK_BACKLOG.md, AGENT_W
 | `approval_records` RLS wide open (`USING (true)`) | CRITICAL | ✅ RESOLVED — 014 applied + verified | — |
 | HMAC secret hardcoded in client bundle (`approval-tokens.ts`) | HIGH | ✅ RESOLVED — S2 done; `APPROVAL_TOKEN_SECRET` in edge secrets; takes full effect on deploy | — |
 | Self-approval guard is client-side only | MEDIUM | ✅ RESOLVED — 012 trigger live | — |
-| **Stale edge build deployed** (`make-server-f8b491be`) — B3 role guards + approval-token routes not live; old routes (timesheets/contracts/members) still serving | HIGH | Open | `supabase functions deploy server` (Nikola) |
+| **Stale edge build deployed** (`make-server-f8b491be`) | HIGH | ✅ RESOLVED — fresh build live 2026-07-14 (B3 guards, approval tokens, invitations API) | — |
+| `wg_invoices` SELECT RLS: any accepted project member reads all project invoices | MEDIUM | Open — fine under single-account personas; fix before real worker accounts | DOC-1: signatory-org scoping (needs C1 org membership) |
 
 ## Things That Bite You
 

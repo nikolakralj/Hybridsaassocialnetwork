@@ -15,6 +15,29 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-14 - [DONE] EDGE DEPLOY unblocked + C1 invitation read path live (Claude)
+
+- **Deploy mystery solved:** the CLI derives the function slug from the folder name, so
+  `functions deploy server` created a NEW function `server` that no client calls — while
+  stale `make-server-f8b491be` (v90) kept serving. All internal Hono routes are prefixed
+  `/make-server-f8b491be/...` because the platform passes the path INCLUDING the slug.
+  Fix: shim folder `supabase/functions/make-server-f8b491be/index.ts` → `import "../server/index.tsx"`.
+  **Always deploy `make-server-f8b491be`, never `server`.** (Orphan `server` function can
+  be deleted from the dashboard.)
+- Now live: B3 role guards, approval-token signing routes, invitations API.
+- **Gateway/JWT:** verify_jwt is on → signed-out invite-link visitors got 401. Client fix:
+  project-invitations.ts sends `Authorization: Bearer <anon key>` when no session.
+  Second gotcha: adding an `apikey` header broke CORS preflight (header not in
+  allowHeaders) → "Failed to fetch". Fixed both sides: client sends only allowed headers;
+  server allowHeaders now includes `apikey`, `x-client-info`.
+- **C1 read path verified E2E in browser:** inserted test invitation `inv_claude_e2e_test`
+  (NAS, contributor, test-worker@example.com, expires Jul 21) → /invite/inv_claude_e2e_test
+  renders project/role/inviter/expiry + Accept/Decline. Accept/decline still needs a REAL
+  second-account test (agents must not create accounts) — Nikola: invite a second email
+  from the Team dialog, accept from that account, verify wg_project_members row and the
+  email-mismatch 403.
+- `wg_project_invitations` table exists with full schema (id/project/email/role/expiry/status).
+
 ## 2026-07-10 - [DONE] A4 rate UI + queue submitter-visibility (Claude)
 
 - User confusion report (as first real user): submitted week not visible in Queue
@@ -340,3 +363,55 @@
 - Draft delete is available from invoice detail and invoice rows, guarded by confirmation and hidden for non-drafts.
 - `npm run build` passes. Largest JS chunk remains `vendor-charts` 312.10 kB; `invoices` chunk is 78.69 kB.
 - Product stance: these are table-stakes billing workflow features that help demos/sales; AI country invoice generation remains future scope behind deterministic compliance/export rules.
+
+## 2026-07-10 - [DONE] C1 invitation acceptance UI (Codex)
+
+- Added `src/components/invitations/InviteAcceptPage.tsx` for real invite-token acceptance: shows project, role, inviter, expiry, and status.
+- Added `src/utils/api/project-invitations.ts` token client for `GET /invitations/:token`, `POST /invitations/:token/accept`, and `POST /invitations/:token/decline`.
+- Wired routes: `/invite/:token` plus legacy `/accept-invite?token=...` fallback.
+- Auth handoff: unauthenticated users see a sign-in/create-account prompt; after sign-in, pending accept/decline continues with the same invite URL.
+- On accept, the page syncs `currentProjectId/currentProjectName` session state and redirects to `/app/project-workspace`.
+- Added missing source route `POST /invitations/:token/decline` in `supabase/functions/server/invitations-api.tsx`; updated generated email links to `/invite/{token}`.
+- `npm run build` passes. Largest JS chunk remains `vendor-charts` 312.10 kB.
+- Deployment caveat: the worklog still says the live edge function is old; C1 needs a fresh `supabase functions deploy server` before token lookup/accept/decline works in production.
+
+## 2026-07-10 - [DONE] C1 invite role/rate-permission lockdown (Codex)
+
+- Clarified product rule in code: project collaboration role controls who can invite; graph person labels like Employee/Agency and project party flags control approval/rate/timesheet visibility.
+- Invite hierarchy enforced in shared frontend permissions: Owner can invite Editor/Contributor/Commenter/Viewer; Editor can invite Contributor/Commenter/Viewer; Contributor/Commenter/Viewer cannot invite. Normal invites cannot create another Owner.
+- `ProjectInviteMemberDialog` now receives the current user's project role, filters the role dropdown, explains Editor limits, disables the form when the user cannot invite, and blocks stale/invalid role submission.
+- Project workspace Team invite and Projects list card menu now hide invite actions when the current role cannot invite.
+- Server source routes now enforce the same invite hierarchy in both `/invitations` and legacy `/api/projects/:projectId/members`; browser-only role filtering is no longer trusted.
+- New invite-created members default to `can_approve=false`, `can_view_rates=false`, `can_edit_timesheets=false`, `visible_to_chain=true`; explicit project configuration can grant rate/timesheet/approver powers later.
+- `npm run build` passes. Largest JS chunk: `vendor-charts` 312.10 kB; all chunks remain under 400 kB. Vite still emits existing manual-chunk circular warnings.
+- Deployment caveat: server permission changes require a fresh `supabase functions deploy server` before they protect the live Edge Function.
+
+## 2026-07-10 - [DONE] Full-view graph/rate visibility containment (Codex)
+
+- User caught a sellability blocker: project Owner must not automatically see every downstream contract/rate. Example: an agency Owner should not see the private contract between its contractor and a sub-contractor one level behind.
+- Existing ReBAC graph visibility already hides contracts that do not involve the viewer's org and masks non-signatory contract rates, but the prototype exposed `Admin (Full View)` as a normal selectable identity.
+- Added `ALLOW_GRAPH_ADMIN_VIEW` debug flag (`VITE_ENABLE_GRAPH_ADMIN_VIEW=true`) and disabled full graph view by default.
+- Removed production `Admin (Full View)` options from WorkGraph and Timesheets viewer pickers; stale stored `__admin__` session viewer IDs are now ignored/cleared.
+- `computeScopedView()` no longer honors admin full-view unless the debug flag is explicitly enabled; fallback viewer is now a non-admin placeholder.
+- `npm run build` passes. Largest JS chunk: `vendor-charts` 312.10 kB; all chunks remain under 400 kB. Vite still emits existing manual-chunk circular warnings.
+- Residual risk: this is UI/session containment. A production-grade confidentiality boundary still requires moving private contracts/rates out of shared `wg_projects.graph` JSON into signatory-scoped tables/RPCs with RLS, so each party can only read contract rows they are party to.
+
+## 2026-07-10 - [SPEC] Graph confidentiality model (Codex)
+
+- User refined the sellable model: agency/company project managers should see nearest-node operational data, not the full DAG; employees should see their own earning/pay rate, not the company's bill rate or margin on them.
+- Wrote `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md` to separate three axes: project collaboration role, organization role, and graph/contract relationship.
+- Key rule: `ProjectRole.Owner` can administer the project shell but does not automatically see all rates/contracts. `org_admin`/`org_finance` controls internal company data. Contract signatory relationship controls private contract/rate visibility.
+- Added critical backlog item `GSEC` for the deeper implementation: move private rates/contracts out of shared graph JSON into signatory-scoped tables/RPCs with RLS.
+- Immediate containment from prior entry remains valid, but not sufficient for production confidentiality until GSEC is implemented.
+
+## 2026-07-10 - [DONE] G1 viewer identity containment (Codex)
+
+- Restricted production WorkGraph viewer choices to the signed-in user's mapped project identity instead of all graph people/orgs.
+- `ProjectMember` type now carries existing backend fields: `graphNodeId`, `canApprove`, `canViewRates`, `canEditTimesheets`, `visibleToChain`.
+- Workspace viewer picker now filters name-directory identities by current membership:
+  own `graphNodeId` and auth user id are allowed; scoped org view is allowed only for `Owner`/`Editor` as a temporary containment until real org roles exist.
+- If no mapped identity exists, Workspace passes a locked `No mapped graph identity` viewer so WorkGraph cannot silently fall back to the first party in the graph.
+- WorkGraphBuilder no longer overrides a controlled workspace viewer with its own internal first-party fallback.
+- Timesheets viewer dropdown is restricted to the workspace-approved viewer unless `VITE_ENABLE_GRAPH_ADMIN_VIEW=true`.
+- `npm run build` passes. Largest JS chunk: `vendor-charts` 312.10 kB; all chunks remain under 400 kB. Existing Vite circular manual-chunk warnings remain.
+- Residual risk: G1 is still UI/session containment. G2/G3 must move private contracts/rates to signatory-scoped tables/RPCs with RLS before claiming production-grade confidentiality.

@@ -173,19 +173,26 @@ export function getRoleColor(role: ProjectRole): string {
   return colors[role];
 }
 
+const DEFAULT_INVITABLE_ROLES: ProjectRole[] = ['Editor', 'Contributor', 'Commenter', 'Viewer'];
+
 /**
- * Validate if a role can invite another role
- * (Owners can invite anyone, Editors can invite Contributor/Commenter/Viewer)
+ * Validate if a role can invite another role.
+ * Owners can grant admin/editor access; Editors can only add lower-trust roles.
+ * Owner transfer should be a separate explicit flow, not a normal invitation.
  */
 export function canRoleInviteRole(
-  inviterRole: ProjectRole,
+  inviterRole: ProjectRole | null | undefined,
   inviteeRole: ProjectRole
 ): boolean {
-  if (inviterRole === 'Owner') return true;
+  if (inviterRole === 'Owner') return inviteeRole !== 'Owner';
   if (inviterRole === 'Editor') {
     return ['Contributor', 'Commenter', 'Viewer'].includes(inviteeRole);
   }
   return false;
+}
+
+export function getInvitableRolesForRole(inviterRole: ProjectRole | null | undefined): ProjectRole[] {
+  return DEFAULT_INVITABLE_ROLES.filter((role) => canRoleInviteRole(inviterRole, role));
 }
 
 /**

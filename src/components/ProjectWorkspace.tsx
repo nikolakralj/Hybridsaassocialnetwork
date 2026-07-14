@@ -23,10 +23,11 @@ import { NotificationCenterBell } from "./notifications/InAppNotificationCenter"
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
 import { addProjectMember, getProject, getProjectMembers } from "../utils/api/projects-api";
+import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
-import type { ViewerIdentity } from "./workgraph/graph-visibility";
+import { ALLOW_GRAPH_ADMIN_VIEW, type ViewerIdentity } from "./workgraph/graph-visibility";
 
 const LazyWorkGraphBuilder = lazy(() =>
   import("./workgraph/WorkGraphBuilder").then((mod) => ({ default: mod.WorkGraphBuilder }))
@@ -69,6 +70,48 @@ interface ProjectConfiguration {
   settings: any;
   createdAt: string;
   status: 'active' | 'archived' | 'draft';
+}
+
+const LOCKED_GRAPH_VIEWER: ViewerIdentity = {
+  nodeId: "__no_mapped_viewer__",
+  type: "company",
+  name: "No mapped graph identity",
+};
+
+const VIEWER_TYPES = ["admin", "company", "agency", "client", "freelancer", "party"];
+
+function normalizeViewerType(type: string): ViewerIdentity["type"] {
+  return type === "party" ? "company" : type as ViewerIdentity["type"];
+}
+
+function isAdminViewer(viewer: Partial<ViewerIdentity> | null | undefined): boolean {
+  return viewer?.nodeId === "__admin__" || viewer?.type === "admin";
+}
+
+function getAllowedViewerIds(
+  member: ProjectMember | null,
+  role: ProjectRole | null,
+  userId?: string
+): Set<string> {
+  const ids = new Set<string>();
+  if (userId) ids.add(userId);
+  if (member?.graphNodeId) ids.add(member.graphNodeId);
+  // Until org roles exist, org-level viewing is limited to people who can operate
+  // the project shell. GSEC will replace this with org_admin/org_pm/org_finance.
+  if ((role === "Owner" || role === "Editor") && member?.scope) {
+    ids.add(member.scope);
+  }
+  return ids;
+}
+
+function isViewerAllowed(
+  viewer: ViewerIdentity | null | undefined,
+  allowedViewerIds: Set<string>
+): viewer is ViewerIdentity {
+  if (!viewer) return false;
+  if (ALLOW_GRAPH_ADMIN_VIEW && isAdminViewer(viewer)) return true;
+  if (isAdminViewer(viewer)) return false;
+  return allowedViewerIds.has(viewer.nodeId);
 }
 
 export function ProjectWorkspace({ 
@@ -271,8 +314,13 @@ export function ProjectWorkspace({
     return currentMembership?.role || null;
   }, [currentMembership?.role, projectOwnerId, user?.id]);
   const canManageProject = currentProjectRole === "Owner" || currentProjectRole === "Editor";
+  const canInviteMembers = getInvitableRolesForRole(currentProjectRole).length > 0;
   const canEditGraph = canManageProject;
   const teamButtonLabel = teamMembers.length > 0 ? `Team (${teamMembers.length})` : "Team";
+  const allowedViewerIds = useMemo(
+    () => getAllowedViewerIds(currentMembership, currentProjectRole, user?.id),
+    [currentMembership, currentProjectRole, user?.id]
+  );
 
   const enableAndOpenModule = (moduleId: ModuleId) => {
     setModules(prev => prev.map(m => m.id === moduleId ? { ...m, isEnabled: true } : m));
@@ -364,7 +412,12 @@ export function ProjectWorkspace({
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        if (parsed?.nodeId && parsed?.type) {
+        if (!isViewerAllowed(parsed as ViewerIdentity, allowedViewerIds)) {
+          sessionStorage.removeItem(viewerMetaStorageKey);
+          sessionStorage.removeItem(`workgraph-viewer:${projectId}`);
+          setActiveGraphViewer(null);
+          setWorkspaceViewer(null);
+        } else if (parsed?.nodeId && parsed?.type) {
           const viewer = parsed as ViewerIdentity;
           setActiveGraphViewer(viewer);
           setWorkspaceViewer(viewer);
@@ -375,12 +428,11 @@ export function ProjectWorkspace({
     }
 
     const nameDirKey = `workgraph-name-dir:${projectId}`;
-    const VIEWER_TYPES = ['admin', 'company', 'agency', 'client', 'freelancer', 'party'];
-    const normalizeViewerType = (t: string): ViewerIdentity['type'] =>
-      t === 'party' ? 'company' : t as ViewerIdentity['type'];
 
     const buildViewersFromNameDir = (): ViewerIdentity[] => {
-      const result: ViewerIdentity[] = [{ nodeId: '__admin__', type: 'admin', name: 'Admin (Full View)' }];
+      const result: ViewerIdentity[] = ALLOW_GRAPH_ADMIN_VIEW
+        ? [{ nodeId: '__admin__', type: 'admin', name: 'Admin (Full View)' }]
+        : [];
       // Try sessionStorage first, fall back to localStorage
       let nameDirRaw = sessionStorage.getItem(nameDirKey);
       if (!nameDirRaw) {
@@ -399,16 +451,33 @@ export function ProjectWorkspace({
         Object.entries(parsed).forEach(([nodeId, meta]) => {
           if (!meta?.name || !meta?.type) return;
           if (!VIEWER_TYPES.includes(meta.type)) return;
-          result.push({ nodeId, type: normalizeViewerType(meta.type), name: meta.name, orgId: meta.orgId });
+          const viewer = { nodeId, type: normalizeViewerType(meta.type), name: meta.name, orgId: meta.orgId };
+          if (isViewerAllowed(viewer, allowedViewerIds)) {
+            result.push(viewer);
+          }
         });
       } catch { /* Ignore malformed viewer directory */ }
       return result;
     };
-    setWorkspaceViewerOptions(buildViewersFromNameDir());
+    const initialOptions = buildViewersFromNameDir();
+    setWorkspaceViewerOptions(initialOptions);
+    setWorkspaceViewer((current) => (
+      isViewerAllowed(current, allowedViewerIds)
+        ? current
+        : initialOptions.find((viewer) => !isAdminViewer(viewer)) || initialOptions[0] || null
+    ));
 
     const onViewerChanged = (event: Event) => {
       const custom = event as CustomEvent<{ projectId?: string; viewer?: ViewerIdentity }>;
       if (!custom.detail?.viewer || custom.detail?.projectId !== projectId) return;
+      if (!isViewerAllowed(custom.detail.viewer, allowedViewerIds)) {
+        sessionStorage.removeItem(viewerMetaStorageKey);
+        sessionStorage.removeItem(`workgraph-viewer:${projectId}`);
+        setActiveGraphViewer(null);
+        setWorkspaceViewer(null);
+        setWorkspaceViewerOptions(buildViewersFromNameDir());
+        return;
+      }
       setActiveGraphViewer(custom.detail.viewer);
       setWorkspaceViewer(custom.detail.viewer);
       setWorkspaceViewerOptions(buildViewersFromNameDir());
@@ -427,7 +496,7 @@ export function ProjectWorkspace({
       window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
       window.removeEventListener('workgraph-namedir-updated', onNameDirUpdated);
     };
-  }, [projectId]);
+  }, [projectId, allowedViewerIds]);
 
   const resolveStoredViewer = (): ViewerIdentity | null => {
     const key = `workgraph-viewer-meta:${projectId}`;
@@ -435,6 +504,11 @@ export function ProjectWorkspace({
     if (!raw) return activeGraphViewer;
     try {
       const parsed = JSON.parse(raw);
+      if (!isViewerAllowed(parsed as ViewerIdentity, allowedViewerIds)) {
+        sessionStorage.removeItem(key);
+        sessionStorage.removeItem(`workgraph-viewer:${projectId}`);
+        return activeGraphViewer?.type === 'admin' ? null : activeGraphViewer;
+      }
       if (parsed?.nodeId && parsed?.type && parsed?.name) {
         return parsed as ViewerIdentity;
       }
@@ -444,7 +518,13 @@ export function ProjectWorkspace({
     return activeGraphViewer;
   };
 
-  const effectiveViewer = workspaceViewer || resolveStoredViewer();
+  const resolvedStoredViewer = resolveStoredViewer();
+  const effectiveViewer =
+    (isViewerAllowed(workspaceViewer, allowedViewerIds) ? workspaceViewer : null) ||
+    (isViewerAllowed(resolvedStoredViewer, allowedViewerIds) ? resolvedStoredViewer : null) ||
+    workspaceViewerOptions.find((viewer) => !isAdminViewer(viewer)) ||
+    workspaceViewerOptions[0] ||
+    LOCKED_GRAPH_VIEWER;
 
   const handleInviteMember = async (payload: { userName?: string; userEmail: string; role: ProjectRole }) => {
     await addProjectMember(projectId, payload, accessToken);
@@ -518,11 +598,12 @@ export function ProjectWorkspace({
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3">
-            {effectiveViewer ? (
+            {workspaceViewerOptions.length > 0 ? (
               <ViewerSelector
                 viewers={workspaceViewerOptions}
                 current={effectiveViewer}
                 onChange={(viewer) => {
+                  if (!isViewerAllowed(viewer, allowedViewerIds)) return;
                   setWorkspaceViewer(viewer);
                   setActiveGraphViewer(viewer);
                   sessionStorage.setItem(`workgraph-viewer-meta:${projectId}`, JSON.stringify(viewer));
@@ -532,7 +613,11 @@ export function ProjectWorkspace({
                   }));
                 }}
               />
-            ) : null}
+            ) : (
+              <Badge variant="outline" className="text-xs text-muted-foreground">
+                Graph identity not mapped
+              </Badge>
+            )}
           </div>
         </div>
       </div>
@@ -714,7 +799,7 @@ export function ProjectWorkspace({
               <TeamModule
                 members={teamMembers}
                 loading={isTeamLoading}
-                canManageMembers={canManageProject}
+                canManageMembers={canInviteMembers}
                 onInvite={() => setIsInviteOpen(true)}
                 onRefresh={loadTeamMembers}
               />
@@ -743,6 +828,7 @@ export function ProjectWorkspace({
         <ProjectInviteMemberDialog
           open={isInviteOpen}
           projectName={projectName}
+          currentUserRole={currentProjectRole}
           onOpenChange={setIsInviteOpen}
           onInvite={handleInviteMember}
         />

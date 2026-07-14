@@ -15,6 +15,10 @@
 
 import type { BaseNode, BaseEdge } from '../../types/workgraph';
 
+// Full graph view is a local/debug escape hatch only. Production project Owners
+// must still see the graph through their party/person identity.
+export const ALLOW_GRAPH_ADMIN_VIEW = import.meta.env.VITE_ENABLE_GRAPH_ADMIN_VIEW === 'true';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -266,7 +270,7 @@ export function computeScopedView(
   // Admin sees everything
   // hopDistance is set to 99 for admin view so that isSelf (hopDistance===0)
   // does NOT trigger the "YOU" badge on every org node — admin has no single "home" org.
-  if (viewer.type === 'admin') {
+  if (viewer.type === 'admin' && ALLOW_GRAPH_ADMIN_VIEW) {
     return {
       viewer,
       nodes: allNodes.map(n => ({
@@ -496,12 +500,13 @@ export function buildViewerOptions(
 ): ViewerIdentity[] {
   const viewers: ViewerIdentity[] = [];
 
-  // Admin (god mode)
-  viewers.push({
-    nodeId: '__admin__',
-    type: 'admin',
-    name: 'Admin (Full View)',
-  });
+  if (ALLOW_GRAPH_ADMIN_VIEW) {
+    viewers.push({
+      nodeId: '__admin__',
+      type: 'admin',
+      name: 'Admin (Full View)',
+    });
+  }
 
   // Organizations
   nodes

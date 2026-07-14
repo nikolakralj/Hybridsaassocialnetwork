@@ -28,7 +28,7 @@ const app = new Hono();
 app.use("/*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowHeaders: ["Content-Type", "Authorization", "apikey", "x-client-info"],
 }));
 
 app.use("*", logger(console.log));
