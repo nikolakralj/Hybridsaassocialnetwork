@@ -15,6 +15,31 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-15 - [DONE] Product strategy audit → GO decision (Claude)
+
+- Executed `CLAUDE_PRODUCT_STRATEGY_BRIEF.md` (independent audit; read all listed
+  docs + verified DB reality: migrations 001–021 applied incl. Codex's 018–021
+  trust-core; real second-account invite acceptance works but accepted user has no
+  org membership/roster/graph identity → "Graph identity not mapped").
+- **Verdict: GO — narrowed thesis, agent-ready architecture, staged agent surface.**
+  Canonical: `src/docs/PRODUCT_STRATEGY_DECISION.md` (thesis, customer, job-to-be-
+  done, deterministic-vs-AI split, defensibility, kill/defer/keep table, 90-day
+  validation plan, explicit kill criteria, M1/M2/M3).
+- Central-question ruling: human-SaaS vs agent-layer is a false dichotomy — the
+  deterministic trust boundary IS the agent play (org-scoped agents require
+  machine-checkable visibility; InTime/Bullhorn architecture can't host counterparty
+  agents). First agent = "the Chaser" (Phase A), evidence-gated after M3, zero
+  authority.
+- Enforced in docs: ROADMAP v3.1 (decision banner; stale "KV-store only"
+  constraint corrected to Postgres+RLS reality), TASK_BACKLOG v3.1 (M1/M2/M3
+  authorization banner), CLAUDE.md priority order replaced with M1/M2/M3.
+- Killed as goals: social feed surface, marketplace (18 mo), "1M users" metric,
+  dead graph-versions API. Deferred: Stripe, analytics (except missing-timesheets
+  board), placement reports until post-M3.
+- NOT committed: Codex's ~1,000-line uncommitted trust-core diff (timesheets/
+  contracts/invoices server hardening + client changes) — pending my line review
+  next session per reviewer role. Docs-only commit for this audit.
+
 ## 2026-07-14 - [DONE] P4-8 consolidated monthly invoices + month-submit label (Claude)
 
 - User: "why independent weeks in my submissions — can I submit whole month?" →
@@ -452,3 +477,106 @@
 - Timesheets viewer dropdown is restricted to the workspace-approved viewer unless `VITE_ENABLE_GRAPH_ADMIN_VIEW=true`.
 - `npm run build` passes. Largest JS chunk: `vendor-charts` 312.10 kB; all chunks remain under 400 kB. Existing Vite circular manual-chunk warnings remain.
 - Residual risk: G1 is still UI/session containment. G2/G3 must move private contracts/rates to signatory-scoped tables/RPCs with RLS before claiming production-grade confidentiality.
+
+## 2026-07-14 - [SPEC] G2/InTime contractor portal benchmark (Codex)
+
+- User asked Codex to continue Fable's stopped G2 portal research from `https://timesheets.g2recruitment.com/placement/list`.
+- Chrome automation could only reach the public RSM InTime login page; authenticated placement list is not visible without the user's logged-in browser session.
+- Used public RSM/InTime contractor/manager guides to benchmark the product model: placement profiles, status-bucketed timesheets, expenses as peer approval workflow, Pay/invoices/remittance advice, compliance/AWR/information requests, manager authorise queues, and email/bulk approval patterns.
+- Added `src/docs/specs/G2_INTIME_BENCHMARK.md`.
+- Added backlog cards: P4-10 `placement-profile-panel`, P4-11 `missing-timesheets-dashboard`, P4-12 `pay-remittance-status`.
+- Recommendation: build P4-9 expenses next, then placement profile/missing-timesheet dashboard. These are sellable staffing-portal primitives and fit WorkGraph's graph/trust model.
+
+## 2026-07-14 - [SPEC] Authenticated G2 placement-list findings (Codex)
+
+- User opened the authenticated G2/InTime Placement Search page in Chrome; Codex inspected the page via DevTools snapshot.
+- Captured workflow/field structure only, not private row values: placement ref, start/end, job title, worker, provider, Ltd company, payroll cadence, consultant, client, client ref, manager, created/modified, default rate label, default rate pay, default rate type, purchase order number, and expenses PO.
+- Product conclusion: WorkGraph needs a placement profile/reporting layer over graph assignments. The graph canvas is not enough for real agencies; they need searchable placement records, PO fields, payroll cadence, consultant/manager routing, and exports.
+- Updated `src/docs/specs/G2_INTIME_BENCHMARK.md` with authenticated placement-search findings.
+- Expanded P4-10 `placement-profile-panel` and added P4-13 `placement-reporting-export` in `src/docs/TASK_BACKLOG.md`.
+- Sellability note: G2/InTime confirms our next build order should stay practical: expenses approval/invoicing, then placement profile/reporting, then missing-timesheet dashboard and pay/remittance status.
+
+## 2026-07-14 - [STRATEGY] Bullhorn lessons and next-step reset (Codex)
+
+- User asked whether WorkGraph is nowhere near Bullhorn and what to learn from Bullhorn before building more.
+- Product conclusion: do not compete feature-for-feature with Bullhorn ATS/CRM/automation/pay-bill breadth. WorkGraph's wedge should be graph-aware pay-and-bill for multi-party staffing chains with strict private rate/contract boundaries.
+- Added `src/docs/specs/BULLHORN_LESSONS_STRATEGY.md`.
+- Added critical backlog epic C2 `company-membership-private-worker-contracts`: company admin invites workers, worker contract/timesheet stays company-private, internal approval happens before upstream agency/client approval, and agency/client approvers cannot see worker-company pay terms or private contracts.
+- Decision: broad worker invites should not be treated as done after C1. C1 is token acceptance; C2 is the sellable trust model.
+
+## 2026-07-14 - [SPEC] C2 company directory vs project roster visibility (Codex)
+
+- User raised the real staffing visibility question: when an agency invites a company, should the company decide which employees are visible to the project? Example: a company accountant may need internal access but should not matter to the agency/client.
+- Product decision: split company people into a private organization directory and a project-specific roster. Company admins choose who becomes visible on each project.
+- Rule: hidden internal people are valid; hidden client-facing workers are not valid for normal staffing workflows. Anyone submitting billable/approvable client-facing time must be visible enough for the direct approver/counterparty to approve the work, while pay rate, private worker-company contract, and margin remain hidden.
+- Added `src/docs/specs/C2_COMPANY_MEMBERSHIP_SPEC.md`.
+- Updated `src/docs/TASK_BACKLOG.md` C2 to point at the new spec.
+- Rewrote `src/docs/README.md` as a current docs index because the docs folder is drifting: `AGENT_WORKLOG.md` and `TASK_BACKLOG.md` are large, newer strategy lives in specs, and some older session/root docs contain stale task guidance.
+- No build run; docs/spec-only change.
+
+## 2026-07-14 - [SPEC] C2 social profile claims vs verified company membership (Codex)
+
+- User clarified the future WorkGraph social/SaaS idea: a person may create a profile and declare they work for Company XYZ, while the company owner/admin later controls whether that person can join projects.
+- Confirmed this idea exists only partially in the docs: ROADMAP Phase 9 has public freelancer/company profiles, but C2 needed the verification bridge.
+- Updated `src/docs/specs/C2_COMPANY_MEMBERSHIP_SPEC.md` with Personal Profile, Company Profile, and membership states: `claimed`, `invited`, `verified`, `rejected`, `removed`.
+- Product/security rule: a self-claimed company affiliation grants zero access. Only company-admin verification creates organization membership; only project roster assignment creates project visibility/work eligibility.
+- Updated C2 backlog scope/acceptance criteria in `src/docs/TASK_BACKLOG.md`.
+
+## 2026-07-14 - [IN PROGRESS] Trust Core C2 schema + timesheet self-approval hardening (Codex)
+
+- Implemented additive C2 foundation migration `018_c2_organization_membership_and_roster.sql`: company profiles, verified organization membership, project organization mapping, project roster visibility, document/contract signatory scaffolding, and private contract-rate tables.
+- Added `src/types/organizations.ts` with typed membership states, organization roles, project roster visibility, and helper predicates.
+- Hardened auth cleanup in `AuthContext`: sign-out now clears `workgraph-*`, `wg-*`, and current-project browser cache keys so stale project identity cannot leak across sessions.
+- Hardened the timesheet client: TEXT project IDs are no longer dropped, list requests include `project_id`, own-user draft/submission stays direct, cross-user save/submit/reopen is blocked, cross-user approve/reject is forced through the Edge route, and self approve/reject is rejected.
+- Hardened `supabase/functions/server/timesheets-api.tsx`: `PATCH /timesheets/:week/status` validates status, blocks self approve/reject, blocks cross-user submit/reopen, and only allows cross-user approve/reject when the reviewer is project owner, accepted Owner/Editor, or has `can_approve=true`.
+- Added migration `019_timesheet_self_approval_guard.sql`: DB trigger blocks user-session attempts to approve/reject their own `wg_timesheet_weeks` rows or spoof approval metadata through direct Supabase writes.
+- Verification: `git diff --check` passes; `npm run build` passes. Chunk sizes: `vendor-charts` 312.10 kB, `vendor` 295.72 kB, `vendor-ui` 278.58 kB, `index` 266.46 kB, `workgraph` 232.64 kB, `vendor-react` 228.48 kB, `approvals` 87.53 kB, `invoices` 81.07 kB, `timesheets` 61.39 kB. Vite still reports the known manual-chunk circular warnings.
+- Not applied/deployed yet: migrations 018/019 must be run in Supabase; the `make-server-f8b491be` Edge function must be redeployed before the server route guard protects production traffic.
+- Residual critical risk: private rates/contracts still exist in shared `wg_projects.graph` JSON and invoice RLS is still broader than the final signatory-scoped model. Next Trust Core step should move invoice/rate reads behind server/RLS boundaries before building more invoice/social features.
+
+## 2026-07-14 - [IN PROGRESS] Private bill-rate bridge + employee invoice-generation gate (Codex)
+
+- User corrected the business rule: normal employees/workers do not generate invoices; they submit time and receive salary/pay through their employer. Invoice generation belongs to seller-side finance/admin or a direct freelancer billing the client.
+- Added migration `020_private_project_rates_and_invoice_acl.sql`: makes `wg_contract_rates` usable for project-scoped graph-person bill rates via `project_id` + `subject_graph_node_id`, tightens rate writes to project managers or org finance/admin, and moves invoice visibility toward creator/signatory-party access rather than broad project-member access.
+- Changed `resolveProjectRates()` to read private `wg_contract_rates` rows first. Legacy graph-rate fallback is disabled by default and only runs when `VITE_ALLOW_GRAPH_RATE_FALLBACK=true`.
+- Added `saveProjectPersonRate()` so the graph drawer saves bill rates into `wg_contract_rates` instead of using `wg_projects.graph` as the money source.
+- Updated the person rate drawer: loads private project rates, saves private rates, and clears numeric `hourlyRate`/`dailyRate`/`fixedAmount` fields from graph JSON after a successful private save. Graph JSON now keeps display metadata only.
+- Gated invoice generation in `InvoicesWorkspace`: only temporary project Owner/Editor roles can generate invoices until C2 org roles (`org_admin`/`org_finance`) are wired. Contributor/Commenter/Viewer get copy explaining employees submit time and finance/admin invoices.
+- Aligned the Edge invoices API source: invoice creation now requires billing-manager access instead of any accepted member.
+- Verification: `git diff --check` passes; `npm run build` passes. Chunk sizes: `vendor-charts` 312.10 kB, `vendor` 295.72 kB, `vendor-ui` 278.58 kB, `index` 266.51 kB, `workgraph` 252.57 kB, `vendor-react` 228.48 kB, `approvals` 87.53 kB, `invoices` 63.76 kB, `timesheets` 61.39 kB. Known manual-chunk circular warnings remain.
+- Not applied/deployed yet: migrations 018/019/020 must be applied in order; `make-server-f8b491be` must be redeployed for Edge-source changes. Existing legacy graph rates will not be trusted for invoices unless explicitly enabling the dev fallback.
+
+## 2026-07-14 - [IN PROGRESS] Signatory-scoped contracts + invoice read hardening (Codex)
+
+- Added migration `021_signatory_scoped_contracts.sql`: `wg_contracts` reads/updates now move from broad owner/project assumptions toward contract owner or verified signatory-party organization access.
+- Hardened `supabase/functions/server/contracts-api.tsx`, which uses the service-role key and therefore must enforce authorization itself: project contract lists are filtered through contract signatories, single-contract reads require signatory access, rate fields are redacted for non-rate viewers, updates require owner/org finance/admin access, and project contract creation is blocked for non-Owner/Editor project users until C2 finance roles are wired.
+- Hardened `supabase/functions/server/invoices-api.tsx`: invoice lists are filtered by creator or mapped invoice party (`from_party_id`/`to_party_id`) instead of broad project Owner/Editor reads. Invoice creation remains temporarily allowed for project Owner/Editor or mapped seller-side org admin/finance while C2 UI is incomplete.
+- Updated `ContractsPage` so redacted rate payloads render as `Rate restricted` and are excluded from average-rate math instead of appearing as `$0/hr`.
+- Verification: `git diff --check` passes; `npm run build` passes. Chunk sizes: `vendor-charts` 312.10 kB, `vendor` 295.72 kB, `vendor-ui` 278.58 kB, `index` 266.78 kB, `workgraph` 252.58 kB, `vendor-react` 228.48 kB, `approvals` 87.53 kB, `invoices` 63.76 kB, `timesheets` 61.39 kB. Known manual-chunk circular warnings remain.
+- Local caveat: Deno is not installed in this terminal, so Edge source was not `deno check`ed locally. Supabase deploy should be used as the Edge validation gate.
+- Not applied/deployed yet: migrations 018/019/020/021 must be applied in order and `make-server-f8b491be` must be redeployed before these server/RLS protections affect production.
+
+## 2026-07-14 - [DONE] Trust Core migrations 018-021 applied + make-server redeployed (Codex)
+
+- Applied the four new Trust Core SQL migrations directly against the linked Supabase database after `db push` hit the repo's duplicate-011 history issue:
+  - `018_c2_organization_membership_and_roster.sql`
+  - `019_timesheet_self_approval_guard.sql`
+  - `020_private_project_rates_and_invoice_acl.sql`
+  - `021_signatory_scoped_contracts.sql`
+- Repaired migration history so `supabase migration list` now shows local and remote aligned for `018-021`.
+- Redeployed the live Edge function slug that the app actually calls: `supabase functions deploy make-server-f8b491be --project-ref gcdtimasyknakdojiufl`.
+- Verification:
+  - `supabase migration list` shows `018`, `019`, `020`, and `021` as applied remotely.
+  - `supabase functions list --project-ref gcdtimasyknakdojiufl` shows `make-server-f8b491be` active at version 93.
+- Remaining caveat: local repo still contains a duplicate `011_fix_rls_recursion.sql`, so `supabase db push` will continue to complain about migration ordering until that historical repo issue is cleaned up or bypassed with direct SQL.
+
+## 2026-07-15 - [READY] Claude product strategy audit brief (Codex)
+
+- Added `src/docs/CLAUDE_PRODUCT_STRATEGY_BRIEF.md` for an independent Claude
+  `GO` / `PIVOT` / `STOP` review before more product features are built.
+- The brief challenges both the existing staffing-SaaS roadmap and the proposed
+  organization-scoped agent thesis. It requires a first buyer, completed job,
+  measurable outcome, deterministic-versus-agent boundary, feature kill list,
+  90-day validation plan, and explicit stop criteria.
+- Claude is instructed to produce `PRODUCT_STRATEGY_DECISION.md`, reconcile stale
+  roadmap assumptions, and avoid product implementation during the audit.

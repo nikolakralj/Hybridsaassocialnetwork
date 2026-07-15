@@ -1,7 +1,23 @@
 # WorkGraph: Product-First Roadmap
 
-**Version 3.0 | March 20, 2026**
+**Version 3.1 | 2026-07-15**
 **Canonical roadmap for product, design, engineering, and AI agents**
+
+> ## ⚖️ STRATEGY DECISION 2026-07-15 — supersedes phase sequencing below
+> Independent audit verdict: **GO — narrowed thesis, agent-ready architecture,
+> staged agent surface.** Full reasoning, kill/defer/keep table, 90-day validation
+> plan, and kill criteria: **`src/docs/PRODUCT_STRATEGY_DECISION.md`** (canonical).
+>
+> Thesis: *WorkGraph closes multi-party contractor work from time to approved,
+> compliant invoice while every company keeps rates, contracts, people, and margins
+> inside its own trust boundary — a boundary strict enough that each org can soon
+> run a scoped agent on it.*
+>
+> **Only three milestones are authorized: M1 identity chain (C2 minimum) →
+> M2 server-side trust boundary → M3 month-end close kit.** Then Phase A ("the
+> Chaser" org agent), evidence-gated. Phase 9 social/marketplace is killed as a
+> goal for 18 months. North-star metric: organizations closing their month in
+> WorkGraph + invoiced volume — not user counts.
 
 ---
 
@@ -549,21 +565,27 @@ the first customer's problem well enough.
 
 ## 18. Implementation Constraints That Still Apply
 
-These constraints still matter even though the sequencing changed.
+These constraints were CORRECTED on 2026-07-15 — the original list predated the
+real data layer and misled agents.
 
 - Frontend: React SPA with Vite
-- Backend: Supabase Edge Functions using Hono
-- Database model: KV-store pattern only
-- No new traditional SQL-table design assumptions
-- Graph rendering remains custom SVG, not React Flow
-- Server routes still use the existing Edge Function prefix
-- Protected files remain protected:
-  - `/supabase/functions/server/kv_store.tsx`
-  - `/utils/supabase/info.tsx`
+- Backend: **Supabase Postgres with real SQL tables + RLS is the primary data
+  layer** (migrations 001–021 applied: projects, members, timesheets, approvals,
+  invoices, org membership, rosters, private rates, signatory contracts).
+  ~~"KV-store pattern only"~~ is dead — do not design new features around KV.
+- Edge Functions (Hono) serve auth-gated APIs; deploy under the legacy slug
+  `make-server-f8b491be` (see CLAUDE.md) — never the `server` slug.
+- Direct supabase-js from the client is the default read/write path; edge routes
+  where server-side authority is required (approval status, cross-user actions).
+- Graph rendering remains custom SVG, not React Flow.
+- `PersonaContext` is dead (Phase 2). The Admin (Full View) viewer is a pre-C1
+  debug tool and must be gated off for real customers.
+- Protected files: `/supabase/functions/server/kv_store.tsx` (legacy),
+  `/utils/supabase/info.tsx`.
 
-If this roadmap conflicts with current architecture details:
-- `ARCHITECTURE.md` is the source of truth for how the system works today
-- `ROADMAP.md` is the source of truth for what we should build next
+If this roadmap conflicts with current reality:
+- `CLAUDE.md` + `AGENT_WORKLOG.md` are the source of truth for how the system works today
+- `PRODUCT_STRATEGY_DECISION.md` is the source of truth for what we build next
 
 ---
 

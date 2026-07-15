@@ -20,18 +20,26 @@ is now the active priority** (approved timesheet → invoice → cash). Sprint A
 (A2/A3) is deferred behind it. The social/network surface is gated off behind
 `VITE_SHOW_SOCIAL_FEATURES` (see ROADMAP Phase 9) — this ships as WorkGraph, not a social app.
 
-**Priority order (STRICT):**
-1. ~~🔴 **Migration 016**~~ ✅ applied + verified 2026-07-08
-2. ~~🔴 **DEPLOY**~~ ✅ **done 2026-07-14** — deployed under legacy slug `make-server-f8b491be`
-   via shim (`supabase/functions/make-server-f8b491be/index.ts` imports `../server/index.tsx`).
-   **Always deploy `make-server-f8b491be`, NOT `server`** — client URLs AND internal Hono
-   route prefixes both use the legacy slug; a `server`-slug deploy is unreachable.
-3. ~~**Tier 0 — Security**~~ ✅ / ~~**Tier 1 — Dead Code Purge**~~ ✅
-4. **C1 — Invitations** ← ACTIVE (read path live + verified 2026-07-14; accept/decline
-   needs a real second-account test)
-5. **Phase 4 — Invoice**: ~~P4-1~~ ✅ · ~~P4-2~~ ✅ · ~~P4-4 editable~~ ✅ · ~~P4-4b templates~~ ✅ · **P4-3 PDF export**
-6. **Tier 3 — Sprint B** (graph + permissions, DOC-1 signatory scoping)
-7. P4-5 contract extraction · P4-6 overtime · P4-7 engagement type
+**⚖️ STRATEGY DECISION 2026-07-15 — `src/docs/PRODUCT_STRATEGY_DECISION.md` is canonical.**
+Verdict: **GO, narrowed** — trust-aware pay-and-bill for multi-party staffing chains;
+agent layer ("the Chaser") evidence-gated after M3. North star: orgs closing their
+month in WorkGraph + invoiced volume. Social/marketplace killed as goals (18 mo).
+
+**Priority order (STRICT — only these three milestones are authorized):**
+1. **M1 — Identity chain complete (C2 minimum):** invite → accept → verified org
+   membership → project roster → graph person mapping → scoped workspace.
+   Exit: real second account runs submit → approve → invoice, no persona switching,
+   no SQL repair, no "Graph identity not mapped". (Migrations 018–021 applied;
+   UI + wiring incomplete.)
+2. **M2 — Trust boundary is server truth:** reads through 019–021 ACL paths; client
+   masks presentation-only; exports leak-checked; adversarial 2-account checklist.
+3. **M3 — Month-end close kit:** missing-timesheets board, P4-9 expenses, P4-3 PDF,
+   consolidated-invoice polish, readiness warnings. Exit: customer zero (Nikola's
+   own chain) closes a real month end-to-end.
+
+Deploy note (permanent): **always deploy `make-server-f8b491be`, NOT `server`** — via
+shim `supabase/functions/make-server-f8b491be/index.ts`; a `server`-slug deploy is
+unreachable (client URLs + internal Hono prefixes use the legacy slug).
 
 See `src/docs/TASK_BACKLOG.md` for full task cards.
 

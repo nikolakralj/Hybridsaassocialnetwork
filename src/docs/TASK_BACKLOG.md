@@ -1,12 +1,31 @@
 ﻿# WorkGraph Task Backlog
 
-**Version:** 3.0 · **Date:** 2026-05-30 · **Owner:** Claude (writes) / Codex (status updates)
+**Version:** 3.1 · **Date:** 2026-07-15 · **Owner:** Claude (writes) / Codex (status updates)
 
 Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]`
 
-> **Refocus (2026-05-30):** Phase 4 invoice (money loop) promoted ahead of
-> A2/A3 cosmetic polish. Social dashboard sections already gated behind
-> `VITE_SHOW_SOCIAL_FEATURES=true` (off by default). See ROADMAP Phase 9.
+> ## ⚖️ STRATEGY DECISION 2026-07-15 — READ FIRST
+> **`src/docs/PRODUCT_STRATEGY_DECISION.md` is canonical.** Verdict: GO, narrowed.
+> **Only three milestones are authorized until pilots produce evidence:**
+>
+> 1. **M1 — Identity chain complete (C2 minimum):** invite → accept → verified org
+>    membership → project roster → graph person mapping → correctly scoped
+>    workspace. Exit: a real second account runs submit → approve → invoice with
+>    no persona switching, no SQL repair, no "Graph identity not mapped".
+> 2. **M2 — Trust boundary is server truth:** reads flow through the 019–021 ACL
+>    paths; client masks become presentation only; export/print leak-checked;
+>    adversarial two-account checklist committed.
+> 3. **M3 — Month-end close kit:** missing-timesheets board (G2-2), expenses
+>    (P4-9), invoice PDF (P4-3), consolidated-invoice polish, readiness warnings.
+>
+> Everything else is deferred regardless of its status below. Killed as goals:
+> social feed surface, matchmaker/marketplace (18 mo), "1M users" framing,
+> KV-only constraint, dead graph-versions API. Phase A ("the Chaser" org-scoped
+> agent — detect/chase/prepare/draft, zero authority) unlocks only after M3 +
+> customer-zero close. Any task not traceable to M1/M2/M3 needs a documented
+> exception in AGENT_WORKLOG before work starts.
+
+> Refocus (2026-05-30, superseded): Phase 4 promoted ahead of A2/A3 — completed.
 
 ---
 
@@ -17,6 +36,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | M5 | Apply `016_fix_wg_project_members_scope_recursion.sql` — applied 2026-07-08 via Supabase MCP, policy + fn verified live | Claude | `[DONE]` |
 | DEPLOY | Run `supabase functions deploy server` — **an OLD edge build (`make-server-f8b491be`) is live**; B3 guards + approval-token routes need a fresh deploy | Nikola | `[READY]` |
 | GSEC | Implement graph confidentiality model from `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md`: project role != rate visibility, org role != project role, contract rates signatory-scoped. G0/G1 UI containment started 2026-07-10; RLS-backed contract/rate tables still required. | Claude/Codex | `[IN PROGRESS]` |
+| C2 | Company membership + private worker contracts: Nikola-company-admin invites worker, worker submits contract/timesheet, Nikola approves internally, James/John approve upstream work but cannot see worker-company private contract/pay terms. Spec now required before broad worker invites. | Claude/Codex | `[READY]` |
 | M6 | `010_phase4_invoice_schema.sql` — verified already applied (wg_invoices + wg_invoice_templates + RLS live, 2026-07-08) | — | `[DONE]` |
 
 > **Note (2026-07-08):** Supabase free tier **auto-paused** the project (status INACTIVE) —
@@ -252,6 +272,98 @@ should approve them and they belong on the invoice."
 
 ---
 
+### P4-10 · `placement-profile-panel` · `[READY]`
+
+**Benchmark:** `src/docs/specs/G2_INTIME_BENCHMARK.md`
+
+**Why:** G2/InTime is placement-centric: contractors see placement details,
+client/agency context, documents, compliance/AWR, timesheets, expenses, and pay
+from one work container. The authenticated G2 Placement Search also exposes
+operational agency fields: placement ref, client ref, worker, provider, payroll
+cadence, consultant, client manager, PO number, expenses PO, default rate label,
+default pay amount, and rate type. WorkGraph should map this to graph assignments
+without breaking confidentiality.
+
+**Scope:**
+- Placement panel/drawer for a person assignment in the project
+- Shows person, org, client/counterparty, role/title, engagement type, start/end,
+  payroll cadence, consultant, manager, placement ref, client ref, approval route,
+  expense policy, PO number, expenses PO, and document/compliance readiness
+- Shows rate label/type and pay/bill summary only when allowed by
+  `GRAPH_CONFIDENTIALITY_SPEC.md`
+- Links to Timesheets, Expenses, Invoices/Pay, Documents for that placement
+- Honors GRAPH_CONFIDENTIALITY_SPEC visibility rules
+
+**Acceptance criteria:**
+- [ ] Person/assignment drawer has a placement summary section
+- [ ] Shows approval route + missing setup warnings
+- [ ] Shows PO / expenses PO / payroll cadence fields
+- [ ] Does not expose hidden rates/contracts
+- [ ] `npm run build` passes
+
+---
+
+### P4-11 · `missing-timesheets-dashboard` · `[READY]`
+
+**Benchmark:** InTime status buckets: Draft, Unauthorised/Submitted, Approved,
+Rejected, Search/History.
+
+**Scope:**
+- Add manager/org dashboard card for expected vs submitted vs approved vs missing
+  weeks
+- Highlight rejected weeks that need resubmission
+- Link directly to person-week rows
+- Work from project month + graph assignment list, not only existing week rows
+
+**Acceptance criteria:**
+- [ ] Missing weeks are visible even when no timesheet row exists yet
+- [ ] Rejected weeks surface with rejection reason
+- [ ] Org/person visibility follows current scoped viewer
+- [ ] `npm run build` passes
+
+---
+
+### P4-12 · `pay-remittance-status` · `[READY]`
+
+**Benchmark:** InTime contractor Pay area exposes invoices, credit notes, and
+remittance advice slips.
+
+**Scope:**
+- Add invoice payment/remittance status fields and UI
+- Show issued invoices/remittance docs to the signatory only
+- Credit notes remain follow-up unless needed by first customer
+
+**Acceptance criteria:**
+- [ ] Invoice list/detail shows payment/remittance state
+- [ ] Signatory-scoped visibility documented/enforced
+- [ ] `npm run build` passes
+
+---
+
+### P4-13 · `placement-reporting-export` · `[READY]`
+
+**Benchmark:** Authenticated G2 Placement Search has search, sortable columns,
+Choose Columns, entries-per-page controls, Detailed Report, Download Detailed
+Report, and CSV.
+
+**Scope:**
+- Placement list/report view derived from graph assignments
+- Column chooser with saved defaults
+- CSV export and detailed report export
+- Filters for worker, provider, client, manager, consultant, date range, payroll
+  cadence, missing PO, missing expenses PO, and expired/ending placements
+- Export respects graph confidentiality: no hidden contracts/rates leak through CSV
+
+**Acceptance criteria:**
+- [ ] Searchable placement list exists outside the graph canvas
+- [ ] User can choose visible columns
+- [ ] CSV export redacts unauthorized rate/contract fields
+- [ ] Detailed report includes placement, approval, PO, timesheet, expense, and
+      invoice status summaries
+- [ ] `npm run build` passes
+
+---
+
 ### DOC-1 · `signatory-scoped-documents-and-invoices` · `[READY]` (lands with/after C1)
 
 **Assignee:** Claude (RLS) + Codex (UI)
@@ -381,6 +493,60 @@ Implemented in `InviteAcceptPage.tsx` with `/invite/:token` and legacy
 `project-invitations.ts`; added missing source decline route in
 `supabase/functions/server/invitations-api.tsx`. Requires fresh edge deploy
 because the currently live function build is documented as old.
+
+---
+
+### C2 · `company-membership-private-worker-contracts` · `[READY]`
+
+**Spec:** `src/docs/specs/C2_COMPANY_MEMBERSHIP_SPEC.md`
+**Strategy:** `src/docs/specs/BULLHORN_LESSONS_STRATEGY.md`
+**Dependency:** `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md`
+
+**Why:** C1 proves invite-token acceptance, but a sellable staffing workflow needs
+company membership and signatory-scoped documents. A company admin should be able
+to invite workers into their company, approve their timesheets/contracts, and
+keep worker-company private contracts hidden from agency/client approvers.
+The future social profile layer is allowed to let a person claim they work for a
+company, but that claim must not grant organization membership until a company
+admin verifies it.
+
+**Canonical scenario:**
+- Nikola is `org_admin` of his company inside the project.
+- Nikola invites Worker 1 and Worker 2 as company workers.
+- Worker submits a timesheet and/or worker-company contract.
+- Nikola approves internally first.
+- James and John approve upstream timesheet work as agency/client approvers.
+- James and John cannot see the private worker-company contract, worker pay rate,
+  or Nikola-company margin.
+
+**Scope:**
+- Organization membership roles separate from project roles:
+  `org_admin`, `org_finance`, `org_manager`, `org_worker`, `org_viewer`
+- Membership states:
+  `claimed`, `invited`, `verified`, `rejected`, `removed`
+- Invite mode distinguishes:
+  company worker, agency collaborator, client approver, project viewer
+- Accepted invite maps the real account to a graph person and/or org membership
+- Company admin can approve/reject self-claimed company affiliation from future
+  personal/social profiles
+- Worker-company documents are signatory-scoped by default
+- Timesheet approval route can include internal company approval before upstream
+  agency/client approval
+- Debug-only persona switcher for local testing; no production arbitrary
+  impersonation
+
+**Acceptance criteria:**
+- [ ] Worker invite creates org membership, not only project membership
+- [ ] Self-claimed company affiliation creates no access until company admin
+      verifies it
+- [ ] Worker can submit own timesheet under their mapped graph identity
+- [ ] Nikola/company admin can approve the worker's first approval layer
+- [ ] Upstream agency/client approvers can approve work but cannot read
+      worker-company private contracts or pay terms
+- [ ] A second worker can be invited and tested independently
+- [ ] Document/rate visibility is enforced server-side or explicitly marked
+      blocked until GSEC tables/RPCs land
+- [ ] `npm run build` passes
 
 ---
 
