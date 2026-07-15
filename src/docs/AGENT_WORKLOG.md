@@ -15,6 +15,26 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-15 - [DONE] Trust-core review of migrations 018-023 → APPROVED + 024 fixes (Claude)
+
+- Full line review of the six applied trust-core migrations + live-DB checks +
+  Supabase security advisors. **Verdict: APPROVED with fixes** — schema work is
+  well above prototype grade. Report: `src/docs/TRUST_CORE_REVIEW_2026-07-15.md`.
+- **Migration 024 written + applied** (zero behavior change — 0 rate/signatory
+  rows existed): dropped resurrected legacy SECURITY DEFINER views
+  v_contracts_with_orgs/v_periods_full (HIGH — bypassed all RLS via PostgREST;
+  015 was supposed to drop them); fixed signatory INSERT privilege escalation
+  (any user could grant own org contract access via party-node rows); scoped
+  rate subject self-read to pay only (bill-rate margin leak); revoked
+  anon/PUBLIC EXECUTE on all SECURITY DEFINER helpers + RPC.
+- **Assigned to Codex:** F-3 (022 RPC must not rename an org the caller doesn't
+  own), F-2 (issued invoices immutable — status-transition trigger, M2), F-4
+  (worker can't read own employment contract — person-signatory branch, C2/M1).
+- **Nikola dashboard tasks:** enable leaked-password protection + MFA options;
+  delete orphan `server` edge function.
+- Codex's uncommitted app/server code diff explicitly NOT covered (in active
+  development during review) — separate line review before it commits.
+
 ## 2026-07-15 - [DECIDED] Monthly approval workbench spec (Claude, refining Codex)
 
 - Nikola's 20-worker scaling complaint ("Excel would be faster than this queue")
@@ -690,3 +710,20 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - Browser verification as Rodman shows `Nikola Kralj` with the approver badge,
   Rodman as Consultant without one, and both people with `submits here`
   relationships. `npm run build` passes; largest chunk remains 312.10 kB.
+
+## 2026-07-15 - [DONE] Rodman refresh identity + self-approval UI repair (Codex)
+
+- Fixed July timesheets disappearing after refresh. Persisted rows are owned by
+  the auth UUID, while the graph UI uses a person-node ID; API hydration now maps
+  the signed-in user's rows through accepted `wg_project_members.graph_node_id`.
+- Project selection/change events now reload the project-scoped rows, preventing
+  provider-load timing from leaving the store on an unmapped identity.
+- Removed the green approve hand from a submitter's own weeks. Submitted-week
+  controls now require an exact current-assignee identity match and always deny
+  self-approval; sharing an organization node is not approval authority.
+- Live-verified after hard refresh as Rodman: 24h total, 2 pending, Jul 6-10 (8h)
+  and Jun 29-Jul 3 (16h) visible; 0 Approve actions, 2 Recall actions, no console
+  errors.
+- `npm run build` and `git diff --check` pass. Largest JS chunk is
+  `vendor-charts` at 312.10 kB; all chunks remain under 400 kB. Existing Vite
+  circular manual-chunk warnings remain.
