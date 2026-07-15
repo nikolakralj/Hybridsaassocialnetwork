@@ -53,3 +53,28 @@ commit. Nothing in this report blesses that code.
 Migrations 018–024 are now the trust boundary of record. Schema changes to
 these tables/policies require a review entry in this file (append-only) before
 apply.
+
+---
+
+## Addendum (same day): M2 scoped graph projection SHIPPED + adversarially verified
+
+Migration **025** applied: `wg_project_roster.visibility_scope`
+(company_only default | counterparty | named_chain) + `visible_org_node_ids`,
+and **`wg_get_scoped_graph(project_id)`** — the Privity Rule computed server-side
+(SECURITY DEFINER, search_path pinned, anon/PUBLIC revoked). Client wrapper:
+`src/utils/api/scoped-graph-api.ts` (not yet wired into UI — M2-WIRE).
+
+**Adversarial tests executed against live production data (JWT impersonation):**
+
+| Caller | Scope | Result |
+|---|---|---|
+| Rodman (worker) | `company_only` (default) | 3 nodes; strings "G2"/"NAS" absent from entire payload; externalStages=2 ✅ spec scenario 8 |
+| Rodman (worker) | `counterparty` | G2 façade appears (5 nodes); NAS absent; **zero rate fields anywhere in payload** (James's 8/hr stripped) ✅ scenario 9 |
+| Nikola (owner + org_admin) | full topology | Sees all parties; **James's cross-org rate ABSENT from the owner's payload** — ownership ≠ commercial omniscience, now server-enforced ✅ |
+
+Rodman's assignment set to `counterparty` (he genuinely works the G2 placement);
+column default for future workers remains `company_only`.
+
+**Remaining for M2 exit (M2-WIRE):** switch WorkGraphContext/Builder viewer loads
+to `fetchScopedGraph()` (client filter becomes defense-in-depth), leak-check
+export/print paths, then run the DevTools test (scenario 12) through the real UI.

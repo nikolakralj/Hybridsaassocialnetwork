@@ -15,6 +15,28 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-15 - [DONE] M2 core shipped: wg_get_scoped_graph — Privity Rule as server truth (Claude)
+
+- Migration **025** applied: roster `visibility_scope` (company_only default |
+  counterparty | named_chain) + `visible_org_node_ids`; RPC
+  **`wg_get_scoped_graph(project_id)`** computes the caller's visible
+  nodes/edges server-side and STRIPS commercial fields (pay rates, hour limits,
+  cross-org emails) before serialization. SECURITY DEFINER, search_path pinned,
+  anon/PUBLIC revoked. Owners/editors get full topology but pay fields only for
+  their own org; pay survives only for self + own-org admin/finance.
+- **Adversarially verified against live data via JWT impersonation:** Rodman
+  company_only → G2/NAS strings absent from payload, 2 external stages (spec
+  scenario 8 ✅); Rodman counterparty → G2 façade, no NAS, zero rate keys in
+  payload (scenario 9 ✅); Nikola owner → full topology but James's rate ABSENT
+  (ownership ≠ omniscience, server-enforced ✅). Rodman set to counterparty
+  (real G2 placement); default for future workers stays company_only.
+- New client wrapper `src/utils/api/scoped-graph-api.ts` (typed; adoption notes
+  in header). **Deliberately NOT wired into UI** — M2-WIRE swaps
+  WorkGraphContext/Builder loads to fetchScopedGraph() after Codex's current
+  approvals session ends; client computeScopedView() then becomes
+  defense-in-depth. Build passes; no Codex-active files touched.
+- Review addendum with full test evidence: TRUST_CORE_REVIEW_2026-07-15.md.
+
 ## 2026-07-15 - [DONE] Trust-core review of migrations 018-023 → APPROVED + 024 fixes (Claude)
 
 - Full line review of the six applied trust-core migrations + live-DB checks +
@@ -727,3 +749,26 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` and `git diff --check` pass. Largest JS chunk is
   `vendor-charts` at 312.10 kB; all chunks remain under 400 kB. Existing Vite
   circular manual-chunk warnings remain.
+
+## 2026-07-15 - [DONE] Real approval path sheet + approver queue isolation (Codex)
+
+- Removed the 486-line `GraphOverlayModal` prototype. It invented generic
+  Contractor/Manager/Finance stages, advertised a nonexistent graph overlay,
+  exposed duplicate approve/reject shortcuts, and rendered masked-rate hints.
+- Added `ApprovalPathSheet`, a read-only right-side sheet driven by the saved
+  approval route and trail. It shows the submitter, real current/direct-next
+  actors, organizations, step states, hours, and timestamps. Downstream actors
+  beyond the direct next hop are anonymized.
+- Unauthorized amount/rate fields now do not render in Queue or Details; no
+  `Rate masked` or rate-visibility labels remain in the approvals components.
+- Fixed queue scoping: a person's organization is no longer added to their
+  approver scope unless the graph explicitly marks that person `canApprove`.
+  Exact assigned user UUID matching remains supported.
+- Live verification: Rodman's Queue no longer contains Nikola Kralj's pending
+  item. Before closing that leak, the new sheet rendered the saved route as
+  Nikola Kralj / Nikola Company (current), James / G2 (waiting), and the later
+  downstream stage; layout was verified without overflow and with no console
+  errors.
+- `npm run build` and `git diff --check` pass. Approvals chunk is 83.78 kB;
+  largest JS chunk remains `vendor-charts` at 312.10 kB, below 400 kB. Existing
+  Vite circular manual-chunk warnings remain.
