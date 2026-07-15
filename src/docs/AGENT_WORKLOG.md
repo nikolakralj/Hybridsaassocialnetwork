@@ -15,6 +15,44 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-15 - [DECIDED] The Privity Rule — visibility + invitation authority (Claude)
+
+- Nikola's question after the Rodman test: where is "what Rodman sees" defined,
+  who may invite whom (can Nikola invite NAS? no), general rule needed for
+  rates/contracts/salaries. Codex's three-mode proposal (company_only /
+  counterparty / named_chain) endorsed and generalized.
+- **Ruling appended to GRAPH_CONFIDENTIALITY_SPEC.md ("DECIDED 2026-07-15 — The
+  Privity Rule")**: (1) orgs see one hop — self fully, direct counterparties as
+  façades, beyond = anonymous numbered stages + explicit disclosure grants;
+  (2) person sight = org sight ∩ org role ∩ per-assignment visibility_scope,
+  default company_only; (3) invitations: an edge is created only by its
+  endpoints — org admins invite own workers, counterparty invites need edge
+  endpoint authority (only G2 can invite NAS), downward subcontracting gated by
+  `subcontracting: allowed|with_consent|forbidden` (default with_consent);
+  (4) commercial values live on edges/org-private tables (020/021), never
+  shared graph JSON; (5) enforcement = M2 server-side get_scoped_graph
+  projection — client filter is presentation only. Acceptance scenarios 8–12
+  added (incl. DevTools leak test as M2 exit).
+- ⚠️ Review debt now critical path: Codex's uncommitted trust-core diff has
+  grown (migrations 018–023 applied incl. 022 onboarding RPC + 023 routing
+  repair, server hardening, client changes). No new feature work until Claude's
+  line review lands. Docs-only session.
+
+## 2026-07-15 - [IDEAS] Phase A agent parking lot (Nikola, triaged by Claude)
+
+Captured from founder discussion — NOT authorized work; unlocks per decision doc.
+1. **Ops agent** ("20 timesheets + 100 expense PDFs, no human sorter"): receipt
+   extraction → categorize → match to placement → anomaly flags → prepared approval
+   batches. = the Chaser + P4-5 extraction + P4-9 expenses. First Phase A build.
+2. **Compliance watchdog** (visa/permit expiry, right-to-work, AWR): expiry ALERTS
+   are deterministic (date fields + cron — no AI needed); the AI part is reading
+   uploaded permits/contracts to extract type+dates and drafting guidance. Extends
+   G2-5 placement-readiness. High willingness-to-pay; second Phase A candidate.
+3. **Personal/company agents on the network** (find job / find candidates /
+   marketing): Phase 9 territory, 18-month deferral stands. Key asset when time
+   comes: VERIFIED work history (real approved hours through real placements) —
+   matching data LinkedIn/Upwork can't fake. C2 profile-claim model is the bridge.
+
 ## 2026-07-15 - [DONE] Product strategy audit → GO decision (Claude)
 
 - Executed `CLAUDE_PRODUCT_STRATEGY_BRIEF.md` (independent audit; read all listed
@@ -580,3 +618,58 @@
   90-day validation plan, and explicit stop criteria.
 - Claude is instructed to produce `PRODUCT_STRATEGY_DECISION.md`, reconcile stale
   roadmap assumptions, and avoid product implementation during the audit.
+
+## 2026-07-15 - [IN PROGRESS] M1 verified worker identity chain (Codex)
+
+- Added migration `022_project_worker_onboarding_rpc.sql` with an owner-only,
+  atomic RPC that turns an accepted project invite into a verified organization
+  worker, active project-roster record, graph person identity, and internal
+  worker-to-company approval edge.
+- Added the owner Team action and `ProjectWorkerSetupDialog`: the owner assigns
+  company name, worker name, and placement title after invite acceptance. Worker
+  defaults are intentionally narrow: own timesheets only, with no rate,
+  contract, approval, graph-edit, or invoice permissions.
+- Separated current-user identity loading from the privileged Team directory.
+  Contributors can now resolve their own RLS-scoped membership and graph node
+  without gaining access to the project member list.
+- Updated invitation copy to distinguish project-link acceptance from verified
+  employee setup. An accepted but unmapped worker now sees a clear setup-pending
+  explanation instead of an empty workspace.
+- Applied migration `022` to the linked database and aligned its migration
+  history. Verified the RPC rejects the invited worker with `42501`; only the
+  project owner can perform setup.
+- Live-tested the accepted account `Rodman` in project `NAS`: mapped it to
+  `Nikola Company` as `org_worker`, confirmed a scoped read-only graph, created
+  five July draft weeks for the worker, and confirmed billing controls are
+  replaced by an employee-only restricted view. Browser console reported no
+  errors.
+- `npm run build` passes. Largest chunk is `vendor-charts` at 312.10 kB; all
+  chunks remain below 400 kB. Existing manual-chunk circular warnings remain.
+- Still required before M1 is complete: enter and submit worker hours, approve
+  them internally as Nikola, add real James/John upstream accounts, and verify
+  the full approval-to-invoice-ready path without persona switching. Real email
+  delivery also still requires SMTP/Resend and a public invite URL.
+
+## 2026-07-15 - [DONE] C2 internal worker approval routing repair (Codex)
+
+- Reproduced the real Rodman submission failure: three June weeks reached
+  `wg_timesheet_weeks` as submitted, but their approval snapshots started at G2
+  and omitted Nikola Company, leaving Nikola's queue empty.
+- Root cause was deterministic in `TimesheetDataContext`: the same-company step
+  was resolved correctly and then discarded when `buildApprovalRouteSteps`
+  rebuilt the route starting only from the company's `billsTo` targets.
+- Fixed route construction so a worker first routes to a different eligible
+  approver in their own company, while an owner submitting their own time still
+  skips self-approval and routes upstream.
+- Added and applied migration `023_internal_worker_approval_route.sql`. It
+  repairs pending first-layer worker records through verified organization
+  membership, preserves and shifts existing upstream steps, and normalizes
+  authenticated graph identities such as `Me` to their account name.
+- Live result for Rodman's June submissions is now step 1 Nikola Kralj, step 2
+  G2, step 3 NAS. All three pending records carry Nikola's real user UUID.
+- Clarified graph connection labels: a worker-to-company approval edge now reads
+  `submits here` from the company drawer instead of making the worker look like
+  an approver.
+- Browser verification as Rodman shows `Nikola Kralj` with the approver badge,
+  Rodman as Consultant without one, and both people with `submits here`
+  relationships. `npm run build` passes; largest chunk remains 312.10 kB.

@@ -323,3 +323,110 @@ Done 2026-07-10:
 6. Project Owner sees project structure through their own identity, not all
    private commercial terms.
 7. Refreshing the browser cannot restore a stale full-view/admin identity.
+
+---
+
+## DECIDED 2026-07-15 — The Privity Rule (general visibility + invitation authority)
+
+**Decided by:** Claude (architect ruling requested by Nikola after the Rodman test)
+**Status:** Canonical policy. M2's server-side graph projection implements exactly this.
+
+### The one-line rule
+
+> **Privity: you see your own house, the neighbors you contract with, and the
+> edges you sign. Everything further is a numbered external stage unless a
+> neighbor deliberately discloses it.**
+
+This mirrors legal reality (privity of contract: NAS contracts G2, G2 contracts
+Nikola Company — NAS and Nikola Company have no relationship) and the staffing
+business model (the agency's client list and margins ARE its business; forced
+transparency would make WorkGraph unadoptable by the very agencies it serves).
+
+### Rule 1 — Organization sight: one hop
+
+An organization sees, at most:
+- **Itself** — fully, filtered by org roles (admin/finance/manager/employee).
+- **Direct counterparties** (orgs sharing a contract/billing edge) — as a
+  *façade*: org name, project contacts, the shared contract and its workflow
+  state. Never their internals, other edges, people beyond the roster exposure,
+  or their prices with anyone else.
+- **Beyond one hop** — existence only, anonymized: "External approval — stage 2
+  of 3". Counts are visible; names are not.
+
+**Named disclosure (the exception):** an org may deliberately disclose a
+neighbor's identity across one hop (e.g., G2 tells Nikola Company "the end
+client is NAS") — recorded as an explicit `disclosure` grant on the edge, not a
+default. Compliance regimes that require end-client disclosure (AWR/IR35-style)
+use this mechanism.
+
+### Rule 2 — Person sight: their org's sight, narrowed
+
+A person's view = (their org's view) ∩ (their org role) ∩ (their assignment
+scope). Per-assignment `visibility_scope`, chosen by the employing org's admin
+when placing the person on a project roster:
+
+| Scope | The worker sees | Use when |
+|---|---|---|
+| `company_only` (**default**) | Own org only; upstream = "External approval (N stages)" | Back-office staff, sensitive placements |
+| `counterparty` | Own org + the one org their placement bills to (G2) | Normal placed worker — they badge into G2 anyway |
+| `named_chain` | Explicitly listed orgs | Rare; senior/on-site leads |
+
+This replaces the hardcoded rule in `graph-visibility.ts` and gives semantics to
+`visibility_mode` from migration 022. `visibleToChain` (may upstream see the
+worker) and `visibility_scope` (what the worker sees) are independent axes.
+
+### Rule 3 — Invitation authority: edges are created only by their endpoints
+
+- **Into your org:** org admins invite their own workers/members (Nikola →
+  Rodman). Nobody can invite people into an org they don't administer.
+- **New counterparty:** inviting an org = proposing a contract edge, allowed
+  only for the org that will be an endpoint of that edge. G2 invites NAS
+  (G2↔NAS edge). G2 invites Nikola Company. **Nikola Company cannot invite NAS**
+  — it would be creating someone else's edge two hops away.
+- **Downward extension:** Nikola Company MAY invite its own subcontractor
+  (Nikola↔SubCo edge — it's an endpoint). Real contracts often forbid or gate
+  subcontracting, so the upstream edge carries a policy flag:
+  `subcontracting: allowed | with_consent | forbidden` (default `with_consent`
+  → upstream neighbor gets a consent request, sees the fact of subcontracting,
+  not SubCo's terms). Enforcement may land post-M2; the flag exists from day one.
+- **Project roles** (approver/viewer seats) are granted by the org that owns
+  that seat's side of the workflow, and grant only the narrow project role —
+  never org membership.
+- Project ownership grants **no** invitation authority beyond the owner org's
+  own edges. Ownership is not omniscience — and not omnipotence either.
+
+### Rule 4 — Commercial values live on edges, never in shared state
+
+Every money value belongs to exactly one relationship and is visible only to
+that relationship's endpoints (per org role):
+
+| Value | Lives on | Visible to |
+|---|---|---|
+| Rodman's pay/salary | Person↔Company contract | Rodman (own terms) + company admin/finance |
+| Nikola→G2 bill rate | Company↔Agency edge | Both signatories' finance/admin |
+| G2→NAS rate | Agency↔Client edge | G2 + NAS only — Nikola never |
+| Margins | Derived, org-private | Owning org's finance only |
+
+Workers don't set their own pay (propose/accept only). Employees may have no
+hourly rate at all (P4-7 engagement type). These values are forbidden in shared
+graph JSON — 020/021 tables are their only home (M2 completes the migration).
+
+### Rule 5 — The rule is server truth or it is nothing
+
+`graph-visibility.ts` is presentation. The enforcement point is a server-side
+projection — `get_scoped_graph(project_id) → nodes/edges the caller may see`,
+computed from org membership + edges + roster + visibility_scope + disclosures.
+Unauthorized nodes are never serialized to the browser. The privity rule makes
+this cheap: caller's org + one hop + explicit disclosures is a bounded query,
+not a policy engine.
+
+### Acceptance additions (extend the scenario list above)
+
+8. Rodman (`company_only`) sees Nikola Company and "External approval — 2
+   stages"; G2 and NAS names never reach his browser payload.
+9. Rodman (`counterparty`) sees G2's façade; NAS still absent from his payload.
+10. Nikola Company's UI offers no path to invite NAS; G2's does.
+11. Nikola invites SubCo under `with_consent`: G2 receives a consent item; NAS
+    sees nothing.
+12. DevTools inspection of any non-admin session shows no cross-boundary org
+    names, rates, or contracts in any network response (M2 exit test).
