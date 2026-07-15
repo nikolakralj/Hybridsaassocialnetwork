@@ -15,7 +15,8 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 > 2. **M2 — Trust boundary is server truth:** reads flow through the 019–021 ACL
 >    paths; client masks become presentation only; export/print leak-checked;
 >    adversarial two-account checklist committed.
-> 3. **M3 — Month-end close kit:** missing-timesheets board (G2-2), expenses
+> 3. **M3 — Month-end close kit:** monthly approval workbench
+>    (`specs/MONTHLY_APPROVAL_WORKBENCH_SPEC.md`, supersedes G2-2), expenses
 >    (P4-9), invoice PDF (P4-3), consolidated-invoice polish, readiness warnings.
 >
 > Everything else is deferred regardless of its status below. Killed as goals:
@@ -36,7 +37,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | M5 | Apply `016_fix_wg_project_members_scope_recursion.sql` — applied 2026-07-08 via Supabase MCP, policy + fn verified live | Claude | `[DONE]` |
 | DEPLOY | Run `supabase functions deploy server` — **an OLD edge build (`make-server-f8b491be`) is live**; B3 guards + approval-token routes need a fresh deploy | Nikola | `[READY]` |
 | GSEC | Implement graph confidentiality model from `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md`: project role != rate visibility, org role != project role, contract rates signatory-scoped. G0/G1 UI containment started 2026-07-10; RLS-backed contract/rate tables still required. | Claude/Codex | `[IN PROGRESS]` |
-| C2 | Company membership + private worker contracts: Nikola-company-admin invites worker, worker submits contract/timesheet, Nikola approves internally, James/John approve upstream work but cannot see worker-company private contract/pay terms. Spec now required before broad worker invites. | Claude/Codex | `[READY]` |
+| C2 | Company membership + private worker contracts: Nikola-company-admin invites worker, worker submits contract/timesheet, Nikola approves internally, James/John approve upstream work but cannot see worker-company private contract/pay terms. Spec now required before broad worker invites. | Claude/Codex | `[IN PROGRESS]` |
 | M6 | `010_phase4_invoice_schema.sql` — verified already applied (wg_invoices + wg_invoice_templates + RLS live, 2026-07-08) | — | `[DONE]` |
 
 > **Note (2026-07-08):** Supabase free tier **auto-paused** the project (status INACTIVE) —
@@ -496,7 +497,7 @@ because the currently live function build is documented as old.
 
 ---
 
-### C2 · `company-membership-private-worker-contracts` · `[READY]`
+### C2 · `company-membership-private-worker-contracts` · `[IN PROGRESS]`
 
 **Spec:** `src/docs/specs/C2_COMPANY_MEMBERSHIP_SPEC.md`
 **Strategy:** `src/docs/specs/BULLHORN_LESSONS_STRATEGY.md`

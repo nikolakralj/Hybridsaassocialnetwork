@@ -15,6 +15,23 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-15 - [DECIDED] Monthly approval workbench spec (Claude, refining Codex)
+
+- Nikola's 20-worker scaling complaint ("Excel would be faster than this queue")
+  + Codex's monthly-matrix proposal → formalized as
+  `specs/MONTHLY_APPROVAL_WORKBENCH_SPEC.md` (M3 scope, supersedes G2-2).
+- Claude's additions to Codex's design: (1) the three-layers ruling — internal
+  approver, upstream approver, and finance answer DIFFERENT questions, so each
+  layer renders a different masked summary of the same weekly records (privity
+  as UX; the honest anti-Excel argument); (2) batch semantics — "Approve N
+  weekly submissions" approves per-week records for the caller's layer with a
+  shared batch_id, no monthly super-record, single-week reject/reopen;
+  (3) baseline v1 kept tiny (expected_weekly_hours + workdays on roster row —
+  no calendar engine); (4) no "Rate masked" labels — unauthorized fields simply
+  don't render (and post-M2 aren't in the payload); (5) exit test: 20-worker
+  month approved in <5 min, every record auditable.
+- Build order unchanged: trust-core review first; no implementation now.
+
 ## 2026-07-15 - [DECIDED] The Privity Rule — visibility + invitation authority (Claude)
 
 - Nikola's question after the Rodman test: where is "what Rodman sees" defined,
