@@ -5,6 +5,11 @@ import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const timesheetsRouter = new Hono();
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value?: string | null): value is string {
+  return Boolean(value && UUID_REGEX.test(value));
+}
 
 function db() {
   return createClient(
@@ -44,6 +49,34 @@ function rowToWeek(row: any) {
   };
 }
 
+async function canReviewTimesheet(reviewerId: string, weekRow: any): Promise<boolean> {
+  const projectId = weekRow?.project_id;
+  if (!projectId) return false;
+
+  const client = db();
+  const { data: project, error: projectError } = await client
+    .from("wg_projects")
+    .select("owner_id")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (projectError) throw projectError;
+  if (project?.owner_id === reviewerId) return true;
+
+  const { data: member, error: memberError } = await client
+    .from("wg_project_members")
+    .select("role, can_approve")
+    .eq("project_id", projectId)
+    .eq("user_id", reviewerId)
+    .not("accepted_at", "is", null)
+    .maybeSingle();
+
+  if (memberError) throw memberError;
+  if (!member) return false;
+
+  return member.can_approve === true || member.role === "Owner" || member.role === "Editor";
+}
+
 // ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/timesheets?month=YYYY-MM
 // ---------------------------------------------------------------------------
@@ -53,6 +86,7 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const month = c.req.query("month");
+    const projectId = c.req.query("project_id") || c.req.query("projectId");
     let query = db()
       .from("wg_timesheet_weeks")
       .select("*")
@@ -65,6 +99,10 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
         ? `${year + 1}-01-01`
         : `${year}-${String(mon + 1).padStart(2, "0")}-01`;
       query = query.gte("week_start", `${month}-01`).lt("week_start", nextMonth);
+    }
+
+    if (projectId) {
+      query = query.eq("project_id", projectId);
     }
 
     const { data, error } = await query;
@@ -150,8 +188,23 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
 
     const weekStart = c.req.param("weekStart");
     const body = await c.req.json();
-    // Approvers pass personId of the submitter they are approving
-    const targetUserId = body.personId || user.id;
+    const requestedStatus = body.status;
+    if (!["draft", "submitted", "approved", "rejected"].includes(requestedStatus)) {
+      return c.json({ error: `Invalid status: ${requestedStatus}` }, 400);
+    }
+
+    // Approvers pass the submitter's auth user id when syncing someone else's week.
+    const requestedPersonId = isUuid(body.personId) ? body.personId : null;
+    const targetUserId = requestedPersonId || user.id;
+    const targetsAnotherUser = targetUserId !== user.id;
+
+    if (targetsAnotherUser && (requestedStatus === "submitted" || requestedStatus === "draft")) {
+      return c.json({ error: "You cannot submit or reopen a timesheet for another user." }, 403);
+    }
+
+    if (!targetsAnotherUser && (requestedStatus === "approved" || requestedStatus === "rejected")) {
+      return c.json({ error: "You cannot approve or reject your own timesheet." }, 403);
+    }
 
     const { data: existing, error: fe } = await db()
       .from("wg_timesheet_weeks")
@@ -163,11 +216,15 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
     if (fe) throw fe;
     if (!existing) return c.json({ error: "Timesheet week not found" }, 404);
 
+    if (targetsAnotherUser && !(await canReviewTimesheet(user.id, existing))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+
     const now = new Date().toISOString();
-    const statusUpdate: any = { status: body.status };
+    const statusUpdate: any = { status: requestedStatus };
     const dataUpdate = { ...(existing.data || {}) };
 
-    switch (body.status) {
+    switch (requestedStatus) {
       case "submitted":
         statusUpdate.submitted_at = now;
         dataUpdate.submittedAt = now;
@@ -193,8 +250,6 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
         delete dataUpdate.rejectedBy;
         delete dataUpdate.rejectionNote;
         break;
-      default:
-        return c.json({ error: `Invalid status: ${body.status}` }, 400);
     }
 
     statusUpdate.data = dataUpdate;
@@ -207,7 +262,7 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
       .single();
 
     if (ue) throw ue;
-    console.log(`Timesheet status: ${targetUserId} week ${weekStart} → ${body.status}`);
+    console.log(`Timesheet status: ${targetUserId} week ${weekStart} -> ${requestedStatus}`);
     return c.json({ week: rowToWeek(updated) });
   } catch (err: any) {
     console.log(`Timesheet status error: ${err.message}`);

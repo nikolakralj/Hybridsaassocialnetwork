@@ -469,16 +469,6 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
       submitterUserId: dbApproval.submitter_user_id || undefined,
     });
 
-    await supabase
-      .from('wg_timesheet_weeks')
-      .update({
-        status: 'submitted',
-        approved_at: null,
-        approved_by: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', String(dbApproval.subject_id));
-
     return true;
   }
 
@@ -578,17 +568,6 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
     submitterUserId: dbApproval.submitter_user_id || undefined,
   });
 
-  // Keep canonical timesheet as submitted until the final layer is approved.
-  await supabase
-    .from('wg_timesheet_weeks')
-    .update({
-      status: 'submitted',
-      approved_at: null,
-      approved_by: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', String(dbApproval.subject_id));
-
   return true;
 }
 
@@ -684,22 +663,13 @@ function getApproverScopeNodeIds(projectId: string, viewerNodeId: string): strin
 async function resolveApproverScopeNodeIds(projectId: string, viewerNodeId: string): Promise<string[]> {
   const storedParties = readApprovalParties(projectId);
   const sessionScope = computeApproverScopeNodeIds(storedParties, viewerNodeId);
-  const viewerOrgId = readNameDir(projectId)[viewerNodeId]?.orgId;
-
-  if (viewerOrgId && !sessionScope.includes(viewerOrgId)) {
-    sessionScope.push(viewerOrgId);
-  }
 
   if (sessionScope.length > 1 && hasUsablePartyPeople(storedParties)) {
     return sessionScope;
   }
 
   const loadedParties = await loadApprovalParties(projectId);
-  const loadedScope = computeApproverScopeNodeIds(loadedParties, viewerNodeId);
-  if (viewerOrgId && !loadedScope.includes(viewerOrgId)) {
-    loadedScope.push(viewerOrgId);
-  }
-  return loadedScope;
+  return computeApproverScopeNodeIds(loadedParties, viewerNodeId);
 }
 
 export async function resolveGraphNodeToUserId(
@@ -880,66 +850,6 @@ function transformApproval(dbApproval: any): ApprovalRecord {
     createdAt: dbApproval.created_at,
     updatedAt: dbApproval.updated_at,
   };
-}
-
-async function syncTimesheetWeekStatusFromApproval(dbApproval: any): Promise<void> {
-  if (!dbApproval || dbApproval.subject_type !== 'timesheet' || !dbApproval.subject_id) return;
-
-  const subjectId = String(dbApproval.subject_id);
-  const parts = subjectId.split(':');
-  if (parts.length < 2) return;
-
-  const weekStart = parts[parts.length - 1];
-  const personRef = parts.slice(0, -1).join(':');
-  const decisionAt = dbApproval.decided_at || new Date().toISOString();
-
-  const candidateRowIds: string[] = [subjectId];
-
-  if (!isUuid(personRef)) {
-    try {
-      const resolvedUserId = await resolveGraphNodeToUserId(String(dbApproval.project_id || ''), personRef);
-      if (resolvedUserId) candidateRowIds.push(`${resolvedUserId}:${weekStart}`);
-    } catch {
-      // best-effort sync only
-    }
-  }
-
-  const uniqueRowIds = [...new Set(candidateRowIds)];
-  const status = dbApproval.status;
-
-  for (const rowId of uniqueRowIds) {
-    const updates: Record<string, any> = {
-      status,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (status === 'approved') {
-      updates.approved_at = decisionAt;
-      updates.approved_by = isUuid(dbApproval.approver_user_id) ? dbApproval.approver_user_id : null;
-    }
-
-    if (status === 'rejected') {
-      updates.approved_at = null;
-      updates.approved_by = null;
-    }
-
-    const { data: updatedRows, error } = await supabase
-      .from('wg_timesheet_weeks')
-      .update(updates)
-      .eq('id', rowId)
-      .select('id');
-
-    if (!error && updatedRows && updatedRows.length > 0) return;
-    if (error) {
-      console.warn('[approvals.sync] wg_timesheet_weeks update error', { rowId, message: error.message });
-    }
-  }
-
-  console.warn('[approvals.sync] No wg_timesheet_weeks row matched for subject', {
-    subjectId: dbApproval?.subject_id,
-    tried: uniqueRowIds,
-    status,
-  });
 }
 
 // ============================================================================
@@ -1412,9 +1322,6 @@ export async function approveItem(
     }
 
     const spawnedNextLayer = await createNextApprovalLayerIfNeeded(result);
-    if (!spawnedNextLayer) {
-      await syncTimesheetWeekStatusFromApproval(result);
-    }
     return { ...transformApproval(result), spawnedNextLayer };
   } catch (error) {
     console.error('Error in approveItem:', error);
@@ -1443,7 +1350,6 @@ export async function rejectItem(
       throw new Error(`Failed to reject item: ${error.message}`);
     }
 
-    await syncTimesheetWeekStatusFromApproval(result);
     return transformApproval(result);
   } catch (error) {
     console.error('Error in rejectItem:', error);
@@ -1498,6 +1404,10 @@ export async function bulkApprove(data: {
     if (error) {
       console.error('Error bulk approving:', error);
       throw new Error(`Failed to bulk approve: ${error.message}`);
+    }
+
+    for (const approvedRecord of result || []) {
+      await createNextApprovalLayerIfNeeded(approvedRecord);
     }
 
     return (result || []).map(transformApproval);

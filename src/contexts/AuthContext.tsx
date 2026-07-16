@@ -62,6 +62,33 @@ function buildProfile(user: any): UserProfile {
   };
 }
 
+const AUTH_SCOPED_STORAGE_PREFIXES = ['workgraph-', 'wg-'];
+const AUTH_SCOPED_STORAGE_KEYS = [
+  'currentProjectId',
+  'currentProjectName',
+  'currentProjectSource',
+  'currentProjectStartDate',
+];
+
+function clearAuthScopedBrowserStorage(): void {
+  if (typeof window === 'undefined') return;
+
+  const shouldClear = (key: string) => (
+    AUTH_SCOPED_STORAGE_KEYS.includes(key)
+    || AUTH_SCOPED_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
+
+  [window.sessionStorage, window.localStorage].forEach((storage) => {
+    try {
+      Object.keys(storage)
+        .filter(shouldClear)
+        .forEach((key) => storage.removeItem(key));
+    } catch (error) {
+      console.warn('[auth] Failed to clear WorkGraph browser cache on sign-out:', error);
+    }
+  });
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -122,6 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             error: null,
           });
         } else if (event === 'SIGNED_OUT') {
+          clearAuthScopedBrowserStorage();
           setState({ user: null, accessToken: null, loading: false, error: null });
         }
         // Ignore TOKEN_REFRESHED and other events to avoid unnecessary re-renders
@@ -199,6 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    clearAuthScopedBrowserStorage();
     await supabase.auth.signOut();
     if (mountedRef.current) {
       setState({ user: null, accessToken: null, loading: false, error: null });

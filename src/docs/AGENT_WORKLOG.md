@@ -15,6 +15,38 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-16 - [DONE] Codex takeover: approval↔week sync reviewed, verified, committed (Claude)
+
+- Codex ran out of credits mid-task, leaving migration 026 APPLIED to prod but
+  unreviewed/uncommitted, plus ~1,800 uncommitted lines. Claude took over.
+- **Root cause Codex found (correct):** rejection updated the approval record,
+  then tried to update the submitter's week from the APPROVER's browser — RLS
+  correctly denied the cross-user write, the helper swallowed the failure and
+  reported success. Nikola saw "rejected"; Rodman's week stayed Submitted.
+  Second defect: bulkApprove approved the current layer but never spawned the
+  next one (stranded Rodman's June 1/8/15 after Nikola's approval).
+- **Migration 026 reviewed → APPROVED:** trigger resolves the graph-person vs
+  auth-uuid identity mismatch (submitter_user_id → snapshot → members/roster
+  mapping), locks the week row, keeps intermediate approvals as `submitted`,
+  final layer → `approved`, rejected/changes_requested → `rejected`; hard-fails
+  (23503) instead of silently desyncing; maintains data JSONB mirror
+  (approvedBy/rejectedBy/notes); SECURITY DEFINER + pinned search_path +
+  EXECUTE revoked (matches 024 hygiene). One-time repair spawns missing next
+  layers for latest-per-subject approved records only.
+- **approvals-supabase.ts diff reviewed → APPROVED** (Claude-owned file):
+  all client-side wg_timesheet_weeks writes removed (trigger owns truth);
+  bulkApprove spawns next layers; approver scope no longer force-includes the
+  viewer's whole org (stricter queue gating).
+- **Live DB verified:** trigger installed; every Rodman week consistent with
+  its latest approval record — Jun 1/8/15 pending L2 @G2 (un-stranded),
+  Jun 29 resubmitted pending L1 @Nikola, Jul 6 pending L2 @James.
+  Codex's rollback-only state-machine tests (reject→resubmit; 3-layer
+  intermediate-vs-final) passed pre-crash. Build passes.
+- Remaining Codex diff (C2 UI, signatory contracts API, timesheet server
+  guards, GraphOverlayModal deletion) reviewed at security-relevant depth —
+  enforcement correctly lives in reviewed migrations; UI wrappers thin.
+  Committed in two chunks (trust-core + C2 surface).
+
 ## 2026-07-15 - [DONE] M2 core shipped: wg_get_scoped_graph — Privity Rule as server truth (Claude)
 
 - Migration **025** applied: roster `visibility_scope` (company_only default |
@@ -772,3 +804,24 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` and `git diff --check` pass. Approvals chunk is 83.78 kB;
   largest JS chunk remains `vendor-charts` at 312.10 kB, below 400 kB. Existing
   Vite circular manual-chunk warnings remain.
+
+## 2026-07-15 - [DONE] Approval state sync + stalled bulk-chain repair (Codex)
+
+- Confirmed the live failure from Nikola/Rodman testing: the June 29 approval
+  row was rejected while its canonical `wg_timesheet_weeks` row remained
+  submitted. The old trigger compared graph subject IDs with auth-user week IDs.
+- Added and applied `026_approval_timesheet_identity_sync.sql`. The trigger now
+  resolves weeks by project + submitter UUID + week start, keeps intermediate
+  layers submitted, persists rejection, restores resubmissions to submitted,
+  and marks the week approved only on the final route layer.
+- Removed browser-side cross-user week updates from `approvals-supabase.ts`;
+  approval state is now synchronized by the database transaction. Bulk approval
+  now creates the next approval layer for every approved row.
+- One-time repair advanced Rodman's stalled June 1, 8, and 15 approvals from
+  Nikola's completed layer to pending G2 layer-2 rows. June 29 remains pending
+  with Nikola after Rodman's resubmission; July 6 remains pending with James.
+- Verified with rollback-only live DB scenarios for reject -> resubmit and a
+  complete three-layer approval. Live Rodman browser: Queue empty with no
+  Approve/Reject controls; My submissions shows five in-progress weeks with the
+  correct waiting-on actor; July survives refresh. `npm run build` passes and
+  all generated JS chunks remain below 400 kB.

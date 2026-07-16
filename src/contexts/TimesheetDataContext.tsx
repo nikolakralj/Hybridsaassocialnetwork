@@ -18,7 +18,7 @@ import {
   saveTimesheetWeek,
   updateTimesheetStatus,
 } from '../utils/api/timesheets-api';
-import { getProject } from '../utils/api/projects-api';
+import { getMyProjectMembership, getProject } from '../utils/api/projects-api';
 import {
   approveItem,
   createApproval,
@@ -370,7 +370,10 @@ function buildApprovalRouteSteps(
   const submitterParty = partyMap.get(submitterPartyId);
   if (!submitterParty) return [];
 
-  const routeParties: ApprovalParty[] = [];
+  // The submitter's own organization is a real approval layer when another
+  // person there can approve. Starting at billsTo silently skipped internal
+  // company review and sent worker timesheets straight to the agency.
+  const routeParties: ApprovalParty[] = [submitterParty];
   const visited = new Set<string>([submitterPartyId]);
   const queue = [...submitterParty.billsTo];
 
@@ -403,7 +406,7 @@ function buildApprovalRouteSteps(
       partyName: party.name,
       approverNodeId: party.id,
       approverUserRef: approver.id,
-      approverName: party.name || approver.name || approver.id,
+      approverName: approver.name || party.name || approver.id,
     });
   }
 
@@ -655,10 +658,19 @@ function createSeedData(): StoredWeek[] {
 // API Sync Helpers
 // ============================================================================
 
-/** Convert API week data to StoredWeek format */
-function apiWeekToStored(apiWeek: any): StoredWeek {
+/** Convert API week data to StoredWeek format. */
+function apiWeekToStored(
+  apiWeek: any,
+  ownIdentity?: { authUserId: string; graphNodeId?: string },
+): StoredWeek {
+  const apiPersonId = apiWeek.personId || '';
+  const personId =
+    ownIdentity?.graphNodeId && apiPersonId === ownIdentity.authUserId
+      ? ownIdentity.graphNodeId
+      : apiPersonId;
+
   return normalizeStoredWeek({
-    personId: apiWeek.personId || '',
+    personId,
     weekLabel: apiWeek.weekLabel || generateWeekLabel(apiWeek.weekStart),
     weekStart: apiWeek.weekStart,
     days: (apiWeek.days || []).map((d: any) => ({
@@ -853,24 +865,45 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     void refreshProjectStartDate();
   }, [refreshProjectStartDate, user?.id, accessToken]);
 
+  const loadProjectWeeksFromApi = useCallback(async (projectId: string | null) => {
+    if (!user?.id || !accessToken) return [];
+
+    const [apiWeeks, membership] = await Promise.all([
+      listTimesheets(undefined, accessToken, projectId),
+      projectId
+        ? getMyProjectMembership(projectId, user.id).catch((error) => {
+            console.warn('[TimesheetStore] Could not resolve graph identity for timesheets:', error);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+
+    const ownIdentity = {
+      authUserId: user.id,
+      graphNodeId: membership?.graphNodeId,
+    };
+
+    return apiWeeks.map((week) => ({
+      ...apiWeekToStored(week, ownIdentity),
+      projectId: projectId || undefined,
+    }));
+  }, [accessToken, user?.id]);
+
   const reloadWeeksFromApi = useCallback(async () => {
     if (!user?.id || !accessToken) return;
     const projectId = activeProjectId();
     if (!projectId) return;
     try {
-      const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
-      if (apiWeeks && apiWeeks.length > 0) {
-        const tagged = apiWeeks.map(w => ({ ...apiWeekToStored(w), projectId }));
-        setWeeks(prev => {
-          // Replace weeks for this project, keep weeks from other projects
-          const otherProjects = prev.filter(w => !matchesProject(w, projectId) || !w.projectId);
-          return [...otherProjects, ...tagged];
-        });
-      }
+      const tagged = await loadProjectWeeksFromApi(projectId);
+      setWeeks(prev => {
+        // Replace weeks for this project, keep weeks from other projects.
+        const otherProjects = prev.filter(w => !matchesProject(w, projectId) || !w.projectId);
+        return [...otherProjects, ...tagged];
+      });
     } catch (error) {
       console.warn('[TimesheetStore] Could not refresh weeks from API after approval update:', error);
     }
-  }, [accessToken, user?.id]);
+  }, [accessToken, loadProjectWeeksFromApi, user?.id]);
 
   // Purge in-memory weeks when a project is deleted
   useEffect(() => {
@@ -889,17 +922,21 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     if (typeof window === 'undefined') return;
     const syncActiveProject = () => {
       void refreshProjectStartDate();
+      void reloadWeeksFromApi();
+    };
+    const refreshStartDateOnFocus = () => {
+      void refreshProjectStartDate();
     };
     syncActiveProject();
     window.addEventListener('workgraph-project-selected', syncActiveProject as EventListener);
     window.addEventListener('workgraph-project-changed', syncActiveProject as EventListener);
-    window.addEventListener('focus', syncActiveProject);
+    window.addEventListener('focus', refreshStartDateOnFocus);
     return () => {
       window.removeEventListener('workgraph-project-selected', syncActiveProject as EventListener);
       window.removeEventListener('workgraph-project-changed', syncActiveProject as EventListener);
-      window.removeEventListener('focus', syncActiveProject);
+      window.removeEventListener('focus', refreshStartDateOnFocus);
     };
-  }, [refreshProjectStartDate]);
+  }, [refreshProjectStartDate, reloadWeeksFromApi]);
 
   useEffect(() => {
     if (!user?.id || !accessToken || typeof window === 'undefined') return;
@@ -947,12 +984,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         const projectId = activeProjectId();
         setIsLoading(true);
         console.log('[TimesheetStore] Loading timesheets from API for user:', user.id);
-        const apiWeeks = await listTimesheets(undefined, accessToken, projectId);
+        const converted = await loadProjectWeeksFromApi(projectId);
 
         if (cancelled) return;
 
-        if (apiWeeks && apiWeeks.length > 0) {
-          const converted = apiWeeks.map(w => ({ ...apiWeekToStored(w), projectId }));
+        if (converted.length > 0) {
           // Authenticated mode: API rows are source of truth (no demo merge).
           setWeeks(converted);
           console.log(`[TimesheetStore] Loaded ${converted.length} weeks from API`);
@@ -980,7 +1016,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     loadFromApi();
     return () => { cancelled = true; };
-  }, [user?.id, accessToken]);
+  }, [user?.id, accessToken, loadProjectWeeksFromApi]);
 
   // --- Debounced API persist ---
   const persistWeek = useCallback((personId: string, weekStart: string, weekData: StoredWeek) => {
