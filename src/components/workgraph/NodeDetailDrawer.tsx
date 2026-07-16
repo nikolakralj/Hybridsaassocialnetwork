@@ -52,6 +52,11 @@ import {
 import { useTimesheetStoreSafe } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek, StoredDay } from '../../contexts/TimesheetDataContext';
+import {
+  resolveProjectRates,
+  saveProjectPersonRate,
+  type PersonRate,
+} from '../../utils/api/invoices-api';
 
 // ============================================================================
 // Types
@@ -59,6 +64,7 @@ import type { StoredWeek, StoredDay } from '../../contexts/TimesheetDataContext'
 
 interface NodeDetailDrawerProps {
   selectedId: string;
+  projectId: string;
   nodes: VisibleNode[];
   edges: VisibleEdge[];
   viewer: ViewerIdentity;
@@ -78,13 +84,17 @@ interface NodeDetailDrawerProps {
 
 const RATE_MASK = '••••';
 
+const RATE_MASK_VALUES = new Set([RATE_MASK, '\u2022\u2022\u2022\u2022']);
+
 function PersonRateSection({
+  projectId,
   node,
   viewer,
   nodes,
   edges,
   onUpdateNodeData,
 }: {
+  projectId: string;
   node: VisibleNode;
   viewer: ViewerIdentity;
   nodes: VisibleNode[];
@@ -92,7 +102,40 @@ function PersonRateSection({
   onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
 }) {
   const data = (node.data || {}) as Record<string, any>;
-  const masked = data.hourlyRate === RATE_MASK || data.dailyRate === RATE_MASK || data.fixedAmount === RATE_MASK;
+  const [privateRate, setPrivateRate] = useState<PersonRate | null>(null);
+  const [rateLoadAttempted, setRateLoadAttempted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRateLoadAttempted(false);
+    setPrivateRate(null);
+
+    if (!projectId || !node.id) {
+      setRateLoadAttempted(true);
+      return;
+    }
+
+    resolveProjectRates(projectId)
+      .then((rates) => {
+        if (!cancelled) setPrivateRate(rates[node.id] || null);
+      })
+      .catch((error) => {
+        console.warn('Failed to load private billing rate:', error);
+      })
+      .finally(() => {
+        if (!cancelled) setRateLoadAttempted(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, node.id]);
+
+  const masked = !privateRate && (
+    RATE_MASK_VALUES.has(String(data.hourlyRate))
+    || RATE_MASK_VALUES.has(String(data.dailyRate))
+    || RATE_MASK_VALUES.has(String(data.fixedAmount))
+  );
 
   // Pay is org-internal (GRAPH_CONFIDENTIALITY_SPEC): editing requires graph-edit
   // permission AND that the person belongs to the viewer's own org (admin dev-view
@@ -112,17 +155,15 @@ function PersonRateSection({
     return Number.isFinite(n) ? n : 0;
   };
 
-  const currentType: 'hourly' | 'daily' | 'fixed' =
-    data.contractType === 'daily' || (!data.contractType && toNum(data.dailyRate) > 0)
+  const currentType: 'hourly' | 'daily' | 'fixed' = privateRate?.rateType === 'daily' || privateRate?.rateType === 'fixed'
+    ? privateRate.rateType
+    : data.contractType === 'daily' || (!data.contractType && toNum(data.dailyRate) > 0)
       ? 'daily'
       : data.contractType === 'fixed' || (!data.contractType && toNum(data.fixedAmount) > 0)
         ? 'fixed'
         : 'hourly';
-  const currentRate =
-    currentType === 'daily' ? toNum(data.dailyRate)
-    : currentType === 'fixed' ? toNum(data.fixedAmount)
-    : toNum(data.hourlyRate);
-  const displayCurrency = String(data.currency || 'EUR').toUpperCase();
+  const currentRate = privateRate?.rate && privateRate.rate > 0 ? privateRate.rate : 0;
+  const displayCurrency = String(privateRate?.currency || data.currency || 'EUR').toUpperCase();
   const hasRate = !masked && currentRate > 0;
 
   const [editing, setEditing] = useState(false);
@@ -147,16 +188,29 @@ function PersonRateSection({
     }
     setSaving(true);
     try {
+      const savedRate = await saveProjectPersonRate({
+        projectId,
+        personId: node.id,
+        personName: String(data.name || data.label || ''),
+        rate: value,
+        rateType,
+        currency: currency.trim().toUpperCase() || 'EUR',
+      });
+      setPrivateRate(savedRate);
+
       await onUpdateNodeData(node.id, {
         contractType: rateType,
-        hourlyRate: rateType === 'hourly' ? value : '',
-        dailyRate: rateType === 'daily' ? value : '',
-        fixedAmount: rateType === 'fixed' ? value : '',
+        hourlyRate: '',
+        dailyRate: '',
+        fixedAmount: '',
         currency: currency.trim().toUpperCase() || 'EUR',
       });
       setEditing(false);
+      toast.success('Saved private billing rate.');
     } catch (error) {
       console.error('Failed to save billing rate:', error);
+      toast.error(error instanceof Error ? error.message : 'Could not save the private billing rate.');
+      return;
       toast.error('Could not save the rate — try again or use the graph Save button.');
     } finally {
       setSaving(false);
@@ -179,7 +233,11 @@ function PersonRateSection({
         )}
       </div>
 
-      {masked ? (
+      {!rateLoadAttempted ? (
+        <div className="rounded-md bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+          Loading private billing rate...
+        </div>
+      ) : masked ? (
         <div className="flex items-center gap-1.5 rounded-md bg-muted/30 px-2.5 py-1.5 text-xs text-slate-400">
           <Lock className="h-3 w-3" /> Rate hidden for your role
         </div>
@@ -1312,6 +1370,7 @@ function DataFlowsSection({
 
 export function NodeDetailDrawer({
   selectedId,
+  projectId,
   nodes,
   edges,
   viewer,
@@ -1482,6 +1541,7 @@ export function NodeDetailDrawer({
           {/* Billing rate (person) — the source invoice generation prices from */}
           {node.type === 'person' && (
             <PersonRateSection
+              projectId={projectId}
               node={node}
               viewer={viewer}
               nodes={nodes}
@@ -1624,6 +1684,9 @@ function ConnectionsList({
           const otherId = conn.source === selectedId ? conn.target : conn.source;
           const otherNode = nodes.find(n => n.id === otherId);
           const direction = conn.source === selectedId ? 'outbound' : 'inbound';
+          const connectionLabel = conn.data?.edgeType === 'approves'
+            ? direction === 'outbound' ? 'approved by' : 'submits here'
+            : conn.data?.edgeType;
 
           return (
             <button
@@ -1635,7 +1698,7 @@ function ConnectionsList({
               <span className="text-foreground truncate flex-1 text-[11px] text-left">
                 {otherNode?.data?.name || otherId}
               </span>
-              <Badge variant="outline" className="text-[8px] shrink-0">{conn.data?.edgeType}</Badge>
+              <Badge variant="outline" className="text-[8px] shrink-0">{connectionLabel}</Badge>
             </button>
           );
         })}

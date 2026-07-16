@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calendar, CheckCircle2, ChevronLeft, ChevronRight, Clock, DollarSign, FileCheck2, FileText, Loader2, Plus, Save, Search, Trash2 } from 'lucide-react';
+import { Calendar, CheckCircle2, ChevronLeft, ChevronRight, Clock, DollarSign, FileCheck2, FileText, Loader2, Plus, Save, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -686,9 +686,11 @@ function formatMonthKeyForInvoice(invoice: Pick<InvoiceDraft, 'weekStart' | 'dat
 export function InvoicesWorkspace({
   projectId,
   projectName,
+  canGenerateInvoices = false,
 }: {
   projectId: string;
   projectName?: string;
+  canGenerateInvoices?: boolean;
 }) {
   const store = useTimesheetStore();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
@@ -825,12 +827,18 @@ export function InvoicesWorkspace({
   }, [monthInvoices, selectedInvoiceId]);
 
   const handleGenerateDrafts = useCallback(async () => {
+    if (!canGenerateInvoices) {
+      toast.info('Employees submit time. Company finance/admin generates invoices.');
+      return;
+    }
+
     if (approvedWeeks.length === 0) {
       toast.info(`No approved timesheets found for ${selectedMonthLabel} yet.`);
       return;
     }
 
-    // Rates come from person nodes in the project graph (wg_projects.graph).
+    // Rates come from private wg_contract_rates rows. Graph-rate fallback is
+    // dev-only and disabled unless VITE_ALLOW_GRAPH_RATE_FALLBACK=true.
     const rates = await resolveProjectRates(projectId).catch(() => ({} as Record<string, PersonRate>));
     const todayIso = new Date().toISOString().slice(0, 10);
 
@@ -859,7 +867,7 @@ export function InvoicesWorkspace({
     ));
     if (missingRateNames.length > 0) {
       toast.warning(
-        `No rate found in the graph for: ${missingRateNames.join(', ')}. Drafts use 0 — set rates on their nodes in the Graph tab.`,
+        `No private billing rate found for: ${missingRateNames.join(', ')}. Drafts use 0 — company finance/admin must set rates in the Graph tab.`,
         { duration: 8000 },
       );
     }
@@ -915,7 +923,7 @@ export function InvoicesWorkspace({
     } finally {
       setIsSavingInvoices(false);
     }
-  }, [accessToken, approvedWeeks, consolidateInvoices, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
+  }, [accessToken, approvedWeeks, canGenerateInvoices, consolidateInvoices, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
 
   const handleSaveInvoice = useCallback(async (invoiceId: string, patch: Partial<InvoicePayload>) => {
     await updateInvoice(invoiceId, patch, accessToken);
@@ -1015,6 +1023,31 @@ export function InvoicesWorkspace({
     }
   }, [accessToken, refreshInvoices, selectedInvoiceId]);
 
+  if (!canGenerateInvoices) {
+    return (
+      <Card className="border-slate-200 bg-slate-50/70">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <ShieldCheck className="h-5 w-5 text-slate-600" />
+            Billing is handled by your company administrator
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="m-0 max-w-2xl text-sm text-slate-600">
+            Your role is to submit accurate timesheets. Invoice records, billing templates, company
+            rates, and client billing controls are restricted to authorized finance and project admins.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => window.dispatchEvent(new CustomEvent('changeTab', { detail: 'timesheets' }))}
+          >
+            Go to my timesheets
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (selectedInvoice) {
     const detailSyncBadge = syncBadgeInfo(selectedInvoice.syncState);
     return (
@@ -1074,7 +1107,8 @@ export function InvoicesWorkspace({
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Invoices</h2>
           <p className="text-sm text-slate-500">
-            Generate invoice drafts for {selectedMonthLabel} from approved timesheets and persist them to Supabase.
+            Generate seller-side invoice drafts for {selectedMonthLabel} from approved timesheets.
+            {!canGenerateInvoices ? ' Employees submit time; finance/admin handles invoicing.' : ''}
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1141,7 +1175,8 @@ export function InvoicesWorkspace({
             variant="default"
             className="bg-indigo-600 shadow-sm hover:bg-indigo-700"
             onClick={() => void handleGenerateDrafts()}
-            disabled={isSavingInvoices}
+            disabled={isSavingInvoices || !canGenerateInvoices}
+            title={canGenerateInvoices ? undefined : 'Employees submit time; company finance/admin generates invoices.'}
           >
             {isSavingInvoices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Generate for {selectedMonthLabel}

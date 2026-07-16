@@ -67,6 +67,13 @@ function normalizeStatus(value: unknown): string | null {
   return ALLOWED_STATUSES.has(status) ? status : null;
 }
 
+const INVOICE_READ_ROLES = new Set(["org_admin", "org_finance", "org_manager"]);
+const INVOICE_MANAGE_ROLES = new Set(["org_admin", "org_finance"]);
+
+function hasAllowedRole(role: unknown, allowedRoles: Set<string>): boolean {
+  return allowedRoles.has(normalizeString(role));
+}
+
 function rowToInvoice(row: any) {
   return {
     id: row.id,
@@ -126,33 +133,99 @@ async function getProjectAccess(projectId: string, userId: string) {
   if (!project) return { project: null, isOwner: false, isMember: false };
 
   if (project.owner_id === userId) {
-    return { project, isOwner: true, isMember: false };
+    return { project, isOwner: true, isMember: false, role: "Owner", canManageBilling: true };
   }
 
   const { data: member, error: memberError } = await db()
     .from("wg_project_members")
-    .select("id")
+    .select("id, role")
     .eq("project_id", projectId)
     .eq("user_id", userId)
     .not("accepted_at", "is", null)
     .maybeSingle();
 
   if (memberError) throw memberError;
-  return { project, isOwner: false, isMember: Boolean(member) };
+  const role = normalizeString(member?.role);
+  return {
+    project,
+    isOwner: false,
+    isMember: Boolean(member),
+    role,
+    canManageBilling: role === "Owner" || role === "Editor",
+  };
 }
 
 async function canEditInvoice(invoice: any, userId: string): Promise<boolean> {
   if (!invoice) return false;
   if (invoice.created_by === userId) return true;
 
-  const { data: project, error } = await db()
-    .from("wg_projects")
-    .select("owner_id")
-    .eq("id", invoice.project_id)
+  const access = await getInvoiceAccess(invoice, userId);
+  return access.canManage;
+}
+
+async function getVerifiedOrgRole(organizationId: string, userId: string): Promise<string | null> {
+  const { data, error } = await db()
+    .from("wg_organization_members")
+    .select("org_role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .eq("membership_state", "verified")
     .maybeSingle();
 
-  if (error || !project) return false;
-  return project.owner_id === userId;
+  if (error) throw error;
+  return data?.org_role ?? null;
+}
+
+async function getProjectOrganizationsForParty(
+  projectId: string | null,
+  partyGraphNodeId: string | null
+): Promise<string[]> {
+  if (!projectId || !partyGraphNodeId) return [];
+
+  const { data, error } = await db()
+    .from("wg_project_organizations")
+    .select("organization_id")
+    .eq("project_id", projectId)
+    .eq("graph_node_id", partyGraphNodeId)
+    .eq("status", "active");
+
+  if (error) throw error;
+  return (data || [])
+    .map((row: any) => row.organization_id)
+    .filter((organizationId: unknown): organizationId is string => typeof organizationId === "string" && organizationId.length > 0);
+}
+
+async function getInvoicePartyAccess(
+  projectId: string | null,
+  partyGraphNodeId: string | null,
+  userId: string
+) {
+  let canRead = false;
+  let canManage = false;
+  const organizationIds = await getProjectOrganizationsForParty(projectId, partyGraphNodeId);
+
+  for (const organizationId of organizationIds) {
+    const role = await getVerifiedOrgRole(organizationId, userId);
+    if (!role) continue;
+
+    canRead = canRead || hasAllowedRole(role, INVOICE_READ_ROLES);
+    canManage = canManage || hasAllowedRole(role, INVOICE_MANAGE_ROLES);
+  }
+
+  return { canRead, canManage };
+}
+
+async function getInvoiceAccess(invoice: any, userId: string) {
+  if (!invoice) return { canRead: false, canManage: false };
+  if (invoice.created_by === userId) return { canRead: true, canManage: true };
+
+  const fromPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.from_party_id, userId);
+  const toPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.to_party_id, userId);
+
+  return {
+    canRead: fromPartyAccess.canRead || toPartyAccess.canRead,
+    canManage: fromPartyAccess.canManage,
+  };
 }
 
 function normalizeInvoicePayload(body: any) {
@@ -229,20 +302,23 @@ invoicesRouter.get("/", async (c) => {
     const access = await getProjectAccess(projectId, user.id);
     if (!access.project) return c.json({ error: "Project not found" }, 404);
 
-    let query = db()
+    const { data, error } = await db()
       .from("wg_invoices")
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
 
-    if (!access.isOwner && !access.isMember) {
-      query = query.eq("created_by", user.id);
-    }
-
-    const { data, error } = await query;
     if (error) throw error;
 
-    return c.json({ invoices: (data || []).map(rowToInvoice) });
+    const visibleInvoices = [];
+    for (const row of data || []) {
+      const invoiceAccess = await getInvoiceAccess(row, user.id);
+      if (invoiceAccess.canRead) {
+        visibleInvoices.push(rowToInvoice(row));
+      }
+    }
+
+    return c.json({ invoices: visibleInvoices });
   } catch (err: any) {
     return c.json({ error: `Failed to list invoices: ${err.message}` }, 500);
   }
@@ -268,7 +344,10 @@ invoicesRouter.post("/", async (c) => {
 
     const access = await getProjectAccess(payload.projectId, user.id);
     if (!access.project) return c.json({ error: "Project not found" }, 404);
-    if (!access.isOwner && !access.isMember) return c.json({ error: "Forbidden" }, 403);
+    const fromPartyAccess = await getInvoicePartyAccess(payload.projectId, payload.fromPartyId, user.id);
+    if (!access.canManageBilling && !fromPartyAccess.canManage) {
+      return c.json({ error: "Employees submit time. Company finance/admin generates invoices." }, 403);
+    }
 
     if (payload.templateId) {
       const { data: template, error: templateError } = await db()

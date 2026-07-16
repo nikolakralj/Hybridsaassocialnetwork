@@ -7,14 +7,15 @@
 //   - Removed the isUuid() cloud gate — after D3 every project is cloud-backed
 //     (TEXT ids like proj_xxx included). localStorage remains ONLY as an
 //     offline/network-failure fallback, surfaced via syncState: 'local'.
-//   - Added resolveProjectRates(): reads rates from person nodes in
-//     wg_projects.graph (the unmasked source of truth) so invoice drafts use
-//     graph-defined rates instead of a hardcoded default.
+//   - Added resolveProjectRates(): originally read rates from person nodes in
+//     wg_projects.graph. Trust Core now reads private wg_contract_rates rows
+//     first; graph fallback is dev-only.
 // ============================================================================
 
 import { createClient } from '../supabase/client';
 
 const supabase = createClient();
+const ALLOW_GRAPH_RATE_FALLBACK = import.meta.env.VITE_ALLOW_GRAPH_RATE_FALLBACK === 'true';
 
 const LOCAL_INVOICES_KEY = (projectId: string) => `workgraph-invoices-${projectId}`;
 const LOCAL_INVOICE_INDEX_KEY = 'workgraph-invoice-index-v1';
@@ -181,6 +182,15 @@ export interface PersonRate {
   masked: boolean;
 }
 
+export interface SaveProjectPersonRateInput {
+  projectId: string;
+  personId: string;
+  personName?: string;
+  rate: number;
+  rateType: Exclude<PersonRateType, 'unknown'>;
+  currency?: string;
+}
+
 const MASK_PLACEHOLDER = '••••';
 
 function extractNodeRate(node: any): PersonRate | null {
@@ -222,12 +232,40 @@ function extractNodeRate(node: any): PersonRate | null {
   };
 }
 
-/**
- * Reads rates from person nodes in wg_projects.graph — the full, unmasked
- * graph (sessionStorage viewer copies can carry masked '••••' rates).
- * Returns a map keyed by person node id (=== StoredWeek.personId).
- */
-export async function resolveProjectRates(projectId: string): Promise<Record<string, PersonRate>> {
+async function resolvePrivateProjectRates(projectId: string): Promise<Record<string, PersonRate>> {
+  const scope = normalizeString(projectId);
+  if (!scope) return {};
+
+  const { data, error } = await supabase
+    .from('wg_contract_rates')
+    .select('subject_graph_node_id, subject_user_id, amount, rate_type, currency, rate_scope, effective_from, effective_to')
+    .eq('project_id', scope)
+    .eq('rate_scope', 'bill')
+    .is('effective_to', null);
+
+  if (error) {
+    console.warn(`[invoices] private rate lookup failed for ${scope}: ${error.message}`);
+    return {};
+  }
+
+  const rates: Record<string, PersonRate> = {};
+  (Array.isArray(data) ? data : []).forEach((row: any) => {
+    const personId = normalizeString(row?.subject_graph_node_id || row?.subject_user_id);
+    const amount = toNumber(row?.amount);
+    const rateType = normalizeString(row?.rate_type).toLowerCase() as PersonRateType;
+    if (!personId || amount <= 0) return;
+    rates[personId] = {
+      personId,
+      rate: amount,
+      rateType: rateType === 'daily' || rateType === 'fixed' ? rateType : 'hourly',
+      currency: normalizeString(row?.currency).toUpperCase() || undefined,
+      masked: false,
+    };
+  });
+  return rates;
+}
+
+async function resolveLegacyGraphRates(projectId: string): Promise<Record<string, PersonRate>> {
   const scope = normalizeString(projectId);
   if (!scope) return {};
 
@@ -250,6 +288,92 @@ export async function resolveProjectRates(projectId: string): Promise<Record<str
     if (personRate) rates[personRate.personId] = personRate;
   });
   return rates;
+}
+
+/**
+ * Returns private, RLS-filtered bill rates keyed by graph person node id.
+ * Legacy graph-rate fallback exists only for explicit local/dev recovery.
+ */
+export async function resolveProjectRates(projectId: string): Promise<Record<string, PersonRate>> {
+  const privateRates = await resolvePrivateProjectRates(projectId);
+  if (Object.keys(privateRates).length > 0 || !ALLOW_GRAPH_RATE_FALLBACK) return privateRates;
+  return resolveLegacyGraphRates(projectId);
+}
+
+export async function saveProjectPersonRate(input: SaveProjectPersonRateInput): Promise<PersonRate> {
+  const projectId = normalizeString(input.projectId);
+  const personId = normalizeString(input.personId);
+  const amount = toNumber(input.rate);
+  const rateType = input.rateType === 'daily' || input.rateType === 'fixed' ? input.rateType : 'hourly';
+  const currency = normalizeString(input.currency).toUpperCase() || 'EUR';
+
+  if (!projectId) throw new Error('projectId is required');
+  if (!personId) throw new Error('personId is required');
+  if (amount <= 0) throw new Error('Rate must be greater than 0');
+
+  const userId = await getSessionUserId();
+  if (!userId) throw new Error('You must be signed in to save rates.');
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('wg_contract_rates')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('subject_graph_node_id', personId)
+    .eq('rate_scope', 'bill')
+    .is('effective_to', null)
+    .maybeSingle();
+
+  if (fetchError) throw new Error(fetchError.message || 'Failed to load existing rate');
+
+  const row = {
+    project_id: projectId,
+    subject_graph_node_id: personId,
+    rate_scope: 'bill',
+    rate_type: rateType,
+    amount,
+    currency,
+    source: 'api',
+    created_by: userId,
+  };
+
+  const result = existing?.id
+    ? await supabase
+        .from('wg_contract_rates')
+        .update({
+          rate_type: row.rate_type,
+          amount: row.amount,
+          currency: row.currency,
+          source: row.source,
+        })
+        .eq('id', existing.id)
+        .select('subject_graph_node_id, amount, rate_type, currency')
+        .single()
+    : await supabase
+        .from('wg_contract_rates')
+        .insert(row)
+        .select('subject_graph_node_id, amount, rate_type, currency')
+        .single();
+
+  if (result.error) {
+    if (result.error.code === '42501') {
+      throw new Error('You do not have permission to save billing rates for this project.');
+    }
+    throw new Error(result.error.message || 'Failed to save billing rate');
+  }
+
+  const saved = result.data as any;
+  return {
+    personId: normalizeString(saved?.subject_graph_node_id) || personId,
+    personName: input.personName,
+    rate: toNumber(saved?.amount, amount),
+    rateType: normalizeString(saved?.rate_type).toLowerCase() === 'daily'
+      ? 'daily'
+      : normalizeString(saved?.rate_type).toLowerCase() === 'fixed'
+        ? 'fixed'
+        : 'hourly',
+    currency: normalizeString(saved?.currency).toUpperCase() || currency,
+    masked: false,
+  };
 }
 
 // ----------------------------------------------------------------------------

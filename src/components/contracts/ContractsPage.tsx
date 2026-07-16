@@ -188,7 +188,11 @@ export function ContractsPage() {
   };
 
   const totalActive = contracts.filter(c => c.status === 'active').length;
-  const totalValue = contracts.reduce((sum, c) => sum + (c.baseHourlyRate || 0), 0);
+  const visibleRateContracts = contracts.filter(c => !c.ratesRestricted && Number.isFinite(Number(c.baseHourlyRate)));
+  const totalValue = visibleRateContracts.reduce((sum, c) => sum + (Number(c.baseHourlyRate) || 0), 0);
+  const averageRateLabel = visibleRateContracts.length > 0
+    ? `$${Math.round(totalValue / visibleRateContracts.length)}/hr`
+    : 'Restricted';
 
   return (
     <div className="space-y-6">
@@ -236,9 +240,7 @@ export function ContractsPage() {
         </Card>
         <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Avg. Hourly Rate</div>
-          <div className="text-2xl font-semibold">
-            {contracts.length > 0 ? `$${Math.round(totalValue / contracts.length)}` : '$0'}/hr
-          </div>
+          <div className="text-2xl font-semibold">{averageRateLabel}</div>
         </Card>
       </div>
 
@@ -324,9 +326,13 @@ export function ContractsPage() {
               <div className="space-y-1.5 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-3.5 w-3.5" />
-                  <span className="font-semibold text-foreground text-sm">
-                    {getCurrencySymbol(contract.currency)}{contract.baseHourlyRate}/hr
-                  </span>
+                  {contract.ratesRestricted ? (
+                    <span className="font-semibold text-muted-foreground text-sm">Rate restricted</span>
+                  ) : (
+                    <span className="font-semibold text-foreground text-sm">
+                      {getCurrencySymbol(contract.currency)}{contract.baseHourlyRate}/hr
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Calendar className="h-3.5 w-3.5" />
@@ -341,7 +347,7 @@ export function ContractsPage() {
               </div>
 
               {/* Work Type Rates */}
-              {contract.workTypeRates && (
+              {!contract.ratesRestricted && contract.workTypeRates && Object.keys(contract.workTypeRates).length > 0 && (
                 <div className="mt-3 pt-3 border-t border-border/60">
                   <div className="text-[11px] text-muted-foreground mb-1.5">Rate Schedule</div>
                   <div className="grid grid-cols-2 gap-1 text-[11px]">

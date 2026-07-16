@@ -2191,6 +2191,7 @@ export function WorkGraphBuilder({
             <DrawerErrorBoundary onClose={() => setSelectedId(null)}>
               <NodeDetailDrawer
                 selectedId={selectedId}
+                projectId={projectId}
                 nodes={scopedView.nodes}
                 edges={scopedView.edges}
                 viewer={currentViewer}

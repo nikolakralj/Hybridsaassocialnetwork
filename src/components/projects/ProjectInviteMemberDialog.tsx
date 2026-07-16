@@ -159,6 +159,13 @@ export function ProjectInviteMemberDialog({
             </p>
           )}
 
+          {canSendInvite ? (
+            <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
+              This invitation grants project access only. After the person accepts, use Team to verify
+              them as your employee and assign their worker identity.
+            </p>
+          ) : null}
+
           <div className="space-y-2">
             <Label htmlFor="invite-name">Name (optional)</Label>
             <Input

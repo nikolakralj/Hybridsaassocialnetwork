@@ -19,7 +19,7 @@ import {
   resolveGraphNodeToUserId,
   type ApprovalQueueFilters,
 } from "../../utils/api/approvals-supabase";
-import { GraphOverlayModal } from "./GraphOverlayModal";
+import { ApprovalPathSheet } from "./ApprovalPathSheet";
 import { SubmissionsView } from "./SubmissionsView";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -203,8 +203,8 @@ export function ApprovalsWorkbench({
   const [items, setItems] = useState<UIApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const [showGraphModal, setShowGraphModal] = useState(false);
-  const [selectedGraphItem, setSelectedGraphItem] = useState<UIApprovalItem | null>(null);
+  const [showPathSheet, setShowPathSheet] = useState(false);
+  const [selectedPathItem, setSelectedPathItem] = useState<UIApprovalItem | null>(null);
   const [selectedDetailItem, setSelectedDetailItem] = useState<UIApprovalItem | null>(null);
   const [rejectingItem, setRejectingItem] = useState<UIApprovalItem | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -621,9 +621,9 @@ export function ApprovalsWorkbench({
     }
   };
 
-  const handleViewGraph = (item: UIApprovalItem) => {
-    setSelectedGraphItem(item);
-    setShowGraphModal(true);
+  const handleViewPath = (item: UIApprovalItem) => {
+    setSelectedPathItem(item);
+    setShowPathSheet(true);
   };
 
   const handleViewDetails = (item: UIApprovalItem) => {
@@ -986,9 +986,9 @@ export function ApprovalsWorkbench({
                           <td className="px-3 py-3 align-top">
                             <div className="space-y-1">
                               <div className="font-medium text-foreground">{item.hours}h</div>
-                              <div className="text-xs text-muted-foreground">
-                                {showAmount ? currencyFormatter.format(item.amount) : "Rate masked"}
-                              </div>
+                              {showAmount ? (
+                                <div className="text-xs text-muted-foreground">{currencyFormatter.format(item.amount)}</div>
+                              ) : null}
                               {item.subjectSnapshot?.daySummary?.length ? (
                                 <DayMiniGrid daySummary={item.subjectSnapshot.daySummary} />
                               ) : null}
@@ -1031,7 +1031,7 @@ export function ApprovalsWorkbench({
                               <Button size="sm" variant="outline" onClick={() => handleViewDetails(item)} className="h-8">
                                 Details
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => handleViewGraph(item)} className="h-8">
+                              <Button size="sm" variant="outline" onClick={() => handleViewPath(item)} className="h-8">
                                 Path
                               </Button>
                               {isPending && viewScope !== "submitted" ? (
@@ -1106,16 +1106,13 @@ export function ApprovalsWorkbench({
         </DialogContent>
       </Dialog>
 
-      {showGraphModal && selectedGraphItem && (
-        <GraphOverlayModal
-          item={selectedGraphItem}
-          open={showGraphModal}
+      {showPathSheet && selectedPathItem && (
+        <ApprovalPathSheet
+          item={selectedPathItem}
+          open={showPathSheet}
           onClose={() => {
-            setShowGraphModal(false);
-            setSelectedGraphItem(null);
-          }}
-          onApprovalComplete={() => {
-            void loadApprovals();
+            setShowPathSheet(false);
+            setSelectedPathItem(null);
           }}
         />
       )}
@@ -1210,14 +1207,12 @@ export function ApprovalsWorkbench({
                       <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Hours</p>
                       <p className="m-0 text-sm font-semibold text-foreground">{selectedDetailItem.hours}h</p>
                     </div>
-                    <div>
-                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Amount</p>
-                      <p className="m-0 text-sm text-muted-foreground">
-                        {selectedDetailItem.canViewRates && selectedDetailItem.amount !== null
-                          ? currencyFormatter.format(selectedDetailItem.amount)
-                          : "Rate masked"}
-                      </p>
-                    </div>
+                    {selectedDetailItem.canViewRates && selectedDetailItem.amount !== null ? (
+                      <div>
+                        <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Amount</p>
+                        <p className="m-0 text-sm text-muted-foreground">{currencyFormatter.format(selectedDetailItem.amount)}</p>
+                      </div>
+                    ) : null}
                     <div className="ml-auto text-right">
                       <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Submitted</p>
                       <p className="m-0 text-xs text-muted-foreground">{formatDate(selectedDetailItem.submittedAt)}</p>
@@ -1247,7 +1242,7 @@ export function ApprovalsWorkbench({
                         {selectedDetailItem.hours}h total
                         {selectedDetailItem.canViewRates && selectedDetailItem.amount !== null
                           ? ` · ${currencyFormatter.format(selectedDetailItem.amount)}`
-                          : " · Rate masked"}
+                          : ""}
                       </p>
                     </div>
                     <span className="text-xs text-muted-foreground">Submitted {formatDate(selectedDetailItem.submittedAt)}</span>
@@ -1313,7 +1308,6 @@ export function ApprovalsWorkbench({
                   <DetailTile label="Organization" value={selectedDetailItem.submitterOrg || selectedDetailItem.person.role || "Unknown"} />
                   <DetailTile label="Current approver" value={selectedDetailItem.currentApproverName || selectedDetailItem.partyName || "Unassigned"} />
                   <DetailTile label="Approval step" value={`Step ${selectedDetailItem.stepOrder} of ${selectedDetailItem.totalSteps}`} />
-                  <DetailTile label="Rate visibility" value={selectedDetailItem.canViewRates ? "Visible" : "Masked"} />
                   <DetailTile label="Object type" value={formatObjectType(selectedDetailItem.objectType)} />
                 </div>
 
@@ -1332,8 +1326,8 @@ export function ApprovalsWorkbench({
                     size="sm"
                     onClick={() => {
                       setSelectedDetailItem(null);
-                      setSelectedGraphItem(selectedDetailItem);
-                      setShowGraphModal(true);
+                      setSelectedPathItem(selectedDetailItem);
+                      setShowPathSheet(true);
                     }}
                   >
                     <Eye className="h-4 w-4" />

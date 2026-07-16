@@ -1,7 +1,7 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
-import { 
-  LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt, 
-  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network
+import {
+  LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
+  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck
 } from "lucide-react";
 import { ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
@@ -21,13 +21,15 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
+import { ProjectWorkerSetupDialog } from "./projects/ProjectWorkerSetupDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
-import { addProjectMember, getProject, getProjectMembers } from "../utils/api/projects-api";
+import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
+import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
-import { ALLOW_GRAPH_ADMIN_VIEW, type ViewerIdentity } from "./workgraph/graph-visibility";
+import { ALLOW_GRAPH_ADMIN_VIEW, buildViewerOptions, type ViewerIdentity } from "./workgraph/graph-visibility";
 
 const LazyWorkGraphBuilder = lazy(() =>
   import("./workgraph/WorkGraphBuilder").then((mod) => ({ default: mod.WorkGraphBuilder }))
@@ -292,8 +294,12 @@ export function ProjectWorkspace({
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
+  const [selfMembership, setSelfMembership] = useState<ProjectMember | null>(null);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [workerSetupMember, setWorkerSetupMember] = useState<ProjectMember | null>(null);
+  const [ownerOrganizationName, setOwnerOrganizationName] = useState("");
+  const [projectGraphViewers, setProjectGraphViewers] = useState<ViewerIdentity[]>([]);
   const [activeGraphViewer, setActiveGraphViewer] = useState<ViewerIdentity | null>(null);
   const [workspaceViewer, setWorkspaceViewer] = useState<ViewerIdentity | null>(null);
   const [workspaceViewerOptions, setWorkspaceViewerOptions] = useState<ViewerIdentity[]>([]);
@@ -304,11 +310,12 @@ export function ProjectWorkspace({
     if (!user) return null;
     const email = user.email?.toLowerCase();
     return (
+      selfMembership ||
       teamMembers.find((member) => member.userId && member.userId === user.id) ||
       teamMembers.find((member) => email && member.userEmail?.toLowerCase() === email) ||
       null
     );
-  }, [teamMembers, user]);
+  }, [selfMembership, teamMembers, user]);
   const currentProjectRole = useMemo<ProjectRole | null>(() => {
     if (user?.id && projectOwnerId && user.id === projectOwnerId) return "Owner";
     return currentMembership?.role || null;
@@ -376,6 +383,26 @@ export function ProjectWorkspace({
 
   useEffect(() => {
     let cancelled = false;
+    if (!projectId || !user?.id) {
+      setSelfMembership(null);
+      return;
+    }
+
+    void getMyProjectMembership(projectId, user.id)
+      .then((membership) => {
+        if (!cancelled) setSelfMembership(membership);
+      })
+      .catch(() => {
+        if (!cancelled) setSelfMembership(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
     if (!projectId) {
       setProjectOwnerId(null);
       return;
@@ -386,10 +413,16 @@ export function ProjectWorkspace({
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
           setProjectOwnerId(data?.project?.ownerId || null);
+          const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
+          const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
+          const creatorParty = graphNodes.find((node: any) => node?.type === 'party' && node?.data?.isCreator);
+          setOwnerOrganizationName(creatorParty?.data?.name || "");
+          setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
         }
       } catch {
         if (!cancelled) {
           setProjectOwnerId(null);
+          setProjectGraphViewers([]);
         }
       }
     };
@@ -445,18 +478,26 @@ export function ProjectWorkspace({
           }
         } catch { /* ignore */ }
       }
-      if (!nameDirRaw) return result;
-      try {
-        const parsed = JSON.parse(nameDirRaw) as Record<string, { name?: string; type?: string; orgId?: string }>;
-        Object.entries(parsed).forEach(([nodeId, meta]) => {
-          if (!meta?.name || !meta?.type) return;
-          if (!VIEWER_TYPES.includes(meta.type)) return;
-          const viewer = { nodeId, type: normalizeViewerType(meta.type), name: meta.name, orgId: meta.orgId };
-          if (isViewerAllowed(viewer, allowedViewerIds)) {
-            result.push(viewer);
-          }
-        });
-      } catch { /* Ignore malformed viewer directory */ }
+      if (nameDirRaw) {
+        try {
+          const parsed = JSON.parse(nameDirRaw) as Record<string, { name?: string; type?: string; orgId?: string }>;
+          Object.entries(parsed).forEach(([nodeId, meta]) => {
+            if (!meta?.name || !meta?.type) return;
+            if (!VIEWER_TYPES.includes(meta.type)) return;
+            const viewer = { nodeId, type: normalizeViewerType(meta.type), name: meta.name, orgId: meta.orgId };
+            if (isViewerAllowed(viewer, allowedViewerIds)) {
+              result.push(viewer);
+            }
+          });
+        } catch { /* Ignore malformed viewer directory */ }
+      }
+
+      projectGraphViewers.forEach((viewer) => {
+        if (!isViewerAllowed(viewer, allowedViewerIds)) return;
+        if (!result.some((existing) => existing.nodeId === viewer.nodeId)) {
+          result.push(viewer);
+        }
+      });
       return result;
     };
     const initialOptions = buildViewersFromNameDir();
@@ -496,7 +537,7 @@ export function ProjectWorkspace({
       window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
       window.removeEventListener('workgraph-namedir-updated', onNameDirUpdated);
     };
-  }, [projectId, allowedViewerIds]);
+  }, [projectId, allowedViewerIds, projectGraphViewers]);
 
   const resolveStoredViewer = (): ViewerIdentity | null => {
     const key = `workgraph-viewer-meta:${projectId}`;
@@ -530,6 +571,28 @@ export function ProjectWorkspace({
     await addProjectMember(projectId, payload, accessToken);
     toast.success(`Invitation sent to ${payload.userEmail}`);
     await loadTeamMembers();
+  };
+
+  const handleSetUpWorker = async (values: {
+    organizationName: string;
+    displayName: string;
+    placementTitle: string;
+  }) => {
+    if (!workerSetupMember) return;
+    const result = await assignProjectMemberAsWorker({
+      projectId,
+      memberId: workerSetupMember.id,
+      ...values,
+    });
+    setOwnerOrganizationName(result.organizationName);
+    await loadTeamMembers();
+    if (user?.id) {
+      setSelfMembership(await getMyProjectMembership(projectId, user.id));
+    }
+    window.dispatchEvent(new CustomEvent('workgraph-project-updated', { detail: { projectId } }));
+    toast.success(`${result.displayName} is ready to submit timesheets`, {
+      description: `Added to ${result.organizationName} as ${result.placementTitle}.`,
+    });
   };
 
   // Listen for custom tab change events (from deep links)
@@ -619,6 +682,18 @@ export function ProjectWorkspace({
               </Badge>
             )}
           </div>
+          {currentMembership?.acceptedAt && !currentMembership.graphNodeId && currentProjectRole !== 'Owner' ? (
+            <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="m-0 text-sm font-medium">Your project access is active</p>
+                <p className="mb-0 mt-1 text-sm opacity-80">
+                  You joined {projectName} as {currentMembership.role}. A project owner still needs to
+                  assign your company and worker identity before you can see project data or submit time.
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -775,6 +850,7 @@ export function ProjectWorkspace({
                 <LazyInvoicesWorkspace
                   projectId={projectId}
                   projectName={projectName}
+                  canGenerateInvoices={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
                 />
               </Suspense>
             </TabsContent>
@@ -800,8 +876,10 @@ export function ProjectWorkspace({
                 members={teamMembers}
                 loading={isTeamLoading}
                 canManageMembers={canInviteMembers}
+                canSetUpWorkers={currentProjectRole === "Owner"}
                 onInvite={() => setIsInviteOpen(true)}
                 onRefresh={loadTeamMembers}
+                onSetUpWorker={setWorkerSetupMember}
               />
             </TabsContent>
 
@@ -821,6 +899,18 @@ export function ProjectWorkspace({
           }}
           project={editingProject}
           onSave={handleSaveProject}
+        />
+      ) : null}
+
+      {currentProjectRole === "Owner" ? (
+        <ProjectWorkerSetupDialog
+          open={Boolean(workerSetupMember)}
+          member={workerSetupMember}
+          suggestedOrganizationName={ownerOrganizationName}
+          onOpenChange={(open) => {
+            if (!open) setWorkerSetupMember(null);
+          }}
+          onSubmit={handleSetUpWorker}
         />
       ) : null}
 
@@ -1005,14 +1095,18 @@ function TeamModule({
   members,
   loading,
   canManageMembers,
+  canSetUpWorkers,
   onInvite,
   onRefresh,
+  onSetUpWorker,
 }: {
   members: ProjectMember[];
   loading: boolean;
   canManageMembers: boolean;
+  canSetUpWorkers: boolean;
   onInvite: () => void;
   onRefresh: () => void;
+  onSetUpWorker: (member: ProjectMember) => void;
 }) {
   return (
     <Card className="p-6">
@@ -1049,9 +1143,14 @@ function TeamModule({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">{member.role}</Badge>
-                <Badge variant={member.acceptedAt ? "default" : "secondary"}>
-                  {member.acceptedAt ? "Active" : "Invited"}
+                <Badge variant={member.acceptedAt && member.graphNodeId ? "default" : "secondary"}>
+                  {!member.acceptedAt ? "Invited" : member.graphNodeId ? "Active" : "Needs setup"}
                 </Badge>
+                {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role !== 'Owner' && member.role !== 'Editor' ? (
+                  <Button size="sm" variant="outline" onClick={() => onSetUpWorker(member)}>
+                    Set up employee
+                  </Button>
+                ) : null}
               </div>
             </div>
           ))}

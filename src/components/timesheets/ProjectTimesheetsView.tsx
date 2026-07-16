@@ -551,8 +551,9 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
   const canViewerApprovePerson = useCallback((personId: string, week?: StoredWeek) => {
     if (week && (week.status === 'approved' || week.status === 'draft')) return false;
-    if (isAdmin) return true;
     if (!viewerId) return false;
+    if (personId === viewerId || personId === user?.id) return false;
+    if (isAdmin) return true;
     if (week?.status === 'submitted') {
       const pendingApproval = pendingApprovalAssignees[buildTimesheetSubjectId(personId, week.weekStart)];
       const pendingTargets = [
@@ -566,20 +567,13 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
       const viewerTargets = new Set<string>([
         viewerId,
-        viewerOrgId,
         user?.id,
       ].filter(Boolean) as string[]);
 
-      const matchesPendingTarget = pendingTargets.some((target) => {
-        if (viewerTargets.has(target)) return true;
-        const targetOrgId = personOrgId(target);
-        return Boolean(targetOrgId && viewerTargets.has(targetOrgId));
-      });
-
-      return matchesPendingTarget;
+      return pendingTargets.some((target) => viewerTargets.has(target));
     }
     return canViewerApproveSubmitter(viewerId, personId, approvalParties);
-  }, [viewerId, viewerOrgId, user?.id, pendingApprovalAssignees, approvalParties, isAdmin]);
+  }, [viewerId, user?.id, pendingApprovalAssignees, approvalParties, isAdmin]);
 
   const handleDayClick = useCallback((e: React.MouseEvent, personId: string, weekStart: string, dayIndex: number, weekStatus: WeekStatus) => {
     e.stopPropagation();
@@ -1186,6 +1180,7 @@ function PersonSection({
                     // setWeekStatus already emits actionable error toasts
                   }
                 }}
+                  aria-label={`Approve ${w.weekLabel}`}
                   className="p-1 rounded hover:bg-emerald-100 text-emerald-600"><ThumbsUp className="h-3 w-3" /></button>
               )}
               {isOwn && w.status === 'submitted' && (
@@ -1197,6 +1192,7 @@ function PersonSection({
                     // setWeekStatus already emits actionable error toasts
                   }
                 }}
+                  aria-label={`Recall ${w.weekLabel}`}
                   className="p-1 rounded hover:bg-amber-100 text-amber-500"><Undo2 className="h-3 w-3" /></button>
               )}
             </div>

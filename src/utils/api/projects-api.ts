@@ -4,6 +4,7 @@
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
+import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
@@ -894,6 +895,45 @@ export async function deleteProject(projectId: string, accessToken?: string | nu
 }
 
 // ---------- Members ----------
+
+export async function getMyProjectMembership(
+  projectId: string,
+  userId: string,
+): Promise<ProjectMember | null> {
+  if (!isCloudProjectId(projectId) || !userId) return null;
+
+  const { data, error } = await supabase
+    .from('wg_project_members')
+    .select(
+      'id, project_id, user_id, user_name, user_email, role, scope, graph_node_id, can_approve, can_view_rates, can_edit_timesheets, visible_to_chain, invited_by, invited_at, accepted_at, invitation_id',
+    )
+    .eq('project_id', projectId)
+    .eq('user_id', userId)
+    .not('accepted_at', 'is', null)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message || 'Failed to load your project membership');
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    projectId: data.project_id,
+    userId: data.user_id,
+    userName: data.user_name || undefined,
+    userEmail: data.user_email || undefined,
+    role: data.role as ProjectMember['role'],
+    scope: data.scope || undefined,
+    graphNodeId: data.graph_node_id || undefined,
+    canApprove: data.can_approve ?? false,
+    canViewRates: data.can_view_rates ?? false,
+    canEditTimesheets: data.can_edit_timesheets ?? false,
+    visibleToChain: data.visible_to_chain ?? true,
+    invitedBy: data.invited_by || '',
+    invitedAt: data.invited_at,
+    acceptedAt: data.accepted_at || undefined,
+    invitationId: data.invitation_id || undefined,
+  };
+}
 
 export async function getProjectMembers(projectId: string, accessToken?: string | null) {
   if (!isCloudProjectId(projectId)) {
