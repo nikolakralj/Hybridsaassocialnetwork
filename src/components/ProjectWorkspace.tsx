@@ -100,8 +100,13 @@ function getAllowedViewerIds(
   if (member?.graphNodeId) ids.add(member.graphNodeId);
   // Until org roles exist, org-level viewing is limited to people who can operate
   // the project shell. GSEC will replace this with org_admin/org_pm/org_finance.
-  if ((role === "Owner" || role === "Editor") && member?.scope) {
-    ids.add(member.scope);
+  if (role === "Owner" || role === "Editor") {
+    if (member?.scope) ids.add(member.scope);
+    // Managers can EDIT the whole graph (canEditGraph = canManageProject), so
+    // they must be able to SEE it even without a personal graph-node mapping.
+    // Grant the full-project (admin) view. M2's server projection will scope
+    // rates to their own org; today the client filter still applies.
+    ids.add("__admin__");
   }
   return ids;
 }
@@ -111,8 +116,11 @@ function isViewerAllowed(
   allowedViewerIds: Set<string>
 ): viewer is ViewerIdentity {
   if (!viewer) return false;
-  if (ALLOW_GRAPH_ADMIN_VIEW && isAdminViewer(viewer)) return true;
-  if (isAdminViewer(viewer)) return false;
+  // Admin/full view is allowed when the debug flag is on OR when this viewer is
+  // a project manager (getAllowedViewerIds adds "__admin__" for Owner/Editor).
+  if (isAdminViewer(viewer)) {
+    return ALLOW_GRAPH_ADMIN_VIEW || allowedViewerIds.has("__admin__");
+  }
   return allowedViewerIds.has(viewer.nodeId);
 }
 
@@ -463,8 +471,12 @@ export function ProjectWorkspace({
     const nameDirKey = `workgraph-name-dir:${projectId}`;
 
     const buildViewersFromNameDir = (): ViewerIdentity[] => {
-      const result: ViewerIdentity[] = ALLOW_GRAPH_ADMIN_VIEW
-        ? [{ nodeId: '__admin__', type: 'admin', name: 'Admin (Full View)' }]
+      const result: ViewerIdentity[] = (ALLOW_GRAPH_ADMIN_VIEW || canManageProject)
+        ? [{
+            nodeId: '__admin__',
+            type: 'admin',
+            name: ALLOW_GRAPH_ADMIN_VIEW ? 'Admin (Full View)' : 'Full project view',
+          }]
         : [];
       // Try sessionStorage first, fall back to localStorage
       let nameDirRaw = sessionStorage.getItem(nameDirKey);
@@ -537,7 +549,7 @@ export function ProjectWorkspace({
       window.removeEventListener('workgraph-viewer-changed', onViewerChanged);
       window.removeEventListener('workgraph-namedir-updated', onNameDirUpdated);
     };
-  }, [projectId, allowedViewerIds, projectGraphViewers]);
+  }, [projectId, allowedViewerIds, projectGraphViewers, canManageProject]);
 
   const resolveStoredViewer = (): ViewerIdentity | null => {
     const key = `workgraph-viewer-meta:${projectId}`;
