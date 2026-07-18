@@ -15,6 +15,37 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-16 - [DONE] M1 usability fix cluster (Claude)
+
+Driven by Nikola live-testing and hitting friction. NAS project (+ Rodman test
+chain) was deleted by the user; only empty BRS / BRS FLOW QA remain.
+
+- **Dev chain-walker** (`DevApprovalChainPanel.tsx`, commit 84efeda): dev-only
+  (`import.meta.env.DEV`) panel in the approvals Queue letting the project owner
+  advance every pending layer via the same approveItem/rejectItem + RLS + 026
+  trigger. Unblocks the full-chain test when G2/NAS have no accounts. Delete
+  before pilots. Also: "Signed in as Me" → real name; approvals table
+  min-width 1240→980.
+- **Role legibility** (commit 4627bce): roles are permission levels, not job
+  titles, and the collision mis-assigned workers as Editors (RPC rejects
+  Owner/Editor for worker setup). Invite dialog now shows who each role is for
+  ("Contributor — Employee/contractor who logs time"); worker-setup hint only
+  for Contributor; workspace banner no longer promises Editors a worker
+  identity; Team badge shows "Manager" not permanent "Needs setup".
+- **Manager graph visibility** (commit 8a0ea90): an Editor invited after
+  creation had no graph_node_id/scope → LOCKED_GRAPH_VIEWER, saw nothing, yet
+  had canEditGraph. Now Owner/Editor get a "Full project view" even without a
+  personal mapping; only managers (getAllowedViewerIds adds "__admin__" for
+  Owner/Editor). Unmapped Contributors still correctly locked out.
+  ⚠️ Full view shows all rates client-side; M2 wg_get_scoped_graph
+  (isProjectManager) must scope this to the manager's own org when wired.
+
+Known-not-fixed (logged for later): the create-project WIZARD's "People" step
+uses graph person nodes with a free-text job-title "Role" and hidden/approver
+toggles — a THIRD people-model separate from project members (Owner/Editor/…)
+and worker mapping. This create-vs-invite-vs-map split disorients users;
+unifying it is a real task, not done here.
+
 ## 2026-07-16 - [DONE] Codex takeover: approval↔week sync reviewed, verified, committed (Claude)
 
 - Codex ran out of credits mid-task, leaving migration 026 APPLIED to prod but
