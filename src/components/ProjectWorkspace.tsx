@@ -683,16 +683,32 @@ export function ProjectWorkspace({
             )}
           </div>
           {currentMembership?.acceptedAt && !currentMembership.graphNodeId && currentProjectRole !== 'Owner' ? (
-            <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <p className="m-0 text-sm font-medium">Your project access is active</p>
-                <p className="mb-0 mt-1 text-sm opacity-80">
-                  You joined {projectName} as {currentMembership.role}. A project owner still needs to
-                  assign your company and worker identity before you can see project data or submit time.
-                </p>
+            currentMembership.role === 'Contributor' ? (
+              // Contributors CAN become mapped workers — this promise is real.
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
+                <div>
+                  <p className="m-0 text-sm font-medium">Your project access is active</p>
+                  <p className="mb-0 mt-1 text-sm opacity-80">
+                    You joined {projectName} as a Contributor. A project owner still needs to set you up
+                    as a worker (Team → Set up as worker) before you can log time.
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              // Editors/Commenters/Viewers are managers/observers — they never
+              // get a worker identity, so don't promise one.
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
+                <div>
+                  <p className="m-0 text-sm font-medium">You're a {currentMembership.role} on {projectName}</p>
+                  <p className="mb-0 mt-1 text-sm opacity-80">
+                    {currentMembership.role}s help manage the project — they don't submit timesheets, so
+                    there's no worker identity to assign. Workers are invited as Contributors.
+                  </p>
+                </div>
+              </div>
+            )
           ) : null}
         </div>
       </div>
@@ -1143,8 +1159,14 @@ function TeamModule({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">{member.role}</Badge>
-                <Badge variant={member.acceptedAt && member.graphNodeId ? "default" : "secondary"}>
-                  {!member.acceptedAt ? "Invited" : member.graphNodeId ? "Active" : "Needs setup"}
+                <Badge variant={member.acceptedAt && (member.graphNodeId || member.role === 'Owner' || member.role === 'Editor') ? "default" : "secondary"}>
+                  {!member.acceptedAt
+                    ? "Invited"
+                    : member.graphNodeId
+                      ? "Active"
+                      : member.role === 'Owner' || member.role === 'Editor'
+                        ? "Manager"
+                        : "Needs setup"}
                 </Badge>
                 {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role !== 'Owner' && member.role !== 'Editor' ? (
                   <Button size="sm" variant="outline" onClick={() => onSetUpWorker(member)}>

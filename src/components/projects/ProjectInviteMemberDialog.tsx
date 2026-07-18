@@ -15,6 +15,21 @@ const supabase = createClient();
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be`;
 const INVITATIONS_ENDPOINT = `${BASE}/invitations`;
 
+// Project roles are PERMISSION levels, not job titles. This maps each to the
+// real-world person it's actually for, so "invite an employee" doesn't get
+// mis-assigned to Editor (which cannot be turned into a billable worker).
+const ROLE_PERSONA: Record<ProjectRole, string> = {
+  Owner: 'You / company admin — full control',
+  Editor: 'Co-manager who helps run the project (not a billable worker)',
+  Contributor: 'Employee or contractor who logs time ← pick this for workers',
+  Commenter: 'Client contact / reviewer who only comments',
+  Viewer: 'Observer with read-only access',
+};
+
+// Only these roles can be turned into a mapped, time-submitting worker
+// (wg_assign_project_member_as_worker rejects Owner/Editor).
+const WORKER_ELIGIBLE_ROLES: ProjectRole[] = ['Contributor'];
+
 interface ProjectInviteMemberDialogProps {
   open: boolean;
   projectName?: string;
@@ -160,10 +175,17 @@ export function ProjectInviteMemberDialog({
           )}
 
           {canSendInvite ? (
-            <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
-              This invitation grants project access only. After the person accepts, use Team to verify
-              them as your employee and assign their worker identity.
-            </p>
+            WORKER_ELIGIBLE_ROLES.includes(role) ? (
+              <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
+                This invite grants project access only. After they accept, open <span className="font-medium">Team → Set up as worker</span> to
+                assign their company and worker identity so they can log time.
+              </p>
+            ) : (
+              <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{role}s don't submit timesheets.</span> To invite an
+                employee or contractor who logs hours, choose <span className="font-medium text-foreground">Contributor</span>.
+              </p>
+            )
           ) : null}
 
           <div className="space-y-2">
@@ -203,7 +225,10 @@ export function ProjectInviteMemberDialog({
               <SelectContent>
                 {availableRoles.map((projectRole) => (
                   <SelectItem key={projectRole} value={projectRole}>
-                    {projectRole}
+                    <span className="flex flex-col">
+                      <span className="font-medium">{projectRole}</span>
+                      <span className="text-xs text-muted-foreground">{ROLE_PERSONA[projectRole]}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
