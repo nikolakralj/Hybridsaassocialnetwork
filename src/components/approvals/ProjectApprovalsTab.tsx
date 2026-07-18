@@ -4,6 +4,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ApprovalsWorkbench } from "./ApprovalsWorkbench";
+import { DevApprovalChainPanel } from "./DevApprovalChainPanel";
+import { useAuth } from "../../contexts/AuthContext";
 
 interface ProjectApprovalsTabProps {
   projectId: string;
@@ -27,9 +29,15 @@ export function ProjectApprovalsTab({
   viewerName,
   viewerNodeId,
 }: ProjectApprovalsTabProps) {
+  const { user } = useAuth();
   const [viewMode, setViewMode] = useState<"queue" | "history" | "analytics">("queue");
   const [filterStatus, setFilterStatus] = useState<QueueStatus>("pending");
   const showWorkspaceSummary = viewMode !== "history";
+
+  // The graph viewer label can be a generic "Me"/"You"; prefer the real
+  // signed-in name so the badge reads "Signed in as Nikola Kralj".
+  const isGenericViewer = !viewerName || ["me", "you"].includes(viewerName.trim().toLowerCase());
+  const signedInLabel = isGenericViewer ? (user?.name || user?.email) : viewerName;
 
   return (
     <Tabs
@@ -46,7 +54,7 @@ export function ProjectApprovalsTab({
               </Badge>
               <Badge variant="secondary" className="gap-1.5">
                 <User className="h-3.5 w-3.5" />
-                {viewerName ? `Signed in as ${viewerName}` : "Using current account permissions"}
+                {signedInLabel ? `Signed in as ${signedInLabel}` : "Using current account permissions"}
               </Badge>
             </div>
 
@@ -95,6 +103,7 @@ export function ProjectApprovalsTab({
       </div>
 
       <TabsContent value="queue" className="m-0 p-4 sm:p-6">
+        {import.meta.env.DEV && <DevApprovalChainPanel projectId={projectId} />}
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter={filterStatus}

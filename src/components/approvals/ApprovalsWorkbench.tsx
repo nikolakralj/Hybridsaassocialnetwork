@@ -926,7 +926,7 @@ export function ApprovalsWorkbench({
               </div>
 
               <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/90">
-                <table className="w-full min-w-[1240px] border-collapse text-sm">
+                <table className="w-full min-w-[980px] border-collapse text-sm">
                   <thead className="sticky top-0 z-10 bg-background/95 text-left backdrop-blur supports-[backdrop-filter]:bg-background/85">
                     <tr className="border-b border-border/60">
                       <th className="px-3 py-2.5 w-[42px]"></th>
