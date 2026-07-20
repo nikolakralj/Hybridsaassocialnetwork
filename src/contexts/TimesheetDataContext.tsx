@@ -365,14 +365,15 @@ function buildApprovalRouteSteps(
   submitterPartyId: string,
   parties: ApprovalParty[],
   submitterPersonId: string,
+  ownerId?: string | null,
 ): ApprovalRouteStep[] {
   const partyMap = new Map(parties.map((party) => [party.id, party]));
   const submitterParty = partyMap.get(submitterPartyId);
   if (!submitterParty) return [];
 
-  // The submitter's own organization is a real approval layer when another
-  // person there can approve. Starting at billsTo silently skipped internal
-  // company review and sent worker timesheets straight to the agency.
+  // Route = the submitter's own org (internal approval) followed by everyone
+  // it bills upstream. Internal review must not be skipped, and the chain must
+  // not dead-end just because an upstream client has no account yet.
   const routeParties: ApprovalParty[] = [submitterParty];
   const visited = new Set<string>([submitterPartyId]);
   const queue = [...submitterParty.billsTo];
@@ -391,22 +392,40 @@ function buildApprovalRouteSteps(
     }
   }
 
+  // Is a person authorized to approve on behalf of a party?
+  //  - explicitly flagged canApprove, OR
+  //  - the project owner (authorized in their own org by definition).
+  const isOwner = (person: { id: string }) =>
+    Boolean(ownerId) && person.id === ownerId;
+  const isAuthorized = (person: { id: string; canApprove?: boolean }) =>
+    person.canApprove === true || isOwner(person);
+
   const steps: ApprovalRouteStep[] = [];
 
   for (const party of routeParties) {
-    const approvers = [...party.people]
-      .filter((person) => person.canApprove && person.id !== submitterPersonId)
+    const isOwnOrg = party.id === submitterPartyId;
+    const others = [...party.people]
+      .filter((person) => person.id !== submitterPersonId)
       .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
-    const approver = approvers[0];
-    if (!approver) continue;
+
+    const authorized = others.find(isAuthorized);
+
+    // Internal (own-org) approval must come from someone with authority (owner
+    // or a designated approver) — never a peer/subordinate. If none exists,
+    // skip internal review and route upstream.
+    // Upstream parties: any representative can approve; if the party has no
+    // people yet (e.g. the client hasn't been invited), use a placeholder that
+    // routes to the party itself ("waiting on <party>").
+    const chosen = isOwnOrg ? authorized : (authorized || others[0]);
+    if (isOwnOrg && !chosen) continue;
 
     steps.push({
       step: steps.length + 1,
       partyId: party.id,
       partyName: party.name,
       approverNodeId: party.id,
-      approverUserRef: approver.id,
-      approverName: approver.name || party.name || approver.id,
+      approverUserRef: chosen ? chosen.id : party.id,
+      approverName: (chosen && (chosen.name || party.name)) || party.name || party.id,
     });
   }
 
@@ -425,6 +444,15 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
 
   console.log('[approval-route] Loaded', parties.length, 'parties for project', projectId,
     '| party names:', parties.map(p => `${p.name}(${p.people.length}ppl, billsTo:${p.billsTo.length})`).join(', '));
+
+  // The project owner is an authorized internal approver by definition, even if
+  // their graph node was never flagged canApprove.
+  let ownerId: string | null = null;
+  try {
+    const proj = await getProject(projectId, accessToken);
+    const projectRow = (proj as { project?: Record<string, unknown> })?.project;
+    ownerId = (projectRow?.ownerId as string) || (projectRow?.owner_id as string) || null;
+  } catch { /* owner lookup is best-effort */ }
 
   let submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
   let fallbackUsed = submitterParty ? 'direct' : 'none';
@@ -466,6 +494,23 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   }
 
   console.log('[approval-route] Using submitterParty:', submitterParty.name, '(via', fallbackUsed, ')');
+
+  // Primary path: tolerant route builder. Owner-as-internal-approver + upstream
+  // placeholders mean a worker can always submit — the chain never dead-ends on
+  // a missing designated approver or an un-invited upstream client.
+  const tolerantSteps = buildApprovalRouteSteps(submitterParty.id, parties, personId, ownerId);
+  if (tolerantSteps.length > 0) {
+    const first = tolerantSteps[0];
+    console.info('[approval-route] resolved via tolerant builder:',
+      tolerantSteps.map((s) => `step${s.step}(${s.approverName})`).join(' → '));
+    return {
+      approvalLayer: first.step,
+      approverName: first.approverName,
+      approverNodeId: first.approverNodeId,
+      approverUserRef: first.approverUserRef,
+      steps: tolerantSteps,
+    };
+  }
 
   // Walk approval steps — skip any step where the only approver is the submitter themselves
   // (self-approval). If Nikola is the approver in their own party, route upstream to next DAG node.
