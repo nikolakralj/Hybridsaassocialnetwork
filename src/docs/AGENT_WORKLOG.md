@@ -15,6 +15,36 @@
 - **Data reality check:** 3 projects, 7 timesheet weeks (draft/submitted, 0 approved), 0 invoices, **0 graph person nodes have rates set** ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â set rates in the Graph tab before generating invoices.
 - **`APPROVAL_TOKEN_SECRET`** set in Supabase Edge Function secrets ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦; **Supabase CLI** linked; `SUPABASE_ACCESS_TOKEN` in `~/.claude/settings.json`.
 
+## 2026-07-16 - [DONE] CRITICAL: approval route always resolves + submit-path root cause (Claude)
+
+- **User hit "No approval route could be resolved" — nobody could submit a
+  timesheet at all.** Traced to ONE root cause, not many: route resolution
+  required a person flagged `canApprove`, but (a) the create wizard sets everyone
+  canApprove=false, (b) the owner isn't auto-approver of their own org, and
+  (c) upstream clients (G2) have no accounts. So the chain dead-ended and every
+  submission failed.
+- **Fix (buildApprovalRouteSteps + getApprovalRouteForSubmitter in
+  TimesheetDataContext):** owner is an authorized internal approver by
+  definition; internal approval only from an authorized person (owner/designated,
+  never a peer); upstream party with no account → placeholder step "waiting on
+  <party>" (dev-walker / future real approver advances) instead of failing.
+  Verified vs live failing project proj_1784353244371: Rodman→Nikola→G2(placeholder),
+  Nikola→G2. Commit df773d1.
+- **Process note for future agents:** we had been fixing one screenshot at a time
+  (reactive whack-a-mole) and it kept exposing new seams because the
+  submit→approve→invoice path was built by 3 agents and never wired end-to-end.
+  The right mode is ONE coherent audit of a full path, not per-screen patches.
+- **Follow-ups (NOT done, needed for a clean product):**
+  1. Create wizard should default the OWNER to approver and expose per-org
+     approver designation (the 🛡 toggle is invisible/unused).
+  2. Owner/worker person-node display name is still "Me" on freshly created
+     projects (023 normalized only the old deleted project) → approver shows as
+     "Me". Normalize on create.
+  3. Unify the 3 people-models (wizard graph nodes vs project members vs worker
+     roster) — the deepest confusion source.
+  4. Test-data sprawl: multiple NAS/BRS projects across accounts; a "reset my
+     test data" path would help.
+
 ## 2026-07-16 - [DONE] M1 usability fix cluster (Claude)
 
 Driven by Nikola live-testing and hitting friction. NAS project (+ Rodman test
