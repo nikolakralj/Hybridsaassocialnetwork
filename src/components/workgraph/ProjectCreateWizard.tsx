@@ -173,7 +173,18 @@ export function ProjectCreateWizard({
           partyType: (user?.user_metadata?.org_type as PartyType) || 'agency',
           billsTo: [],
           organizationId: user?.id,
-          people: [{ id: user?.id || 'me', name: user?.user_metadata?.full_name || 'Me', email: user?.email || '', canApprove: false }],
+          people: [{
+            id: user?.id || 'me',
+            // Never store the viewer-relative label "Me" — use the real name so
+            // approvals and the graph read correctly for everyone.
+            name: user?.user_metadata?.full_name
+              || user?.user_metadata?.name
+              || (user?.email ? user.email.split('@')[0] : '')
+              || 'Owner',
+            email: user?.email || '',
+            // The project owner is their own organization's approver by default.
+            canApprove: true,
+          }],
           isCreator: true,
         }
       ]);
