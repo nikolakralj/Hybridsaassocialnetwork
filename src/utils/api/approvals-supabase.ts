@@ -1314,11 +1314,16 @@ export async function approveItem(
       })
       .eq('id', approvalId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Error approving item:', error);
       throw new Error(`Failed to approve item: ${error.message}`);
+    }
+    // 0 rows updated = RLS blocked it: the caller is neither the assigned
+    // approver nor the project owner (e.g. a worker trying to self-advance).
+    if (!result) {
+      throw new Error('You cannot approve this item — only the assigned approver or the project owner can. Check which account you are signed in as.');
     }
 
     const spawnedNextLayer = await createNextApprovalLayerIfNeeded(result);
@@ -1343,11 +1348,14 @@ export async function rejectItem(
       })
       .eq('id', approvalId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Error rejecting item:', error);
       throw new Error(`Failed to reject item: ${error.message}`);
+    }
+    if (!result) {
+      throw new Error('You cannot reject this item — only the assigned approver or the project owner can. Check which account you are signed in as.');
     }
 
     return transformApproval(result);
