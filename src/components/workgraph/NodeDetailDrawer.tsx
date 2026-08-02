@@ -74,6 +74,8 @@ interface NodeDetailDrawerProps {
   onNavigate: (target: string, context?: Record<string, string>) => void;
   /** A4: present only when the viewer can edit the graph (owner/editor). Persists node.data patches to wg_projects.graph. */
   onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
+  /** C3b: add an approver agent to a party (owner or that party's verified admin). Server-authorized. */
+  onAddPartyApprover?: (partyGraphNodeId: string, email: string, displayName: string) => Promise<void>;
 }
 
 // ============================================================================
@@ -296,6 +298,90 @@ function PersonRateSection({
           {canEditRate ? ' Click "Set rate" above.' : " Their own organization sets it (pay is org-internal)."}
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// AddPartyApproverSection (C3b) — give an organization another approving agent.
+// Server-authorized to the project owner or the party org's verified admin.
+// ============================================================================
+
+function AddPartyApproverSection({
+  partyId,
+  partyName,
+  onAddPartyApprover,
+}: {
+  partyId: string;
+  partyName: string;
+  onAddPartyApprover: (partyGraphNodeId: string, email: string, displayName: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
+      toast.error('Enter a valid email for the approver.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onAddPartyApprover(partyId, trimmedEmail, name.trim());
+      toast.success(`Added ${name.trim() || trimmedEmail} as an approver for ${partyName}.`);
+      setName('');
+      setEmail('');
+      setOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not add the approver.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+          Approvers
+        </div>
+        {!open && (
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => setOpen(true)}>
+            <Users className="h-3 w-3 mr-1" /> Add approver
+          </Button>
+        )}
+      </div>
+
+      {open ? (
+        <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Name (optional)"
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+          />
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            placeholder="approver@company.com"
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Adds an approving agent to {partyName}. They can approve this org's layer of the chain.
+          </p>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-7 flex-1 text-[11px]" onClick={() => void submit()} disabled={saving}>
+              {saving ? 'Adding…' : 'Add approver'}
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1379,6 +1465,7 @@ export function NodeDetailDrawer({
   onSelectNode,
   onNavigate,
   onUpdateNodeData,
+  onAddPartyApprover,
 }: NodeDetailDrawerProps) {
   const node = nodes.find(n => n.id === selectedId);
   
@@ -1583,6 +1670,15 @@ export function NodeDetailDrawer({
               edges={edges}
               selectedMonth={selectedMonth}
               onSelectNode={onSelectNode}
+            />
+          )}
+
+          {/* Add an approver agent to this organization (C3b) */}
+          {node.type === 'party' && onAddPartyApprover && (
+            <AddPartyApproverSection
+              partyId={node.id}
+              partyName={node.data?.name || 'this organization'}
+              onAddPartyApprover={onAddPartyApprover}
             />
           )}
 

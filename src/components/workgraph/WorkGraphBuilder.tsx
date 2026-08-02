@@ -64,6 +64,7 @@ import type {
 } from '../../types/workgraph';
 import type { PartyEntry } from '../../utils/graph/auto-generate';
 import { getProject, updateProject } from '../../utils/api/projects-api';
+import { assignPartyApprover } from '../../utils/api/organizations-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
@@ -1462,6 +1463,7 @@ interface WorkGraphBuilderProps {
   mode?: 'view' | 'edit';
   asOf?: string;
   canEditGraph?: boolean;
+  editablePartyIds?: string[];
   currentViewer?: ViewerIdentity | null;
   onViewerChange?: (viewer: ViewerIdentity) => void;
 }
@@ -1472,6 +1474,7 @@ export function WorkGraphBuilder({
   onSave,
   initialConfig,
   canEditGraph = true,
+  editablePartyIds = [],
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
 }: WorkGraphBuilderProps) {
@@ -1913,6 +1916,31 @@ export function WorkGraphBuilder({
     toast.success('Saved to project');
   }, [allNodes, allEdges, projectId, accessToken]);
 
+  // C3b: add an approver agent to a party. The RPC is server-authorized (owner
+  // or that org's verified admin) and mutates wg_projects.graph directly; we
+  // append the returned node locally so the canvas updates immediately.
+  const handleAddPartyApprover = useCallback(async (partyGraphNodeId: string, email: string, displayName: string) => {
+    const result = await assignPartyApprover({ projectId, partyGraphNodeId, email, displayName });
+    setAllNodes((prev) => [
+      ...prev,
+      {
+        id: result.nodeId,
+        type: 'person',
+        position: { x: 0, y: 0 },
+        data: {
+          name: result.name,
+          email: result.email,
+          role: 'Approver',
+          partyId: partyGraphNodeId,
+          canApprove: true,
+          canViewRates: false,
+          canEditTimesheets: false,
+          visibleToChain: true,
+        },
+      } as BaseNode,
+    ]);
+  }, [projectId]);
+
   // Compute scoped view
   const scopedView = useMemo(
     () => computeScopedView(currentViewer, allNodes, allEdges),
@@ -1994,35 +2022,10 @@ export function WorkGraphBuilder({
       toast.error('Only project managers can edit the supply chain');
       return;
     }
-    // Build maps for incoming nodes/edges by ID so we can update OR add
-    const incomingNodeMap = new Map(nodes.map((n) => [n.id, n]));
-    const incomingEdgeMap = new Map(edges.map((e) => [e.id, e]));
-
-    // Update existing nodes with new data (e.g., partyId, canApprove, name changes),
-    // then append genuinely new nodes
-    const mergedNodes = allNodes.map((existing) => {
-      const incoming = incomingNodeMap.get(existing.id);
-      if (!incoming) return existing;
-      // Merge: incoming data overwrites, but keep existing position
-      return {
-        ...existing,
-        ...incoming,
-        position: existing.position, // preserve layout
-        data: { ...existing.data, ...incoming.data },
-      };
-    });
-    // Add nodes that don't exist yet
-    const existingNodeIds = new Set(allNodes.map((n) => n.id));
-    nodes.forEach((n) => { if (!existingNodeIds.has(n.id)) mergedNodes.push(n); });
-
-    // Same for edges: update existing, add new
-    const mergedEdges = allEdges.map((existing) => {
-      const incoming = incomingEdgeMap.get(existing.id);
-      if (!incoming) return existing;
-      return { ...existing, ...incoming, data: { ...existing.data, ...incoming.data } };
-    });
-    const existingEdgeIds = new Set(allEdges.map((e) => e.id));
-    edges.forEach((e) => { if (!existingEdgeIds.has(e.id)) mergedEdges.push(e); });
+    // The editor returns the full active snapshot. Merging preserved removed
+    // parties as ghost nodes; version history already retains the old graph.
+    const mergedNodes = nodes;
+    const mergedEdges = edges;
 
     await updateProject(projectId, {
       graph: {
@@ -2045,7 +2048,7 @@ export function WorkGraphBuilder({
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
     setIsEditSupplyChainOpen(false);
-  }, [allNodes, allEdges, projectId, accessToken, graphPersistence, canEditGraph]);
+  }, [projectId, accessToken, graphPersistence, canEditGraph]);
 
   return (
     <>
@@ -2200,6 +2203,7 @@ export function WorkGraphBuilder({
                 onSelectNode={(id) => setSelectedId(id)}
                 onNavigate={handleNavigate}
                 onUpdateNodeData={canEditGraph ? handleUpdateNodeData : undefined}
+                onAddPartyApprover={canEditGraph ? handleAddPartyApprover : undefined}
               />
             </DrawerErrorBoundary>
           </div>
@@ -2215,6 +2219,7 @@ export function WorkGraphBuilder({
           editMode={true}
           initialParties={editableParties}
           initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
+          editablePartyIds={editablePartyIds}
         />
       ) : null}
     </>
