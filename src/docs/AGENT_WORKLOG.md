@@ -886,3 +886,63 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
   Approve/Reject controls; My submissions shows five in-progress weeks with the
   correct waiting-on actor; July survives refresh. `npm run build` passes and
   all generated JS chunks remain below 400 kB.
+
+## 2026-07-27 - [DONE] scoped-supply-chain-administration (Codex)
+
+- Ported the supply-chain ownership repair into the active `HybridSocialApp-run`
+  checkout. `ProjectWorkspace`, `WorkGraphBuilder`, and
+  `ProjectCreateWizard` now allow an accepted project manager to edit only the
+  party mapped by their membership scope. Other parties, their people, and their
+  party type are read-only; adding/removing organizations is disabled in the
+  regular editor.
+- Supply-chain saves now replace the active graph snapshot instead of merging
+  missing nodes back in, which prevents future ghost organizations after a
+  governed archival/replacement operation. The editor labels the current party
+  as `Your organization` and labels the original creator accurately.
+- `projects-api.ts` routes graph/party changes through the server API rather
+  than the direct client update. `projects-api.tsx` validates the complete
+  snapshot against the caller's accepted organization scope and rejects changes
+  to another party or its people. Invite requests now include the project ID,
+  avoiding ambiguous same-name project lookup without replacing the newer C2
+  company/roster workflow.
+- Added `028_scoped_supply_chain_administration.sql`, which removes direct
+  authenticated `wg_projects` UPDATE access so RLS cannot bypass the server
+  party-level check.
+- Live UI verification as the NAS-scoped account: G2 and Triangle Services
+  were locked; NAS alone was editable; no changes were saved. The browser still
+  reports a pre-existing TimesheetStore refresh warning (`Failed to list
+  timesheets`) after approval updates.
+- Residual: apply migration 028 and deploy the updated Edge Function before
+  treating server-side enforcement as live. Existing orphan G2 data is not
+  auto-deleted; it needs the later governed structure-change workflow.
+
+## 2026-07-27 - [DONE] invitation-scope-and-workspace-identity (Codex)
+
+- Project invitations now inherit the inviter's accepted project-party scope on
+  the server. The browser cannot submit an arbitrary party ID, and an unmapped
+  inviter receives a clear error instead of creating an unscoped member.
+- The invite dialog explains that a new member joins the inviter's active
+  project organization. This makes organization delegation explicit rather than
+  treating a project role as a company assignment.
+- Removed the `project-main` synthetic fallback from `TimesheetDataContext`.
+  A workspace with no selected project no longer issues timesheet/approval
+  work under a fake ID.
+- Residual: existing BRS FLOW QA data remains mis-scoped (James/John map to NAS
+  and the graph has an orphan G2 node). Correct it through a later governed
+  data-repair workflow; do not silently mutate production project history.
+
+## 2026-08-02 - [DONE] C3a commit cleanup (Codex)
+
+- Added compatibility fallback for older project-owner membership rows with no
+  stored scope: the workspace and Edge project/invitation routes resolve the
+  graph creator party as the owner's editable/inviting organization.
+- Passed project ID from the project-list invite dialog so scoped invitations do
+  not fall back to ambiguous project-name lookup.
+- Tightened the project Edge validator to reject forged graph-blob mutations to
+  other organizations' new nodes or connections, while allowing changes owned by
+  the caller's scoped party.
+- Verification: `git diff --check` passes. Per active `AGENTS.md`, build was
+  not run in this Codex sandbox.
+- Residual: apply migration `028_scoped_supply_chain_administration.sql` and
+  deploy `make-server-f8b491be`; Claude review should reconcile remaining
+  client graph-write paths such as the rate editor before production use.

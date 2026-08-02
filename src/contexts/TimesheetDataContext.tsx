@@ -117,7 +117,9 @@ export interface TimesheetStoreAPI {
 // ============================================================================
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
-const DEFAULT_PROJECT_ID = 'project-main';
+// Never invent a project when no workspace has been selected. A synthetic ID
+// produces requests that look valid but are disconnected from the real route.
+const DEFAULT_PROJECT_ID = '';
 type NameDirEntry = { name?: string; type?: string; orgId?: string };
 
 interface ApprovalRoute {
@@ -1027,6 +1029,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     const loadFromApi = async () => {
       try {
         const projectId = activeProjectId();
+        if (!projectId) {
+          // The project picker has not resolved yet. Keep the existing state
+          // rather than fetching a synthetic or empty project route.
+          return;
+        }
         setIsLoading(true);
         console.log('[TimesheetStore] Loading timesheets from API for user:', user.id);
         const converted = await loadProjectWeeksFromApi(projectId);
@@ -1264,6 +1271,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     }
 
     const projectId = activeProjectId();
+    if (!projectId) {
+      const message = 'Select a project before submitting time.';
+      toast.error('Cannot submit timesheet', { description: message });
+      throw new Error(message);
+    }
     const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId));
     if (!isRemoteWorkflow) {
       if (status === 'submitted') {
@@ -1505,6 +1517,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   }, [bump, persistWeek, projectStartDate, weeks]);
 
   const submitMonthForPerson = useCallback((personId: string, month: string, projectId?: string): SubmissionEnvelope | null => {
+    const resolvedProjectId = projectId || activeProjectId();
+    if (!resolvedProjectId) {
+      toast.error('Cannot submit month', { description: 'Select a project before submitting time.' });
+      return null;
+    }
     const personWeeks = weeks
       .filter(w => w.personId === personId && monthOf(w.weekStart) === month)
       .map(normalizeStoredWeek);
@@ -1540,7 +1557,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       id: `submission_${personId}_${month}_${Date.now()}`,
       type: 'monthly',
       personId,
-      projectId: projectId || sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID,
+      projectId: resolvedProjectId,
       period: { start: periodStart, end: periodEnd },
       weekIds: submitCandidates.map(w => w.weekStart),
       status: 'submitted',

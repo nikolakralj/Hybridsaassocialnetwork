@@ -137,6 +137,171 @@ async function getCallerRole(projectOwnerId: string, projectId: string, userId: 
   return (data?.role as ProjectRole) ?? null;
 }
 
+async function getCallerScope(projectId: string, userId: string): Promise<string | null> {
+  const { data } = await db()
+    .from("wg_project_members")
+    .select("scope")
+    .eq("project_id", projectId)
+    .eq("user_id", userId)
+    .not("accepted_at", "is", null)
+    .maybeSingle();
+  return typeof data?.scope === "string" && data.scope ? data.scope : null;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sameStringList(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown) => Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string").sort()
+    : [];
+  return stableJson(normalize(left)) === stableJson(normalize(right));
+}
+
+function idSet(values: unknown[]): Set<string> {
+  return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
+}
+
+function projectParties(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object" && Array.isArray((value as any).parties)) return (value as any).parties;
+  return [];
+}
+
+function resolveCreatorPartyId(project: any): string | null {
+  const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
+  const creatorNode = graphNodes.find((node: any) => node?.type === "party" && node?.data?.isCreator === true);
+  if (typeof creatorNode?.id === "string" && creatorNode.id) return creatorNode.id;
+  const creatorParty = projectParties(project?.parties).find((party: any) => party?.isCreator === true);
+  if (typeof creatorParty?.id === "string" && creatorParty.id) return creatorParty.id;
+  return null;
+}
+
+function nodeOwnerId(node: any): string | null {
+  return (
+    (typeof node?.data?.partyId === "string" && node.data.partyId) ||
+    (typeof node?.data?.orgId === "string" && node.data.orgId) ||
+    null
+  );
+}
+
+function ownedNodeIds(nodes: any[], callerScope: string): Set<string> {
+  const owned = new Set<string>([callerScope]);
+  for (const node of nodes) {
+    if (node?.id && (node?.id === callerScope || nodeOwnerId(node) === callerScope)) {
+      owned.add(node.id);
+    }
+  }
+  return owned;
+}
+
+function edgeSignature(edge: any): string {
+  return stableJson({
+    id: edge?.id,
+    type: edge?.type,
+    source: edge?.source,
+    target: edge?.target,
+    data: edge?.data || {},
+  });
+}
+
+function isPartyConnectionEdge(edge: any, partyIds: Set<string>): boolean {
+  return (
+    partyIds.has(edge?.source) &&
+    partyIds.has(edge?.target) &&
+    ["billsTo", "bills_to", "subcontracts"].includes(edge?.data?.edgeType || edge?.type)
+  );
+}
+
+function edgeCanChange(edge: any, callerScope: string, ownedIds: Set<string>, partyIds: Set<string>): boolean {
+  if (isPartyConnectionEdge(edge, partyIds)) return edge?.source === callerScope;
+  return ownedIds.has(edge?.source) || ownedIds.has(edge?.target);
+}
+
+function assertScopedEdgeUpdates(existingProject: any, body: any, callerScope: string) {
+  const currentNodes = Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [];
+  const nextNodes = Array.isArray(body.graph?.nodes) ? body.graph.nodes : [];
+  const currentEdges = Array.isArray(existingProject.graph?.edges) ? existingProject.graph.edges : [];
+  const nextEdges = Array.isArray(body.graph?.edges) ? body.graph.edges : [];
+  const partyIds = idSet([...projectParties(existingProject.parties).map((party: any) => party?.id)]);
+  const ownedIds = new Set([...ownedNodeIds(currentNodes, callerScope), ...ownedNodeIds(nextNodes, callerScope)]);
+  const currentBySignature = new Map(currentEdges.map((edge: any) => [edgeSignature(edge), edge]));
+  const nextBySignature = new Map(nextEdges.map((edge: any) => [edgeSignature(edge), edge]));
+
+  for (const [signature, edge] of currentBySignature) {
+    if (!nextBySignature.has(signature) && !edgeCanChange(edge, callerScope, ownedIds, partyIds)) {
+      throw new Error("You cannot change another organization's graph connections");
+    }
+  }
+
+  for (const [signature, edge] of nextBySignature) {
+    if (!currentBySignature.has(signature) && !edgeCanChange(edge, callerScope, ownedIds, partyIds)) {
+      throw new Error("You cannot change another organization's graph connections");
+    }
+  }
+}
+
+function assertScopedSupplyChainUpdate(existingProject: any, body: any, callerScope: string | null) {
+  if (body.graph === undefined && body.parties === undefined) return;
+  if (!callerScope) throw new Error("Map your active membership to an organization before editing the supply chain");
+  if (!body.graph || !Array.isArray(body.graph.nodes) || !Array.isArray(body.graph.edges) || !Array.isArray(body.parties)) {
+    throw new Error("Supply-chain updates require a complete graph and party snapshot");
+  }
+
+  const currentById = new Map(projectParties(existingProject.parties).map((party: any) => [party?.id, party]));
+  const nextById = new Map(body.parties.map((party: any) => [party?.id, party]));
+  if (!currentById.has(callerScope)) throw new Error("Your organization is not part of this project supply chain");
+  if (currentById.size !== nextById.size || [...currentById.keys()].some((id) => !nextById.has(id))) {
+    throw new Error("Organizations are archived through a governed project workflow, not removed from another party's editor");
+  }
+  if ([...nextById.keys()].some((id) => !currentById.has(id))) {
+    throw new Error("Adding an organization requires a governed project-structure workflow");
+  }
+
+  for (const [partyId, currentParty] of currentById) {
+    const nextParty = nextById.get(partyId);
+    if (partyId === callerScope) {
+      if (nextParty?.partyType !== currentParty?.partyType) {
+        throw new Error("An organization type cannot be changed after the project is active");
+      }
+      continue;
+    }
+    if (
+      nextParty?.name !== currentParty?.name ||
+      nextParty?.partyType !== currentParty?.partyType ||
+      !sameStringList(nextParty?.billsTo, currentParty?.billsTo)
+    ) {
+      throw new Error("You can only change your own organization and its billing connection");
+    }
+  }
+
+  const nextNodeById = new Map(body.graph.nodes.map((node: any) => [node?.id, node]));
+  const currentNodeIds = new Set((Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : []).map((node: any) => node?.id));
+  for (const node of (Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [])) {
+    if (node?.type === "party" || node?.data?.partyId === callerScope || node?.data?.orgId === callerScope) continue;
+    const nextNode = nextNodeById.get(node?.id);
+    if (!nextNode || stableJson(nextNode.data || {}) !== stableJson(node.data || {})) {
+      throw new Error("You cannot edit people or records owned by another organization");
+    }
+  }
+
+  for (const node of body.graph.nodes) {
+    if (currentNodeIds.has(node?.id)) continue;
+    if (node?.type === "party") throw new Error("Adding an organization requires a governed project-structure workflow");
+    if (nodeOwnerId(node) !== callerScope) {
+      throw new Error("You can only add people or records owned by your organization");
+    }
+  }
+
+  assertScopedEdgeUpdates(existingProject, body, callerScope);
+}
+
 // ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/projects
 // ---------------------------------------------------------------------------
@@ -224,6 +389,7 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
     if (insertError) throw insertError;
     createdProjectId = projectId;
 
+    const creatorPartyId = resolveCreatorPartyId(projectRow);
     const membersToInsert: any[] = [{
       id: generateId("mem"),
       project_id: projectId,
@@ -231,7 +397,7 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
       user_name: user.name,
       user_email: user.email,
       role: "Owner",
-      scope: null,
+      scope: creatorPartyId,
       graph_node_id: user.id,
       invitation_id: null,
       can_approve: false,
@@ -343,7 +509,7 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     const projectId = c.req.param("projectId");
     const { data: projectRow, error: pe } = await db()
       .from("wg_projects")
-      .select("owner_id")
+      .select("owner_id, graph, parties")
       .eq("id", projectId)
       .single();
 
@@ -353,6 +519,9 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     if (role !== "Owner" && role !== "Editor") return c.json({ error: "Forbidden" }, 403);
 
     const body = await c.req.json();
+    const callerScope = await getCallerScope(projectId, user.id);
+    const scopedPartyId = callerScope || (projectRow.owner_id === user.id ? resolveCreatorPartyId(projectRow) : null);
+    assertScopedSupplyChainUpdate(projectRow, body, scopedPartyId);
     const updateData: any = {};
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;

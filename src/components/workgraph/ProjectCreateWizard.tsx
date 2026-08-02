@@ -63,6 +63,7 @@ export interface ProjectCreateWizardProps {
   editMode?: boolean;
   initialParties?: PartyEntry[];
   initialProjectName?: string;
+  editablePartyIds?: string[];
 }
 
 type Step = 'basic' | 'supply-chain' | 'people' | 'review';
@@ -130,6 +131,7 @@ export function ProjectCreateWizard({
   editMode = false,
   initialParties,
   initialProjectName,
+  editablePartyIds = [],
 }: ProjectCreateWizardProps) {
   const safeInitialParties = useMemo(() => initialParties ?? EMPTY_PARTIES, [initialParties]);
   const safeInitialProjectName = initialProjectName ?? '';
@@ -148,6 +150,10 @@ export function ProjectCreateWizard({
   const [parties, setParties] = useState<PartyEntry[]>([]);
   const [showCompanySearch, setShowCompanySearch] = useState(false);
   const [searchTargetPartyId, setSearchTargetPartyId] = useState<string | null>(null);
+  const canEditParty = useCallback(
+    (partyId: string) => !editMode || editablePartyIds.includes(partyId),
+    [editMode, editablePartyIds],
+  );
 
   const currentStepIndex = steps.indexOf(step);
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
@@ -435,12 +441,14 @@ export function ProjectCreateWizard({
                   parties={parties} addParty={addParty} updateParty={updateParty}
                   removeParty={removeParty} toggleConnection={toggleConnection}
                   onSearchExisting={(id) => { setSearchTargetPartyId(id); setShowCompanySearch(true); }}
+                  canEditParty={canEditParty}
+                  canAddParties={!editMode}
                 />
               )}
               {step === 'people' && (
                 <PeopleStep parties={parties} addPerson={addPersonToParty}
                   removePerson={removePersonFromParty} updatePerson={updatePersonInParty}
-                  updateParty={updateParty} />
+                  updateParty={updateParty} canEditParty={canEditParty} />
               )}
               {step === 'review' && (
                 <ReviewStep name={name} 
@@ -563,13 +571,15 @@ function BasicInfoStep({ name, setName,
 // Step 2: Supply Chain — Connection-based
 // ============================================================================
 
-function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleConnection, onSearchExisting }: {
+function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleConnection, onSearchExisting, canEditParty, canAddParties }: {
   parties: PartyEntry[];
   addParty: (type: PartyType, orgData?: any) => string;
   updateParty: (id: string, updates: Partial<PartyEntry>) => void;
   removeParty: (id: string) => void;
   toggleConnection: (sourceId: string, targetId: string) => void;
   onSearchExisting: (partyId: string) => void;
+  canEditParty: (partyId: string) => boolean;
+  canAddParties: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -595,13 +605,17 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
               onRemove={() => removeParty(party.id)}
               onToggleConnection={(targetId) => toggleConnection(party.id, targetId)}
               onSearchExisting={() => onSearchExisting(party.id)}
+              editable={canEditParty(party.id)}
+              canRemove={canAddParties && canEditParty(party.id)}
+              canChangeType={canAddParties}
+              isCurrentOrganization={!canAddParties && canEditParty(party.id)}
             />
           ))}
         </div>
       )}
 
       {/* Add party */}
-      <div className="space-y-3">
+      {canAddParties && <div className="space-y-3">
         <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-[0.12em]">Invite other parties</Label>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
           {PARTY_TYPE_OPTIONS.map(opt => {
@@ -621,7 +635,12 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
             );
           })}
         </div>
-      </div>
+      </div>}
+      {!canAddParties && (
+        <p className="text-xs text-muted-foreground">
+          Adding or removing organizations is a governed project-structure change.
+        </p>
+      )}
     </div>
   );
 }
@@ -630,13 +649,17 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
 // Compact Party Card
 // ============================================================================
 
-function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConnection, onSearchExisting }: {
+function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConnection, onSearchExisting, editable, canRemove, canChangeType, isCurrentOrganization }: {
   party: PartyEntry;
   allParties: PartyEntry[];
   onUpdate: (u: Partial<PartyEntry>) => void;
   onRemove: () => void;
   onToggleConnection: (targetId: string) => void;
   onSearchExisting: () => void;
+  editable: boolean;
+  canRemove: boolean;
+  canChangeType: boolean;
+  isCurrentOrganization: boolean;
 }) {
   const opt = getPartyOption(party.partyType);
   const otherParties = allParties.filter(p => p.id !== party.id);
@@ -652,9 +675,9 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
             return <Icon className="w-3.5 h-3.5" style={{ color: opt.color }} />;
           })()}
         </div>
-        <Input value={party.name} onChange={(e: any) => onUpdate({ name: e.target.value })}
+        <Input value={party.name} onChange={(e: any) => onUpdate({ name: e.target.value })} disabled={!editable}
           placeholder={`${opt.label} name...`} className="h-8 text-sm font-semibold flex-1 border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none placeholder:font-normal" />
-        <Select value={party.partyType} onValueChange={(v: string) => onUpdate({ partyType: v as PartyType })}>
+        <Select value={party.partyType} onValueChange={(v: string) => onUpdate({ partyType: v as PartyType })} disabled={!editable || !canChangeType}>
           <SelectTrigger className="h-8 w-[120px] text-xs font-medium border-0 bg-muted/40 hover:bg-muted/60 transition-colors rounded-lg">
             <SelectValue />
           </SelectTrigger>
@@ -672,10 +695,10 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
             ))}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" onClick={onSearchExisting} className="h-7 w-7 p-0">
+        <Button variant="ghost" size="sm" onClick={onSearchExisting} disabled={!editable} className="h-7 w-7 p-0">
           <Building2 className="w-3.5 h-3.5" />
         </Button>
-        <Button variant="ghost" size="sm" onClick={onRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive">
+        <Button variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive">
           <X className="w-3.5 h-3.5" />
         </Button>
       </div>
@@ -689,7 +712,7 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
               const tOpt = getPartyOption(target.partyType);
               const connected = party.billsTo.includes(target.id);
               return (
-                <button key={target.id} onClick={() => onToggleConnection(target.id)}
+                <button key={target.id} onClick={() => onToggleConnection(target.id)} disabled={!editable}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border-2 transition-all duration-200 ${
                     connected
                       ? 'bg-gradient-to-r from-emerald-50 to-emerald-100 dark:from-emerald-900/60 dark:to-emerald-800/40 border-emerald-300 dark:border-emerald-600 text-emerald-800 dark:text-emerald-100 shadow-sm'
@@ -712,7 +735,8 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
       <div className="px-3 py-1.5 flex items-center gap-2 text-[10px] text-muted-foreground border-t border-border/50">
         <Users className="w-3 h-3" />
         <span>{party.people.length} people</span>
-        {party.isCreator && <Badge className="text-[9px] h-4 ml-auto bg-blue-100 text-blue-700 border-blue-200">You</Badge>}
+        {isCurrentOrganization && <Badge className="text-[9px] h-4 ml-auto bg-blue-100 text-blue-700 border-blue-200">Your organization</Badge>}
+        {!isCurrentOrganization && party.isCreator && <Badge className="text-[9px] h-4 ml-auto bg-slate-100 text-slate-700 border-slate-200">Project creator</Badge>}
       </div>
     </div>
   );
@@ -842,12 +866,13 @@ function MiniGraphPreview({ parties }: { parties: PartyEntry[] }) {
 // Step 3: People
 // ============================================================================
 
-function PeopleStep({ parties, addPerson, removePerson, updatePerson, updateParty }: {
+function PeopleStep({ parties, addPerson, removePerson, updatePerson, updateParty, canEditParty }: {
   parties: PartyEntry[];
   addPerson: (partyId: string, person: PersonEntry) => void;
   removePerson: (partyId: string, personId: string) => void;
   updatePerson: (partyId: string, personId: string, updates: Partial<PersonEntry>) => void;
   updateParty: (id: string, updates: Partial<PartyEntry>) => void;
+  canEditParty: (partyId: string) => boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -864,7 +889,8 @@ function PeopleStep({ parties, addPerson, removePerson, updatePerson, updatePart
 
       {parties.map(party => (
         <PartyPeopleSection key={party.id} party={party}
-          addPerson={addPerson} removePerson={removePerson} updatePerson={updatePerson} updateParty={updateParty} />
+          addPerson={addPerson} removePerson={removePerson} updatePerson={updatePerson} updateParty={updateParty}
+          editable={canEditParty(party.id)} />
       ))}
 
       {parties.length === 0 && (
@@ -877,12 +903,13 @@ function PeopleStep({ parties, addPerson, removePerson, updatePerson, updatePart
   );
 }
 
-function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, updateParty }: {
+function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, updateParty, editable }: {
   party: PartyEntry;
   addPerson: (partyId: string, person: PersonEntry) => void;
   removePerson: (partyId: string, personId: string) => void;
   updatePerson: (partyId: string, personId: string, updates: Partial<PersonEntry>) => void;
   updateParty: (id: string, updates: Partial<PartyEntry>) => void;
+  editable: boolean;
 }) {
   const [pName, setPName] = useState('');
   const [pEmail, setPEmail] = useState('');
@@ -915,7 +942,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
                 <div>
                   <Select value={party.chainVisibility || 'all'} onValueChange={(v: string) => {
                     updateParty(party.id, { chainVisibility: v as 'all' | 'selected' | 'none' });
-                  }}>
+                  }} disabled={!editable}>
                     <SelectTrigger className="h-5 w-[90px] text-[9px] border-0 bg-muted/50 gap-1 px-1.5">
                       <SelectValue />
                     </SelectTrigger>
@@ -952,7 +979,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             </div>
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
-                <button onClick={() => updatePerson(party.id, person.id, { canApprove: !person.canApprove })}
+                <button onClick={() => updatePerson(party.id, person.id, { canApprove: !person.canApprove })} disabled={!editable}
                   className={`p-1 rounded transition-colors ${person.canApprove
                     ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -962,7 +989,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             </TooltipProvider>
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
-                <button onClick={() => updatePerson(party.id, person.id, { canViewRates: !person.canViewRates })}
+                <button onClick={() => updatePerson(party.id, person.id, { canViewRates: !person.canViewRates })} disabled={!editable}
                   className={`p-1 rounded transition-colors ${person.canViewRates
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -972,7 +999,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             </TooltipProvider>
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
-                <button onClick={() => updatePerson(party.id, person.id, { visibleToChain: !(person.visibleToChain ?? true) })}
+                <button onClick={() => updatePerson(party.id, person.id, { visibleToChain: !(person.visibleToChain ?? true) })} disabled={!editable}
                   className={`p-1 rounded transition-colors ${(person.visibleToChain ?? true)
                     ? 'text-muted-foreground/30 hover:text-muted-foreground'
                     : 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300'}`}>
@@ -980,7 +1007,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
                 </button>
               </TooltipTrigger><TooltipContent><p className="text-xs">{(person.visibleToChain ?? true) ? 'Visible to chain — click to hide' : 'Hidden from chain ✓'}</p></TooltipContent></Tooltip>
             </TooltipProvider>
-            <Button variant="ghost" size="sm" onClick={() => removePerson(party.id, person.id)}
+            <Button variant="ghost" size="sm" onClick={() => removePerson(party.id, person.id)} disabled={!editable}
               className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-destructive hover:text-destructive">
               <X className="w-3 h-3" />
             </Button>
@@ -989,12 +1016,12 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
 
         {/* Quick add */}
         <div className="flex gap-1.5 items-end pt-1">
-          <Input value={pName} onChange={(e: any) => setPName(e.target.value)} placeholder="Name" className="h-7 text-[11px] flex-1" />
-          <Input value={pEmail} onChange={(e: any) => setPEmail(e.target.value)} placeholder="email@..." className="h-7 text-[11px] flex-1"
+          <Input value={pName} onChange={(e: any) => setPName(e.target.value)} placeholder="Name" disabled={!editable} className="h-7 text-[11px] flex-1" />
+          <Input value={pEmail} onChange={(e: any) => setPEmail(e.target.value)} placeholder="email@..." disabled={!editable} className="h-7 text-[11px] flex-1"
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
-          <Input value={pRole} onChange={(e: any) => setPRole(e.target.value)} placeholder="Role" className="h-7 text-[11px] w-20"
+          <Input value={pRole} onChange={(e: any) => setPRole(e.target.value)} placeholder="Role" disabled={!editable} className="h-7 text-[11px] w-20"
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
-          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!pName.trim() || !pEmail.includes('@')}>
+          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!editable || !pName.trim() || !pEmail.includes('@')}>
             <Plus className="w-3 h-3" />
           </Button>
         </div>

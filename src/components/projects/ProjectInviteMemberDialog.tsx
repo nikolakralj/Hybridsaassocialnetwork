@@ -32,6 +32,7 @@ const WORKER_ELIGIBLE_ROLES: ProjectRole[] = ['Contributor'];
 
 interface ProjectInviteMemberDialogProps {
   open: boolean;
+  projectId?: string;
   projectName?: string;
   currentUserRole?: ProjectRole | null;
   onOpenChange: (open: boolean) => void;
@@ -40,6 +41,7 @@ interface ProjectInviteMemberDialogProps {
 
 export function ProjectInviteMemberDialog({
   open,
+  projectId,
   projectName,
   currentUserRole,
   onOpenChange,
@@ -75,8 +77,8 @@ export function ProjectInviteMemberDialog({
 
     const trimmedProjectName = projectName?.trim();
     const normalizedEmail = userEmail.trim().toLowerCase();
-    if (!trimmedProjectName) {
-      const message = 'Project name is required to send invitations.';
+    if (!projectId || !trimmedProjectName) {
+      const message = 'Project identity is required to send invitations.';
       setError(message);
       toast.error(message);
       return;
@@ -111,6 +113,7 @@ export function ProjectInviteMemberDialog({
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
+          projectId,
           projectName: trimmedProjectName,
           userName: userName.trim() || undefined,
           userEmail: normalizedEmail,
@@ -186,6 +189,12 @@ export function ProjectInviteMemberDialog({
                 employee or contractor who logs hours, choose <span className="font-medium text-foreground">Contributor</span>.
               </p>
             )
+          ) : null}
+
+          {canSendInvite ? (
+            <p className="text-xs text-muted-foreground">
+              New members join the organization represented by your active project membership. This cannot be selected or changed from the browser.
+            </p>
           ) : null}
 
           <div className="space-y-2">

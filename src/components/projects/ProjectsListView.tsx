@@ -512,6 +512,7 @@ export function ProjectsListView() {
 
       <ProjectInviteMemberDialog
         open={!!inviteProject}
+        projectId={inviteProject?.id}
         projectName={inviteProject?.name}
         currentUserRole={getCurrentRoleForProject(inviteProject)}
         onOpenChange={(open) => {

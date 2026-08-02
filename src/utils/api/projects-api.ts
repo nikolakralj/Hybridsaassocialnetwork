@@ -816,8 +816,10 @@ export async function updateProject(
     throw new Error('Project not found');
   }
 
-  // Primary path: direct Supabase (edge function not deployed)
-  if (accessToken) {
+  // Supply-chain JSON needs party-level authorization in the Edge Function.
+  // Direct RLS can only guard the whole row, not an individual organization.
+  const isScopedGraphUpdate = updates.graph !== undefined || updates.parties !== undefined;
+  if (accessToken && !isScopedGraphUpdate) {
     try {
       return await supabaseUpdateProject(projectId, updates);
     } catch (dbError: any) {

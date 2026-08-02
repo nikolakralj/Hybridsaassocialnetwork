@@ -164,6 +164,44 @@ async function getCallerRole(
   return sanitizeRole(data.role);
 }
 
+async function getCallerScope(projectId: string, userId: string): Promise<string | null> {
+  const { data, error } = await db()
+    .from("wg_project_members")
+    .select("scope")
+    .eq("project_id", projectId)
+    .eq("user_id", userId)
+    .not("accepted_at", "is", null)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.scope === "string" && data.scope.trim() ? data.scope : null;
+}
+
+function projectHasParty(project: any, partyId: string): boolean {
+  const parties = Array.isArray(project?.parties)
+    ? project.parties
+    : Array.isArray(project?.parties?.parties)
+      ? project.parties.parties
+      : [];
+  if (parties.some((party: any) => party?.id === partyId)) return true;
+  const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
+  return graphNodes.some((node: any) => node?.type === "party" && node?.id === partyId);
+}
+
+function resolveCreatorPartyId(project: any): string | null {
+  const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
+  const creatorNode = graphNodes.find((node: any) => node?.type === "party" && node?.data?.isCreator === true);
+  if (typeof creatorNode?.id === "string" && creatorNode.id) return creatorNode.id;
+  const parties = Array.isArray(project?.parties)
+    ? project.parties
+    : Array.isArray(project?.parties?.parties)
+      ? project.parties.parties
+      : [];
+  const creatorParty = parties.find((party: any) => party?.isCreator === true);
+  if (typeof creatorParty?.id === "string" && creatorParty.id) return creatorParty.id;
+  return null;
+}
+
 async function resolveProjectForInvite(user: AuthUser, body: InvitationBody) {
   const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
   if (projectId) {
@@ -268,6 +306,16 @@ invitationsRouter.post("/", async (c) => {
       return c.json({ error: "Your project role cannot invite members with that role" }, 403);
     }
 
+    // An invitation is also an organization assignment. The browser cannot
+    // choose it: an inviter may add people only to the party they represent.
+    const memberScope = await getCallerScope(project.id, user.id);
+    const inviterScope = memberScope || (project.owner_id === user.id ? resolveCreatorPartyId(project) : null);
+    if (!inviterScope || !projectHasParty(project, inviterScope)) {
+      return c.json({
+        error: "Map your active membership to a project organization before inviting people.",
+      }, 409);
+    }
+
     const now = new Date().toISOString();
     const token = crypto.randomUUID();
     const invitationData = {
@@ -276,7 +324,7 @@ invitationsRouter.post("/", async (c) => {
       project_name: project.name,
       email,
       role,
-      scope: body.scope || null,
+      scope: inviterScope,
       invited_by: user.id,
       invited_by_name: user.name,
       invited_at: now,

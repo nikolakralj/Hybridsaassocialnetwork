@@ -307,6 +307,7 @@ export function ProjectWorkspace({
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [workerSetupMember, setWorkerSetupMember] = useState<ProjectMember | null>(null);
   const [ownerOrganizationName, setOwnerOrganizationName] = useState("");
+  const [ownerPartyId, setOwnerPartyId] = useState<string | null>(null);
   const [projectGraphViewers, setProjectGraphViewers] = useState<ViewerIdentity[]>([]);
   const [activeGraphViewer, setActiveGraphViewer] = useState<ViewerIdentity | null>(null);
   const [workspaceViewer, setWorkspaceViewer] = useState<ViewerIdentity | null>(null);
@@ -330,7 +331,14 @@ export function ProjectWorkspace({
   }, [currentMembership?.role, projectOwnerId, user?.id]);
   const canManageProject = currentProjectRole === "Owner" || currentProjectRole === "Editor";
   const canInviteMembers = getInvitableRolesForRole(currentProjectRole).length > 0;
-  const canEditGraph = canManageProject;
+  // A project role opens the workspace; an accepted organization scope limits
+  // which party the member may administer inside the shared supply chain.
+  const editablePartyIds = currentMembership?.scope
+    ? [currentMembership.scope]
+    : currentProjectRole === "Owner" && ownerPartyId
+      ? [ownerPartyId]
+      : [];
+  const canEditGraph = canManageProject && editablePartyIds.length > 0;
   const teamButtonLabel = teamMembers.length > 0 ? `Team (${teamMembers.length})` : "Team";
   const allowedViewerIds = useMemo(
     () => getAllowedViewerIds(currentMembership, currentProjectRole, user?.id),
@@ -425,11 +433,13 @@ export function ProjectWorkspace({
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
           const creatorParty = graphNodes.find((node: any) => node?.type === 'party' && node?.data?.isCreator);
           setOwnerOrganizationName(creatorParty?.data?.name || "");
+          setOwnerPartyId(creatorParty?.id || null);
           setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
         }
       } catch {
         if (!cancelled) {
           setProjectOwnerId(null);
+          setOwnerPartyId(null);
           setProjectGraphViewers([]);
         }
       }
@@ -835,6 +845,7 @@ export function ProjectWorkspace({
                   mode={mode}
                   asOf={asOf}
                   canEditGraph={canEditGraph}
+                  editablePartyIds={editablePartyIds}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
                     setWorkspaceViewer(viewer);
@@ -945,6 +956,7 @@ export function ProjectWorkspace({
       {canManageProject ? (
         <ProjectInviteMemberDialog
           open={isInviteOpen}
+          projectId={projectId}
           projectName={projectName}
           currentUserRole={currentProjectRole}
           onOpenChange={setIsInviteOpen}
