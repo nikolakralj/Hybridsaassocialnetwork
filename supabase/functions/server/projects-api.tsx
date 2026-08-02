@@ -317,6 +317,20 @@ function assertScopedSupplyChainUpdate(existingProject: any, body: any, callerSc
   assertScopedEdgeUpdates(existingProject, body, callerScope);
 }
 
+function scopedUpdateErrorStatus(message: string): number {
+  if (message.includes("require a complete graph and party snapshot")) return 400;
+  if (message.includes("governed project")) return 409;
+  if (message.includes("Map your active membership") || message.includes("not part of this project supply chain")) return 409;
+  if (
+    message.startsWith("You cannot") ||
+    message.includes("can only") ||
+    message.includes("cannot be changed")
+  ) {
+    return 403;
+  }
+  return 500;
+}
+
 // ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/projects
 // ---------------------------------------------------------------------------
@@ -560,7 +574,8 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     if (ue) throw ue;
     return c.json({ project: rowToProject(updated) });
   } catch (err: any) {
-    return c.json({ error: `Failed to update project: ${err.message}` }, 500);
+    const message = err?.message || String(err);
+    return c.json({ error: `Failed to update project: ${message}` }, scopedUpdateErrorStatus(message));
   }
 });
 

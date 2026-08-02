@@ -985,3 +985,15 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
   unchanged. Only derived `chainPosition` is ignored.
 - Verification: `git diff --check` passes before commit; redeploy required after
   this patch.
+
+## 2026-08-02 - [DONE] C3a live deploy + adversarial check (Codex)
+
+- Redeployed `make-server-f8b491be` after the party-node hardening patch.
+- Disposable two-account Edge check created a two-party project, confirmed an
+  Editor scoped to `c3a-editor-org` could not mutate the owner's party node,
+  confirmed the same Editor could rename its own party, then deleted the
+  disposable project.
+- Follow-up cleanup: authorization/structure validation failures now return
+  400/403/409 instead of a generic 500 from the project update route.
+- Residual: migration `028_scoped_supply_chain_administration.sql` still needs
+  to be applied before direct authenticated `wg_projects` UPDATE is removed.
