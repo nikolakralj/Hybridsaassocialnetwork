@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-07-16 - [REVIEW] Claude review + reconcile of Codex C3a (commit 0ec94b3)
+
+Codex built C3a (scoped supply-chain administration) in parallel and handed off
+for review. **Verdict: APPROVED, sound** — it's the graph-authority fix I flagged.
+
+Findings:
+- **028 verified live-safe.** `wg_projects` RLS: UPDATE has NO authenticated
+  policy (direct client updates blocked); SELECT keeps BOTH `wg_projects_member`
+  (via wg_user_is_project_member) AND owner — so non-owner members (Rodman) can
+  still READ the project. My initial "SELECT owner-only" worry was unfounded.
+- **My 027 RPC survives** (SECURITY DEFINER bypasses RLS). Add-approver works.
+- **Server PUT is the real C3a win**: rejects changing another org's nodes/edges
+  ("You cannot change another organization's graph connections") — this is the
+  "James can't delete Triangle Services" protection. Requires a COMPLETE
+  graph+parties snapshot for supply-chain updates.
+- **🔧 Reconciled (this pass):** my rate editor `handleUpdateNodeData` sent
+  `{graph}` WITHOUT `parties` → would throw under Codex's new PUT validation
+  once deployed. Fixed to send the full graph+parties snapshot via
+  `buildEditableParties`. Works today (server undeployed) and after deploy.
+- **⚠️ Deployment coordination:** 028 (applied) + Codex's server projects-api.tsx
+  (committed, NOT deployed) are a set. My client fix must be in the bundle before
+  the edge function is deployed, else the rate editor breaks. Nothing broken now.
+- **📝 Architectural tension to resolve later:** 027 RPC lets the OWNER add
+  approvers to a counterparty (G2) for bootstrap; Codex's Edge Function forbids
+  the owner changing another org's nodes. Both validate auth (not a hole) but the
+  authority models differ. Decide: can the owner bootstrap counterparty people,
+  or only that org's verified admin? RPC already supports both.
+
 ## Current State (2026-07-08)
 
 - **All migrations 001ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ016 applied** (016 applied + verified 2026-07-08; 010 verified already applied ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â wg_invoices/wg_invoice_templates + RLS live).

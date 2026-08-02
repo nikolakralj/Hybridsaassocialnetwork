@@ -1912,7 +1912,18 @@ export function WorkGraphBuilder({
       n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n
     );
     setAllNodes(nextNodes);
-    await updateProject(projectId, { graph: { nodes: nextNodes, edges: allEdges } }, accessToken);
+    // C3a reconcile: the scoped-graph Edge Function (migration 028) requires a
+    // COMPLETE graph + parties snapshot for any supply-chain update, and rejects
+    // a partial {graph}-only payload. Send the full snapshot so node-data edits
+    // (e.g. rates) survive once the server-side scope validation is deployed.
+    const parties = buildEditableParties(nextNodes, allEdges).map((party) => ({
+      id: party.id,
+      name: party.name,
+      partyType: party.partyType,
+      billsTo: [...party.billsTo],
+      peopleCount: party.people.length,
+    }));
+    await updateProject(projectId, { graph: { nodes: nextNodes, edges: allEdges }, parties }, accessToken);
     toast.success('Saved to project');
   }, [allNodes, allEdges, projectId, accessToken]);
 
