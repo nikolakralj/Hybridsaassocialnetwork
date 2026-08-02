@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-07-16 - [REVIEW] Post-deploy confirmation of Codex C3a (Claude)
+
+- **Edge function deployed live** by Codex (make-server-f8b491be v100 ACTIVE) →
+  the scoped-graph validation is NOW ENFORCED in production.
+- **028 is LIVE, verified** via pg_policy: wg_projects has owner+member SELECT,
+  owner INSERT/DELETE, and NO UPDATE policy. Codex's note "028 still needs to be
+  applied" is OUTDATED — the policy state matches 028 exactly. Re-applying is a
+  harmless no-op (idempotent DROP/CREATE). No action needed.
+- **Reviewed Codex's 2 post-deploy hardening commits — APPROVED:**
+  - 5be5c4e: `protectedNodeData` strips `chainPosition` before node comparison
+    so auto-layout moves don't false-trip the "another org's node" guard, while
+    ownership fields stay protected. Verified it does NOT block own-org
+    person-node rate edits (my A4 path).
+  - 1ea711c: scoped update errors → correct HTTP status (400/403/409/500).
+- Codex's adversarial 2-account check passed: scoped Editor mutating owner party
+  node → 403; renaming own party → 200.
+- **⚠️ USER ACTION: reload the app.** Now that the edge function enforces the
+  complete-snapshot rule, an old client bundle that sends partial {graph}
+  payloads would break. My fix (e825aec) sends the full snapshot; reload to load
+  it.
+
 ## 2026-07-16 - [REVIEW] Claude review + reconcile of Codex C3a (commit 0ec94b3)
 
 Codex built C3a (scoped supply-chain administration) in parallel and handed off
