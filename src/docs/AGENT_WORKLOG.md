@@ -974,3 +974,14 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - Residual: apply migration `028_scoped_supply_chain_administration.sql` and
   deploy `make-server-f8b491be`; Claude review should reconcile remaining
   client graph-write paths such as the rate editor before production use.
+
+## 2026-08-02 - [DONE] C3a edge deploy hardening (Codex)
+
+- Deployed `make-server-f8b491be` after C3a, then caught one validator gap while
+  preparing the adversarial check: non-owned party nodes inside `graph.nodes`
+  were not compared directly.
+- Patched the Edge validator so another organization's party node data cannot
+  be renamed/spoofed through the graph JSON while leaving the `parties` array
+  unchanged. Only derived `chainPosition` is ignored.
+- Verification: `git diff --check` passes before commit; redeploy required after
+  this patch.

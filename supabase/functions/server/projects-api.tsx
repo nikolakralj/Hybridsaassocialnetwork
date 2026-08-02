@@ -224,6 +224,14 @@ function edgeCanChange(edge: any, callerScope: string, ownedIds: Set<string>, pa
   return ownedIds.has(edge?.source) || ownedIds.has(edge?.target);
 }
 
+function protectedNodeData(node: any): Record<string, unknown> {
+  const data = node?.data && typeof node.data === "object" ? { ...node.data } : {};
+  // Layout recalculation can legitimately move the whole chain after a scoped
+  // party updates its own billing edge; ownership fields must remain stable.
+  delete data.chainPosition;
+  return data;
+}
+
 function assertScopedEdgeUpdates(existingProject: any, body: any, callerScope: string) {
   const currentNodes = Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [];
   const nextNodes = Array.isArray(body.graph?.nodes) ? body.graph.nodes : [];
@@ -284,8 +292,15 @@ function assertScopedSupplyChainUpdate(existingProject: any, body: any, callerSc
   const nextNodeById = new Map(body.graph.nodes.map((node: any) => [node?.id, node]));
   const currentNodeIds = new Set((Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : []).map((node: any) => node?.id));
   for (const node of (Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [])) {
-    if (node?.type === "party" || node?.data?.partyId === callerScope || node?.data?.orgId === callerScope) continue;
     const nextNode = nextNodeById.get(node?.id);
+    if (node?.type === "party") {
+      if (node?.id === callerScope) continue;
+      if (!nextNode || stableJson(protectedNodeData(nextNode)) !== stableJson(protectedNodeData(node))) {
+        throw new Error("You cannot edit another organization's party node");
+      }
+      continue;
+    }
+    if (node?.data?.partyId === callerScope || node?.data?.orgId === callerScope) continue;
     if (!nextNode || stableJson(nextNode.data || {}) !== stableJson(node.data || {})) {
       throw new Error("You cannot edit people or records owned by another organization");
     }
