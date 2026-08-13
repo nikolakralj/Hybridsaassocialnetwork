@@ -551,6 +551,55 @@ admin verifies it.
 
 ---
 
+### C3 · `counterparty-real-account-approver` · `[READY]`
+
+**Owner:** Codex (invitation/membership area) · **Claude reviews.**
+**Spec basis:** `IDENTITY_AUTHORITY_MODEL.md` (C3b), `GRAPH_CONFIDENTIALITY_SPEC.md`.
+**Goal:** retire the dev chain-walker crutch — a real G2 person (James) logs in and
+approves G2's layer himself, instead of the owner dev-approving it.
+
+**What already exists (build ON these, don't duplicate):**
+- `wg_assign_party_approver` RPC (027): owner OR verified party-org admin adds an
+  approver *node* to a party (canApprove=true). Node has email but no linked uid yet.
+- "Add approver" UI on party nodes (NodeDetailDrawer / WorkGraphBuilder).
+- Invitation accept flow (C1) + `wg_assign_project_member_as_worker` (022, the
+  owner→own-worker pattern to mirror).
+- Approval route already routes to a party's canApprove people; approval_records
+  UPDATE RLS = `wg_user_owns_project OR approver_user_id = auth.uid()`.
+
+**The missing link — design decided:**
+1. **Invite** as an approver: extend the invite so an invited person can be tagged
+   to a party (the "represents G2" selection). Store the target party on the
+   invitation/member row.
+2. **On accept**, run a new RPC `wg_link_member_as_party_approver(project_id,
+   member_id, party_graph_node_id)` — mirror of 022 but targeting the *party's*
+   org, authorized to the project owner OR that party org's verified admin:
+   - upsert the party's approver person node with `userId = member.user_id`,
+     `canApprove = true`, name/email from the member;
+   - set `wg_project_members.graph_node_id = node`, `scope = party`;
+   - upsert `wg_organization_members` for the party org (verified, `org_approver`);
+   - so approval records for that party carry `approver_user_id = member.user_id`.
+3. **Verification of representation:** the party org's existing verified admin
+   promotes/verifies the invitee (Facebook-page model). Bootstrap: project owner
+   may seed the first party admin for testing (matches 027's owner path).
+4. Once linked, the approval route resolves that layer's `approverUserRef` to the
+   real uid → James sees it in his Queue and approves via existing RLS. No dev-walker.
+
+**Acceptance criteria:**
+- [ ] Invite a person tagged to party G2; on accept they are linked as a G2 approver
+- [ ] G2's approver signs in, sees the pending item in their Queue, approves it
+- [ ] The layer completes with `approver_user_id` = the real account (not placeholder)
+- [ ] A non-authorized caller cannot link an approver to a party they don't administer
+- [ ] Owner can still bootstrap (seed) a party approver; adversarial 2-account check
+- [ ] Dev chain-walker no longer needed for that party; `npm run build` passes
+
+**⚠️ Coordination:** touches invitations-api, ProjectInviteMemberDialog, org
+membership (Codex's active area) + a new migration. Reconcile with C3a's scoped
+Edge Function (graph writes must send the complete snapshot). Claude available to
+review + reconcile as with C3a.
+
+---
+
 ## Phase 4 Queue — Invoice Generation
 
 **PROMOTED to Tier 2a above.** P4-1, P4-2, P4-3 now take priority over A2/A3 cosmetic polish.
