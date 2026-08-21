@@ -1,0 +1,5 @@
+-- Remote history marker.
+-- The live migration named scoped_graph_projection was applied through the
+-- Supabase management path on 2026-07-15. Its canonical source is migration
+-- 025_scoped_graph_projection.sql, whose RPC and columns were verified before
+-- this marker was added. This no-op file reconciles CLI history only.

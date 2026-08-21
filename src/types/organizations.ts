@@ -2,6 +2,7 @@ export type OrganizationRole =
   | 'org_admin'
   | 'org_finance'
   | 'org_manager'
+  | 'org_approver'
   | 'org_worker'
   | 'org_viewer';
 

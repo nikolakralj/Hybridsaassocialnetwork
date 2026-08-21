@@ -77,6 +77,30 @@ async function canReviewTimesheet(reviewerId: string, weekRow: any): Promise<boo
   return member.can_approve === true || member.role === "Owner" || member.role === "Editor";
 }
 
+async function canReadAllProjectTimesheets(userId: string, projectId: string): Promise<boolean> {
+  const client = db();
+  const { data: project, error: projectError } = await client
+    .from("wg_projects")
+    .select("owner_id")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (projectError) throw projectError;
+  if (!project) return false;
+  if (project.owner_id === userId) return true;
+
+  const { data: member, error: memberError } = await client
+    .from("wg_project_members")
+    .select("role, can_approve")
+    .eq("project_id", projectId)
+    .eq("user_id", userId)
+    .not("accepted_at", "is", null)
+    .maybeSingle();
+
+  if (memberError) throw memberError;
+  return member?.role === "Owner" || member?.role === "Editor";
+}
+
 // ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/timesheets?month=YYYY-MM
 // ---------------------------------------------------------------------------
@@ -87,11 +111,21 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
 
     const month = c.req.query("month");
     const projectId = c.req.query("project_id") || c.req.query("projectId");
+    const canReadProject = projectId
+      ? await canReadAllProjectTimesheets(user.id, projectId)
+      : false;
+
     let query = db()
       .from("wg_timesheet_weeks")
       .select("*")
-      .eq("user_id", user.id)
       .order("week_start", { ascending: false });
+
+    // Project owners/editors need project rows for billing. Assigned party
+    // approvers use their approval queue and must not receive unrelated time.
+    // Everyone else is strictly limited to their own rows.
+    if (!canReadProject) {
+      query = query.eq("user_id", user.id);
+    }
 
     if (month) {
       const [year, mon] = month.split("-").map(Number);
@@ -107,7 +141,29 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
 
     const { data, error } = await query;
     if (error) throw error;
-    return c.json({ weeks: (data || []).map(rowToWeek) });
+
+    const graphNodeByUserId = new Map<string, string>();
+    if (projectId && canReadProject && (data || []).length > 0) {
+      const userIds = Array.from(new Set((data || []).map((row: any) => row.user_id).filter(Boolean)));
+      const { data: memberRows, error: memberError } = await db()
+        .from("wg_project_members")
+        .select("user_id, graph_node_id")
+        .eq("project_id", projectId)
+        .in("user_id", userIds);
+      if (memberError) throw memberError;
+      (memberRows || []).forEach((member: any) => {
+        if (member.user_id && member.graph_node_id) {
+          graphNodeByUserId.set(member.user_id, member.graph_node_id);
+        }
+      });
+    }
+
+    return c.json({
+      weeks: (data || []).map((row: any) => ({
+        ...rowToWeek(row),
+        graphNodeId: graphNodeByUserId.get(row.user_id),
+      })),
+    });
   } catch (err: any) {
     console.log(`Timesheets list error: ${err.message}`);
     return c.json({ error: `Failed to list timesheets: ${err.message}` }, 500);

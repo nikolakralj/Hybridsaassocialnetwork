@@ -21,6 +21,22 @@ function db() {
   );
 }
 
+function getBearerToken(c: any): string | null {
+  const header = c.req.header("Authorization") || "";
+  const [scheme, token] = header.split(" ");
+  return scheme?.toLowerCase() === "bearer" && token ? token : null;
+}
+
+function userDb(c: any) {
+  const token = getBearerToken(c);
+  if (!token) throw new Error("Authentication required");
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -174,6 +190,45 @@ function projectParties(value: unknown): any[] {
   return [];
 }
 
+function partiesFromScopedGraph(graph: any): any[] {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+
+  return nodes
+    .filter((node: any) => node?.type === "party" && typeof node?.id === "string")
+    .map((partyNode: any, index: number) => {
+      const partyId = partyNode.id;
+      return {
+        id: partyId,
+        name: partyNode?.data?.name || partyNode?.data?.label || partyId,
+        partyType: partyNode?.data?.partyType || "company",
+        billsTo: edges
+          .filter((edge: any) => (
+            edge?.source === partyId &&
+            ["billsTo", "bills_to", "subcontracts"].includes(edge?.data?.edgeType || edge?.type)
+          ))
+          .map((edge: any) => edge.target),
+        people: nodes
+          .filter((node: any) => (
+            node?.type === "person" &&
+            (node?.data?.partyId === partyId || node?.data?.orgId === partyId)
+          ))
+          .map((node: any) => ({
+            id: node.id,
+            name: node?.data?.name || "",
+            email: node?.data?.email || "",
+            role: node?.data?.role || "",
+            canApprove: node?.data?.canApprove === true,
+            canViewRates: node?.data?.canViewRates === true,
+            canEditTimesheets: node?.data?.canEditTimesheets === true,
+            visibleToChain: node?.data?.visibleToChain === true,
+          })),
+        isCreator: partyNode?.data?.isCreator === true || index === 0,
+        isProjectOwner: partyNode?.data?.isProjectOwner === true,
+      };
+    });
+}
+
 function resolveCreatorPartyId(project: any): string | null {
   const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
   const creatorNode = graphNodes.find((node: any) => node?.type === "party" && node?.data?.isCreator === true);
@@ -230,6 +285,38 @@ function protectedNodeData(node: any): Record<string, unknown> {
   // party updates its own billing edge; ownership fields must remain stable.
   delete data.chainPosition;
   return data;
+}
+
+const SERVER_MASKED_NODE_FIELDS = [
+  "hourlyRate",
+  "dailyRate",
+  "fixedAmount",
+  "weeklyHourLimit",
+  "monthlyHourLimit",
+  "email",
+] as const;
+
+function restoreServerMaskedFields(existingGraph: any, nextGraph: any, callerScope: string | null) {
+  if (!callerScope || !Array.isArray(nextGraph?.nodes)) return nextGraph;
+  const currentNodes = Array.isArray(existingGraph?.nodes) ? existingGraph.nodes : [];
+  const currentById = new Map(currentNodes.map((node: any) => [node?.id, node]));
+
+  return {
+    ...nextGraph,
+    nodes: nextGraph.nodes.map((nextNode: any) => {
+      const currentNode = currentById.get(nextNode?.id) as any;
+      if (!currentNode || nextNode?.id === callerScope || nodeOwnerId(nextNode) === callerScope) {
+        return nextNode;
+      }
+
+      const currentData = currentNode?.data && typeof currentNode.data === "object" ? currentNode.data : {};
+      const nextData = nextNode?.data && typeof nextNode.data === "object" ? { ...nextNode.data } : {};
+      for (const field of SERVER_MASKED_NODE_FIELDS) {
+        if (!(field in nextData) && field in currentData) nextData[field] = currentData[field];
+      }
+      return { ...nextNode, data: nextData };
+    }),
+  };
 }
 
 function assertScopedEdgeUpdates(existingProject: any, body: any, callerScope: string) {
@@ -341,7 +428,7 @@ projectsRouter.get("/make-server-f8b491be/api/projects", async (c) => {
 
     const { data, error } = await db()
       .from("wg_projects")
-      .select("*")
+      .select("id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at")
       .eq("owner_id", user.id)
       .order("updated_at", { ascending: false });
 
@@ -372,12 +459,26 @@ projectsRouter.get("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     const role = await getCallerRole(projectRow.owner_id, projectId, user.id);
     if (!role) return c.json({ error: "Forbidden" }, 403);
 
-    const { data: memberRows } = await db()
+    const { data: scopedGraph, error: scopedGraphError } = await userDb(c)
+      .rpc("wg_get_scoped_graph", { p_project_id: projectId });
+    if (scopedGraphError) throw scopedGraphError;
+
+    let memberQuery = db()
       .from("wg_project_members")
       .select("*")
       .eq("project_id", projectId);
+    if (role !== "Owner" && role !== "Editor") {
+      memberQuery = memberQuery.eq("user_id", user.id);
+    }
+    const { data: memberRows } = await memberQuery;
 
-    return c.json({ project: rowToProject(projectRow), members: (memberRows || []).map(rowToMember) });
+    const safeProject = {
+      ...projectRow,
+      graph: scopedGraph || { nodes: [], edges: [] },
+      parties: partiesFromScopedGraph(scopedGraph),
+    };
+
+    return c.json({ project: rowToProject(safeProject), members: (memberRows || []).map(rowToMember) });
   } catch (err: any) {
     return c.json({ error: `Failed to get project: ${err.message}` }, 500);
   }
@@ -550,6 +651,9 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     const body = await c.req.json();
     const callerScope = await getCallerScope(projectId, user.id);
     const scopedPartyId = callerScope || (projectRow.owner_id === user.id ? resolveCreatorPartyId(projectRow) : null);
+    if (body.graph !== undefined) {
+      body.graph = restoreServerMaskedFields(projectRow.graph, body.graph, scopedPartyId);
+    }
     assertScopedSupplyChainUpdate(projectRow, body, scopedPartyId);
     const updateData: any = {};
     if (body.name !== undefined) updateData.name = body.name;

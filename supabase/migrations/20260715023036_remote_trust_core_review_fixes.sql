@@ -1,0 +1,5 @@
+-- Remote history marker.
+-- The live migration named trust_core_review_fixes was applied through the
+-- Supabase management path on 2026-07-15. Its canonical source is migration
+-- 024_trust_core_review_fixes.sql, whose installed objects were verified before
+-- this marker was added. This no-op file reconciles CLI history only.

@@ -1,4 +1,4 @@
--- Migration 011: Fix infinite RLS recursion between wg_projects and wg_project_members
+-- History-reconciled migration: Fix infinite RLS recursion between wg_projects and wg_project_members
 --
 -- Problem (from 005_workgraph_core.sql):
 --   wg_projects_member policy on wg_projects queries wg_project_members

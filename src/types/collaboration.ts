@@ -198,6 +198,8 @@ export interface ProjectInvitation {
   email: string;
   role: ProjectRole;
   scope?: string;
+  partyGraphNodeId?: string;
+  partyName?: string;
   invitedBy: string;
   invitedByName?: string;
   invitedAt: string;

@@ -48,6 +48,8 @@ export type WeekStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
 
 export interface StoredWeek {
   personId: string;
+  /** Project graph identity used for names, party grouping, and private rates. */
+  graphNodeId?: string;
   weekLabel: string;
   weekStart: string;
   days: StoredDay[];

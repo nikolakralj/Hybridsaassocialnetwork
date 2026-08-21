@@ -18,6 +18,7 @@ interface InvitationBody {
   userEmail?: string;
   role?: string;
   scope?: string;
+  partyGraphNodeId?: string;
   expiresAt?: string;
 }
 
@@ -29,6 +30,22 @@ function db() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+}
+
+function getBearerToken(c: any): string | null {
+  const header = c.req.header("Authorization") || "";
+  const [scheme, token] = header.split(" ");
+  return scheme?.toLowerCase() === "bearer" && token ? token : null;
+}
+
+function userDb(c: any) {
+  const token = getBearerToken(c);
+  if (!token) throw new Error("Authentication required");
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 }
 
@@ -106,6 +123,8 @@ function rowToMember(row: any) {
     userEmail: row.user_email ?? undefined,
     role: row.role,
     scope: row.scope ?? undefined,
+    graphNodeId: row.graph_node_id ?? undefined,
+    canApprove: row.can_approve ?? false,
     invitedBy: row.invited_by ?? undefined,
     invitedAt: row.invited_at,
     acceptedAt: row.accepted_at ?? null,
@@ -122,6 +141,8 @@ function rowToInvitation(row: any) {
     email: row.email,
     role: row.role,
     scope: row.scope ?? undefined,
+    partyGraphNodeId: row.party_graph_node_id ?? undefined,
+    partyName: row.party_name ?? undefined,
     invitedBy: row.invited_by ?? undefined,
     invitedByName: row.invited_by_name ?? undefined,
     invitedAt: row.invited_at,
@@ -188,6 +209,61 @@ function projectHasParty(project: any, partyId: string): boolean {
   return graphNodes.some((node: any) => node?.type === "party" && node?.id === partyId);
 }
 
+function getProjectParty(project: any, partyId: string): any | null {
+  const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
+  const graphParty = graphNodes.find((node: any) => node?.type === "party" && node?.id === partyId);
+  if (graphParty) return graphParty;
+
+  const parties = Array.isArray(project?.parties)
+    ? project.parties
+    : Array.isArray(project?.parties?.parties)
+      ? project.parties.parties
+      : [];
+  return parties.find((party: any) => party?.id === partyId) ?? null;
+}
+
+function getProjectPartyName(project: any, partyId: string): string {
+  const party = getProjectParty(project, partyId);
+  return (
+    party?.data?.name ||
+    party?.data?.label ||
+    party?.name ||
+    party?.label ||
+    "Project organization"
+  );
+}
+
+async function canAdministerProjectParty(
+  project: any,
+  userId: string,
+  partyGraphNodeId: string
+): Promise<boolean> {
+  if (project.owner_id === userId) return true;
+
+  const { data: projectOrganization, error: projectOrganizationError } = await db()
+    .from("wg_project_organizations")
+    .select("organization_id")
+    .eq("project_id", project.id)
+    .eq("graph_node_id", partyGraphNodeId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (projectOrganizationError) throw projectOrganizationError;
+  if (!projectOrganization?.organization_id) return false;
+
+  const { data: membership, error: membershipError } = await db()
+    .from("wg_organization_members")
+    .select("id")
+    .eq("organization_id", projectOrganization.organization_id)
+    .eq("user_id", userId)
+    .eq("membership_state", "verified")
+    .eq("org_role", "org_admin")
+    .maybeSingle();
+
+  if (membershipError) throw membershipError;
+  return Boolean(membership?.id);
+}
+
 function resolveCreatorPartyId(project: any): string | null {
   const graphNodes = Array.isArray(project?.graph?.nodes) ? project.graph.nodes : [];
   const creatorNode = graphNodes.find((node: any) => node?.type === "party" && node?.data?.isCreator === true);
@@ -239,10 +315,11 @@ async function resolveProjectForInvite(user: AuthUser, body: InvitationBody) {
   return { error: "Forbidden" as const };
 }
 
-function buildInviteEmail(projectName: string, token: string) {
+function buildInviteEmail(projectName: string, token: string, partyName?: string | null) {
   const appUrl = getAppUrl();
   const acceptUrl = `${appUrl}/invite/${encodeURIComponent(token)}`;
   const safeProjectName = escapeHtml(projectName);
+  const safePartyName = partyName ? escapeHtml(partyName) : null;
 
   const html = `
     <!DOCTYPE html>
@@ -254,6 +331,7 @@ function buildInviteEmail(projectName: string, token: string) {
     <body style="margin:0;padding:24px;font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;">
       <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;">
         <p style="margin:0 0 12px;font-size:16px;line-height:1.5;">You've been invited to ${safeProjectName} on WorkGraph.</p>
+        ${safePartyName ? `<p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:#334155;">Approval responsibility: represent ${safePartyName}.</p>` : ""}
         <p style="margin:0 0 20px;font-size:14px;line-height:1.5;color:#475569;">Accept: <a href="${acceptUrl}" style="color:#2563eb;text-decoration:none;">${acceptUrl}</a></p>
       </div>
     </body>
@@ -306,14 +384,36 @@ invitationsRouter.post("/", async (c) => {
       return c.json({ error: "Your project role cannot invite members with that role" }, 403);
     }
 
-    // An invitation is also an organization assignment. The browser cannot
-    // choose it: an inviter may add people only to the party they represent.
-    const memberScope = await getCallerScope(project.id, user.id);
-    const inviterScope = memberScope || (project.owner_id === user.id ? resolveCreatorPartyId(project) : null);
-    if (!inviterScope || !projectHasParty(project, inviterScope)) {
-      return c.json({
-        error: "Map your active membership to a project organization before inviting people.",
-      }, 409);
+    const requestedPartyId = typeof body.partyGraphNodeId === "string"
+      ? body.partyGraphNodeId.trim()
+      : "";
+    let invitationScope: string;
+    let partyName: string | null = null;
+
+    if (requestedPartyId) {
+      if (!projectHasParty(project, requestedPartyId)) {
+        return c.json({ error: "The selected project organization was not found" }, 400);
+      }
+
+      if (!(await canAdministerProjectParty(project, user.id, requestedPartyId))) {
+        return c.json({
+          error: "Only the project owner or that organization's verified admin can invite its approvers.",
+        }, 403);
+      }
+
+      invitationScope = requestedPartyId;
+      partyName = getProjectPartyName(project, requestedPartyId);
+    } else {
+      // Normal collaborators inherit the inviter's durable party scope. Only
+      // the explicit C3 approver path above may target another organization.
+      const memberScope = await getCallerScope(project.id, user.id);
+      const inviterScope = memberScope || (project.owner_id === user.id ? resolveCreatorPartyId(project) : null);
+      if (!inviterScope || !projectHasParty(project, inviterScope)) {
+        return c.json({
+          error: "Map your active membership to a project organization before inviting people.",
+        }, 409);
+      }
+      invitationScope = inviterScope;
     }
 
     const now = new Date().toISOString();
@@ -324,7 +424,9 @@ invitationsRouter.post("/", async (c) => {
       project_name: project.name,
       email,
       role,
-      scope: inviterScope,
+      scope: invitationScope,
+      party_graph_node_id: requestedPartyId || null,
+      party_name: partyName,
       invited_by: user.id,
       invited_by_name: user.name,
       invited_at: now,
@@ -366,7 +468,7 @@ invitationsRouter.post("/", async (c) => {
       invitation = data;
     }
 
-    const { acceptUrl, html } = buildInviteEmail(project.name, invitation.id);
+    const { acceptUrl, html } = buildInviteEmail(project.name, invitation.id, partyName);
     const subject = `You've been invited to ${project.name} on WorkGraph`;
     const payload = { to: email, subject, html };
 
@@ -433,6 +535,8 @@ invitationsRouter.get("/:token", async (c) => {
         projectName: invitation.project_name ?? project?.name ?? undefined,
         inviter: invitation.invited_by_name ?? invitation.invited_by ?? "Unknown",
         role: invitation.role,
+        partyGraphNodeId: invitation.party_graph_node_id ?? undefined,
+        partyName: invitation.party_name ?? undefined,
         expiry,
         status: invitationStatus,
         email: invitation.email,
@@ -494,7 +598,9 @@ invitationsRouter.post("/:token/accept", async (c) => {
       scope: invitation.scope ?? null,
       invited_by: invitation.invited_by ?? user.id,
       invited_at: invitation.invited_at ?? now,
-      accepted_at: now,
+      // Party-tagged invitations become accepted inside the C3 RPC only after
+      // their real account has been linked to the target organization.
+      accepted_at: invitation.party_graph_node_id ? null : now,
       invitation_id: invitation.id,
     };
 
@@ -553,16 +659,33 @@ invitationsRouter.post("/:token/accept", async (c) => {
       member = insertedMember;
     }
 
-    const { error: updateInvitationError } = await db()
-      .from("wg_project_invitations")
-      .update({
-        status: "accepted",
-        accepted_at: now,
-        accepted_by_user_id: user.id,
-      })
-      .eq("id", invitation.id);
+    if (invitation.party_graph_node_id) {
+      const { error: linkError } = await userDb(c).rpc("wg_link_member_as_party_approver", {
+        p_project_id: project.id,
+        p_member_id: member.id,
+        p_party_graph_node_id: invitation.party_graph_node_id,
+      });
+      if (linkError) throw linkError;
 
-    if (updateInvitationError) throw updateInvitationError;
+      const { data: linkedMember, error: linkedMemberError } = await db()
+        .from("wg_project_members")
+        .select("*")
+        .eq("id", member.id)
+        .single();
+      if (linkedMemberError) throw linkedMemberError;
+      member = linkedMember;
+    } else {
+      const { error: updateInvitationError } = await db()
+        .from("wg_project_invitations")
+        .update({
+          status: "accepted",
+          accepted_at: now,
+          accepted_by_user_id: user.id,
+        })
+        .eq("id", invitation.id);
+
+      if (updateInvitationError) throw updateInvitationError;
+    }
 
     return c.json({
       success: true,

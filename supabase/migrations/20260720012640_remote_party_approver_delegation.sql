@@ -1,0 +1,5 @@
+-- Remote history marker.
+-- The live migration named party_approver_delegation was applied through the
+-- Supabase management path on 2026-07-20. Its canonical source is migration
+-- 027_party_approver_delegation.sql, whose RPC was verified before this marker
+-- was added. This no-op file reconciles CLI history only.
