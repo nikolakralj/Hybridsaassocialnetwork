@@ -1018,3 +1018,62 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
   400/403/409 instead of a generic 500 from the project update route.
 - Residual: migration `028_scoped_supply_chain_administration.sql` still needs
   to be applied before direct authenticated `wg_projects` UPDATE is removed.
+
+## 2026-08-21 - [DONE] C3 trust boundary + revenue-loop review (Codex)
+
+- Restored the paused Supabase project, repaired migration-history drift, and
+  aligned local/remote migrations through 031. Applied 029 (real party approver
+  linking), 030 (foreign-org guard, immutable issued invoices, explicit person
+  contract signatories), and 031 (scoped `org_approver` role metadata).
+- C3 invitations now carry a target party; acceptance calls the guarded
+  `wg_link_member_as_party_approver` RPC and routes future approvals to the real
+  account. Owner bootstrap and unauthorized-link paths pass rollback tests.
+- Wired graph/name/approval consumers to `wg_get_scoped_graph`; hardened project
+  reads so raw graph data is not serialized to unauthorized browsers.
+- Fixed the live invoice blocker: owners/editors can load project timesheets for
+  billing, while ordinary members remain own-row only. Timesheets now carry the
+  worker graph identity so private rates, names, and seller grouping resolve.
+  Invoice generation now blocks missing rates instead of creating €0 drafts.
+- Redeployed `make-server-f8b491be`. Live browser proof on NAS: July shows two
+  approved weeks; Generate identifies Rodman's missing rate and creates nothing.
+- Replaced freelancer/marketplace landing claims with the paid-pilot offer and
+  added `PAID_PILOT_PLAYBOOK.md` plus `INVOICE_COMPLIANCE_READINESS.md`.
+- Verification: `030_trust_c3_regression.sql` returned HTTP 201 inside rollback;
+  migration lists match; edited TS/TSX files parse with Vite esbuild;
+  `git diff --check` passes apart from line-ending warnings. Build was not run
+  because active `AGENTS.md` prohibits it.
+- Residual: James must accept a real G2 invite and approve while signed in; a
+  real private billing rate must be entered before the non-zero invoice test.
+
+## 2026-08-21 - [DONE] C3 real-account approval + non-zero invoice proof (Codex)
+
+- Created the authorized James QA account, sent a NAS `Commenter` invitation
+  tagged `Represents G2`, and accepted it while signed in as James. Live data
+  confirms the accepted member is scoped to G2 with `can_approve=true`, while
+  rate visibility and timesheet editing remain false.
+- Saved Rodman's explicit QA-only bill rate at EUR 100/hour. Rodman logged and
+  submitted an 8-hour week; Nikola approved Triangle Services layer 1 and James
+  approved G2 layer 2 through their own signed-in accounts. Both approval rows
+  resolve to the real approvers' auth UIDs and the week is fully approved.
+- The live run exposed short approval snapshots produced by a submitter's
+  intentionally scoped graph. `approvals-supabase.ts` now re-resolves upstream
+  parties when the snapshot ends at the internal layer, assigns the next layer
+  number correctly, and appends the resolved step to the audit snapshot.
+- Future submissions prefer the signed-in worker's real name and infer their
+  organization from the scoped approval directory when the name directory has
+  not yet been hydrated.
+- Invoice generation now refreshes the server-scoped graph before seller/buyer
+  grouping, so opening Project Graph is no longer a hidden prerequisite.
+  `listInvoices` also treats cloud-tagged local entries as cache only, preventing
+  deleted server drafts from being resurrected and blocking regeneration.
+- Removed the single incorrect QA invoice generated before the billing-identity
+  fix and reset its misrouted probe week to draft. Persisted two corrected,
+  unissued QA drafts: July EUR 6,400 (64 approved hours) and August EUR 800
+  (the real James-approved 8-hour week), both Triangle Services -> G2.
+- Verification: live multi-account browser flow plus database proof for invite,
+  least-privilege membership, layer-to-UID routing, approved week, private rate,
+  and non-zero drafts. Edited TS/TSX files parse with the installed Vite esbuild;
+  `git diff --check` passes apart from line-ending warnings. Build was not run
+  because active `AGENTS.md` prohibits it.
+- Residual: the drafts are QA records only and remain deliberately unissued;
+  Croatian EN 16931/fiscalization readiness is not yet complete.

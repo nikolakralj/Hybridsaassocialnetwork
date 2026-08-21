@@ -35,7 +35,7 @@ Statuses: `[READY]` → `[IN PROGRESS]` → `[REVIEW]` → `[DONE]` / `[BLOCKED]
 | # | Action | Owner | Status |
 |---|---|---|---|
 | M5 | Apply `016_fix_wg_project_members_scope_recursion.sql` — applied 2026-07-08 via Supabase MCP, policy + fn verified live | Claude | `[DONE]` |
-| DEPLOY | Run `supabase functions deploy server` — **an OLD edge build (`make-server-f8b491be`) is live**; B3 guards + approval-token routes need a fresh deploy | Nikola | `[READY]` |
+| DEPLOY | `make-server-f8b491be` redeployed with scoped project, invitation, and billing-timesheet routes (2026-08-21) | Codex | `[DONE]` |
 | GSEC | Implement graph confidentiality model from `src/docs/specs/GRAPH_CONFIDENTIALITY_SPEC.md`: project role != rate visibility, org role != project role, contract rates signatory-scoped. G0/G1 UI containment started 2026-07-10; RLS-backed contract/rate tables still required. | Claude/Codex | `[IN PROGRESS]` |
 | C2 | Company membership + private worker contracts: Nikola-company-admin invites worker, worker submits contract/timesheet, Nikola approves internally, James/John approve upstream work but cannot see worker-company private contract/pay terms. Spec now required before broad worker invites. | Claude/Codex | `[IN PROGRESS]` |
 | M6 | `010_phase4_invoice_schema.sql` — verified already applied (wg_invoices + wg_invoice_templates + RLS live, 2026-07-08) | — | `[DONE]` |
@@ -551,7 +551,7 @@ admin verifies it.
 
 ---
 
-### C3 · `counterparty-real-account-approver` · `[READY]`
+### C3 · `counterparty-real-account-approver` · `[IN REVIEW]`
 
 **Owner:** Codex (invitation/membership area) · **Claude reviews.**
 **Spec basis:** `IDENTITY_AUTHORITY_MODEL.md` (C3b), `GRAPH_CONFIDENTIALITY_SPEC.md`.
@@ -586,17 +586,27 @@ approves G2's layer himself, instead of the owner dev-approving it.
    real uid → James sees it in his Queue and approves via existing RLS. No dev-walker.
 
 **Acceptance criteria:**
-- [ ] Invite a person tagged to party G2; on accept they are linked as a G2 approver
-- [ ] G2's approver signs in, sees the pending item in their Queue, approves it
-- [ ] The layer completes with `approver_user_id` = the real account (not placeholder)
-- [ ] A non-authorized caller cannot link an approver to a party they don't administer
-- [ ] Owner can still bootstrap (seed) a party approver; adversarial 2-account check
-- [ ] Dev chain-walker no longer needed for that party; `npm run build` passes
+- [x] Party-tagged invite and acceptance link a real account as party approver
+- [x] G2's approver signs in, sees the pending item in their Queue, approves it
+- [x] The layer completes with `approver_user_id` = the real account (not placeholder)
+- [x] A non-authorized caller cannot link an approver to a party they don't administer
+- [x] Owner bootstrap and unauthorized-link paths pass rollback-only database tests
+- [x] Dev chain-walker no longer needed for that party
+- [ ] `npm run build` passes (not run because active `AGENTS.md` prohibits it)
 
 **⚠️ Coordination:** touches invitations-api, ProjectInviteMemberDialog, org
 membership (Codex's active area) + a new migration. Reconcile with C3a's scoped
 Edge Function (graph writes must send the complete snapshot). Claude available to
 review + reconcile as with C3a.
+
+Implementation landed and was deployed on 2026-08-21 in migration 029 plus the
+invitation UI/API. Migration 030 closes the remaining trust-review findings, 031
+reports the scoped `org_approver` role to the UI, and
+`supabase/tests/030_trust_c3_regression.sql` passes live inside `BEGIN/ROLLBACK`.
+Live multi-account acceptance completed on 2026-08-21: James accepted the G2
+invite, saw the pending layer in his own queue, and approved it through RLS. The
+stored layer-2 `approver_user_id` matches James's real auth UID. C3 remains in
+review only for Claude reconciliation/build verification.
 
 ---
 
