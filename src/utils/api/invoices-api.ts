@@ -987,7 +987,12 @@ export async function listInvoices(projectId: string, _accessToken?: string | nu
     const cloudInvoices = Array.isArray(data)
       ? data.map((rowData: any) => normalizeInvoiceRecord(rowData, 'cloud'))
       : [];
-    const merged = mergeInvoicesByIdentity(cloudInvoices, localInvoices);
+    // Cloud-tagged entries are a read-through cache, not independent drafts.
+    // Keeping them after the server row disappears resurrects deleted invoices
+    // and can block regeneration through timesheet de-duplication. Preserve
+    // only genuine offline drafts alongside the current cloud result.
+    const localOnlyInvoices = localInvoices.filter((invoice) => invoice.syncState === 'local');
+    const merged = mergeInvoicesByIdentity(cloudInvoices, localOnlyInvoices);
     writeLocalInvoices(scope, merged);
     return merged;
   } catch (error) {

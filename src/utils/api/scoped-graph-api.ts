@@ -35,7 +35,7 @@ export interface ScopedGraphMeta {
   projection: 'privity_v1';
   viewerPersonNodeId: string | null;
   viewerPartyIds: string[];
-  viewerOrgRole: 'org_admin' | 'org_finance' | 'org_manager' | 'org_worker' | null;
+  viewerOrgRole: 'org_admin' | 'org_finance' | 'org_manager' | 'org_approver' | 'org_worker' | null;
   isProjectManager: boolean;
   visibilityScope: VisibilityScope;
   /** Parties beyond the caller's sight — render as "External approval · N stages". */

@@ -6,6 +6,7 @@ import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info'
 import { createClient } from '../supabase/client';
 import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
+const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at';
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
@@ -448,7 +449,7 @@ async function supabaseListProjects(accessToken?: string | null) {
 
   const { data: ownedProjects, error: ownedError } = await supabase
     .from('wg_projects')
-    .select('*')
+    .select(PROJECT_METADATA_COLUMNS)
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false });
 
@@ -479,7 +480,7 @@ async function supabaseListProjects(accessToken?: string | null) {
 
   const { data: projects, error: projectsError } = await supabase
     .from('wg_projects')
-    .select('*')
+    .select(PROJECT_METADATA_COLUMNS)
     .in('id', ids)
     .order('updated_at', { ascending: false });
 
@@ -546,26 +547,6 @@ export async function getProject(projectId: string, accessToken?: string | null)
       return localGetProject(projectId);
     }
     return buildLocalProjectStub(projectId);
-  }
-
-  if (accessToken) {
-    try {
-      const { data: row, error } = await supabase
-        .from('wg_projects')
-        .select('*')
-        .eq('id', projectId)
-        .maybeSingle();
-      if (!error && row) {
-        const project = mapSupabaseProjectRow(row);
-        cacheCloudProjectList([project]);
-        return { project };
-      }
-      if (error) {
-        console.warn('[getProject] Direct Supabase read failed:', error.message);
-      }
-    } catch (err) {
-      console.warn('[getProject] Direct Supabase read threw:', err);
-    }
   }
 
   try {

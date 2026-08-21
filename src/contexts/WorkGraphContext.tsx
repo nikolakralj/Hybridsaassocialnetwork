@@ -1,15 +1,14 @@
 import { createContext, useContext, useState, useCallback, useMemo, useRef, ReactNode } from "react";
 import { Context } from "../types";
-import { buildViewerOptions } from "../components/workgraph/graph-visibility";
 import type { BaseEdge, BaseNode } from "../types/workgraph";
 import type { ApprovalParty } from "../utils/graph/approval-fallback";
-import { projectId as supabaseProjectId, publicAnonKey } from "../utils/supabase/info";
+import { fetchScopedGraph } from "../utils/api/scoped-graph-api";
+import {
+  buildScopedGraphDirectories,
+  type ScopedNameDirectoryEntry,
+} from "../utils/graph/scoped-graph-directories";
 
-type NameDirectoryEntry = {
-  name: string;
-  type: string;
-  orgId?: string;
-};
+type NameDirectoryEntry = ScopedNameDirectoryEntry;
 
 type NameDirectoryByProject = Record<string, Record<string, NameDirectoryEntry>>;
 type ApprovalDirectoryByProject = Record<string, ApprovalParty[]>;
@@ -27,47 +26,6 @@ const EMPTY_NAME_DIRECTORY: Record<string, NameDirectoryEntry> = {};
 const EMPTY_APPROVAL_PARTIES: ApprovalParty[] = [];
 
 const WorkGraphContext = createContext<WorkGraphContextType | undefined>(undefined);
-
-function readStoredJson<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
-
-  const storages: Array<Storage | undefined> = [window.sessionStorage, window.localStorage];
-  for (const storage of storages) {
-    if (!storage) continue;
-    try {
-      const raw = storage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as T;
-      if (storage === window.localStorage) {
-        try {
-          window.sessionStorage.setItem(key, raw);
-        } catch {
-          // Ignore promotion failures.
-        }
-      }
-      return parsed;
-    } catch {
-      // Try the next storage backend.
-    }
-  }
-
-  return null;
-}
-
-function writeStoredJson(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
-  const payload = JSON.stringify(value);
-  try {
-    window.sessionStorage.setItem(key, payload);
-  } catch {
-    // Ignore quota / availability failures.
-  }
-  try {
-    window.localStorage.setItem(key, payload);
-  } catch {
-    // Ignore quota / availability failures.
-  }
-}
 
 function normalizeNodeType(raw: any): BaseNode["type"] {
   if (typeof raw?.type === "string") {
@@ -180,101 +138,6 @@ function normalizeGraphEdges(rawEdges: unknown): BaseEdge[] {
   return rawEdges.map(normalizeEdge).filter((edge): edge is BaseEdge => Boolean(edge));
 }
 
-function buildDirectoriesFromGraph(nodes: BaseNode[], edges: BaseEdge[]) {
-  const viewerOptions = buildViewerOptions(nodes, edges);
-  const nameDirectory: Record<string, NameDirectoryEntry> = {};
-  const personOrgFromViewers = new Map<string, string>();
-
-  viewerOptions.forEach((viewer) => {
-    if (viewer.nodeId === "__admin__") return;
-    nameDirectory[viewer.nodeId] = {
-      name: viewer.name,
-      type: viewer.type,
-      orgId: viewer.orgId,
-    };
-    if (viewer.orgId) {
-      personOrgFromViewers.set(viewer.nodeId, viewer.orgId);
-    }
-  });
-
-  nodes.forEach((node) => {
-    if (node.type === "party" && node.data?.name && !nameDirectory[node.id]) {
-      nameDirectory[node.id] = {
-        name: node.data.name,
-        type: "party",
-      };
-    }
-  });
-
-  const approvalDirectory = nodes
-    .filter((node) => node.type === "party")
-    .map((partyNode) => {
-      const partyId = partyNode.id;
-      const people = nodes
-        .filter((node) => node.type === "person" && (
-          node.data?.partyId === partyId ||
-          node.data?.orgId === partyId ||
-          personOrgFromViewers.get(node.id) === partyId
-        ))
-        .map((personNode) => ({
-          id: personNode.id,
-          name: personNode.data?.name || personNode.id,
-          canApprove: personNode.data?.canApprove === true,
-        }));
-
-      const billsTo = edges
-        .filter((edge) =>
-          edge.source === partyId &&
-          (edge.data?.edgeType === "billsTo" || edge.data?.edgeType === "subcontracts" || edge.data?.edgeType === "bills_to")
-        )
-        .map((edge) => edge.target);
-
-      return {
-        id: partyId,
-        name: partyNode.data?.name || partyId,
-        partyType: partyNode.data?.partyType || "company",
-        billsTo,
-        people,
-        isCreator: partyNode.data?.isCreator === true,
-        isProjectOwner: partyNode.data?.isProjectOwner === true,
-      } satisfies ApprovalParty;
-    });
-
-  return { nameDirectory, approvalDirectory };
-}
-
-async function getLatestGraph(projectId: string): Promise<{ nodes: BaseNode[]; edges: BaseEdge[] } | null> {
-  if (!projectId) return null;
-
-  try {
-    const response = await fetch(
-      `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/graph-versions/active?projectId=${encodeURIComponent(projectId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-      },
-    );
-
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Failed to load latest graph: ${response.status}`);
-    }
-
-    const payload = await response.json().catch(() => null);
-    const graphVersion = payload?.graphVersion;
-    const graphData = graphVersion?.graph_data || graphVersion?.graphData || {};
-
-    return {
-      nodes: normalizeGraphNodes(graphData.nodes ?? graphData?.graph?.nodes),
-      edges: normalizeGraphEdges(graphData.edges ?? graphData?.graph?.edges),
-    };
-  } catch (error) {
-    console.warn("Falling back to empty graph context after load failure", error);
-    return null;
-  }
-}
-
 export function WorkGraphProvider({ children }: { children: ReactNode }) {
   // Mock contexts for demo - in production, these would come from auth/database
   const mockContexts: Context[] = [
@@ -321,31 +184,16 @@ export function WorkGraphProvider({ children }: { children: ReactNode }) {
     }
 
     const task = (async () => {
-      const nameKey = `workgraph-name-dir:${projectId}`;
-      const approvalKey = `workgraph-approval-dir:${projectId}`;
-
-      const storedNameDirectory = readStoredJson<Record<string, NameDirectoryEntry>>(nameKey);
-      const storedApprovalPayload = readStoredJson<{ parties?: ApprovalParty[] }>(approvalKey);
-
-      if (storedNameDirectory && storedApprovalPayload) {
-        setNameDirectory((current) => ({
-          ...current,
-          [projectId]: storedNameDirectory,
-        }));
-        setApprovalDirectory((current) => ({
-          ...current,
-          [projectId]: storedApprovalPayload.parties || [],
-        }));
-        return;
+      let derived = { nameDirectory: {}, approvalDirectory: [] as ApprovalParty[] };
+      try {
+        const scopedGraph = await fetchScopedGraph(projectId);
+        derived = buildScopedGraphDirectories(
+          normalizeGraphNodes(scopedGraph.nodes),
+          normalizeGraphEdges(scopedGraph.edges),
+        );
+      } catch (error) {
+        console.warn("Failed to load the server-scoped WorkGraph context", error);
       }
-
-      const latestGraph = await getLatestGraph(projectId);
-      const derived = latestGraph
-        ? buildDirectoriesFromGraph(latestGraph.nodes, latestGraph.edges)
-        : { nameDirectory: {}, approvalDirectory: [] as ApprovalParty[] };
-
-      writeStoredJson(nameKey, derived.nameDirectory);
-      writeStoredJson(approvalKey, { parties: derived.approvalDirectory });
 
       setNameDirectory((current) => ({
         ...current,

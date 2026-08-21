@@ -118,9 +118,11 @@ export function InviteAcceptPage() {
         name: invitation.projectName,
       });
       toast.success('Invitation accepted', {
-        description: result.project?.name
-          ? `${result.project.name} is now ready in your workspace.`
-          : 'The project is now ready in your workspace.',
+        description: invitation.partyName
+          ? `You can now approve work for ${invitation.partyName}.`
+          : result.project?.name
+            ? `${result.project.name} is now ready in your workspace.`
+            : 'The project is now ready in your workspace.',
       });
       navigate('/app/project-workspace');
     } catch (err: any) {
@@ -240,6 +242,17 @@ export function InviteAcceptPage() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Role</p>
                     <p className="mt-1 text-lg font-semibold text-slate-950">{invitation.role}</p>
                   </div>
+                  {invitation.partyName ? (
+                    <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Approval responsibility</p>
+                      <p className="mt-1 text-sm font-semibold text-emerald-950">
+                        You will represent {invitation.partyName} as a real approver.
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-800">
+                        Acceptance links this signed-in account to the organization's approval queue without granting rate visibility or timesheet editing.
+                      </p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Invited by</p>
                     <p className="mt-1 text-sm text-slate-700">{invitation.inviter || 'Project admin'}</p>

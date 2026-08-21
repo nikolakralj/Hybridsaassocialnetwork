@@ -13,6 +13,9 @@ import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek } from '../../types/timesheets';
+import type { BaseEdge, BaseNode } from '../../types/workgraph';
+import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
+import { buildScopedGraphDirectories } from '../../utils/graph/scoped-graph-directories';
 import {
   createInvoice,
   deleteDraftInvoice,
@@ -112,6 +115,18 @@ function readApprovalParties(projectId: string): Array<{ id: string; name?: stri
   }
 }
 
+async function refreshBillingDirectories(projectId: string) {
+  const graph = await fetchScopedGraph(projectId);
+  const directories = buildScopedGraphDirectories(
+    graph.nodes as BaseNode[],
+    graph.edges as BaseEdge[],
+  );
+
+  sessionStorage.setItem(`workgraph-name-dir:${projectId}`, JSON.stringify(directories.nameDirectory));
+  sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, JSON.stringify({ parties: directories.approvalDirectory }));
+  return directories;
+}
+
 function readClientName(projectId: string): string {
   const parties = readApprovalParties(projectId);
   const client = parties.find((party) => party?.partyType === 'client');
@@ -145,6 +160,10 @@ function parseTimesheetKey(key?: string): { personId: string; weekStart: string 
 
 function makeTimesheetKey(personId: string, weekStart: string): string {
   return `${personId}:${weekStart}`;
+}
+
+function weekBillingPersonId(week: StoredWeek): string {
+  return week.graphNodeId || week.personId;
 }
 
 function uiStatusFromApiStatus(status: ApiInvoiceStatus): InvoiceDraft['status'] {
@@ -407,7 +426,8 @@ function buildDraftFromWeek(
   index: number,
   template?: ProjectInvoiceTemplate | null
 ): InvoiceDraft {
-  const personName = personNameLookup[week.personId]?.name || week.personId;
+  const billingPersonId = weekBillingPersonId(week);
+  const personName = personNameLookup[billingPersonId]?.name || billingPersonId;
   const hours = sumWeekHours(week);
 
   // Graph-defined rate: hourly bills by hours, daily bills by worked days.
@@ -420,16 +440,16 @@ function buildDraftFromWeek(
   const unitLabel = rateType === 'daily' ? 'days' : 'hours';
   const currency = usableRate?.currency || template?.currency || 'EUR';
 
-  const shortPerson = week.personId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+  const shortPerson = billingPersonId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
   const weekStamp = week.weekStart.replace(/-/g, '');
   const base: InvoiceDraft = {
-    id: `inv_${week.personId}_${week.weekStart}`,
+    id: `inv_${billingPersonId}_${week.weekStart}`,
     templateId: null,
     number: `INV-${weekStamp}-${shortPerson || String(index + 1).padStart(3, '0')}`,
     projectId,
     projectName: projectName || 'Project',
     clientName,
-    personId: week.personId,
+    personId: billingPersonId,
     personName,
     weekStart: week.weekStart,
     weekLabel: week.weekLabel,
@@ -443,7 +463,7 @@ function buildDraftFromWeek(
     timesheetKey: makeTimesheetKey(week.personId, week.weekStart),
     lineItems: [
       {
-        id: `line_${week.personId}_${week.weekStart}`,
+        id: `line_${billingPersonId}_${week.weekStart}`,
         description: `Approved timesheet - ${week.weekLabel} (${personName}, ${quantity} ${unitLabel})`,
         quantity,
         unitPrice: rate,
@@ -479,8 +499,9 @@ function groupWeeksBySellerOrg(weeks: StoredWeek[], projectId: string): SellerWe
 
   const groups = new Map<string, SellerWeekGroup>();
   weeks.forEach((week) => {
-    const party = personToParty.get(week.personId);
-    const key = party?.id || `solo:${week.personId}`;
+    const billingPersonId = weekBillingPersonId(week);
+    const party = personToParty.get(billingPersonId);
+    const key = party?.id || `solo:${billingPersonId}`;
     if (!groups.has(key)) {
       const buyer = party
         ? parties.find((p) => p?.id && Array.isArray(party.billsTo) && party.billsTo.includes(p.id))
@@ -511,7 +532,7 @@ function buildConsolidatedDraft(
   template?: ProjectInvoiceTemplate | null,
 ): InvoiceDraft {
   const perWeek = group.weeks.map((week, i) =>
-    buildDraftFromWeek(week, projectId, projectName, clientName, personNameLookup, rates[week.personId], todayIso, index * 100 + i, null)
+    buildDraftFromWeek(week, projectId, projectName, clientName, personNameLookup, rates[weekBillingPersonId(week)], todayIso, index * 100 + i, null)
   );
 
   const lineItems: InvoiceLineItem[] = perWeek.map((draft) => ({
@@ -837,6 +858,14 @@ export function InvoicesWorkspace({
       return;
     }
 
+    // Billing identities must come from the current server-scoped graph even
+    // when the user has not opened the Project Graph tab in this session.
+    const billingDirectories = await refreshBillingDirectories(projectId).catch(() => null);
+    const billingNameLookup = billingDirectories?.nameDirectory || personNameLookup;
+    const billingClientName = billingDirectories?.approvalDirectory.find((party) => party.partyType === 'client')?.name
+      || billingDirectories?.approvalDirectory.find((party, index, parties) => index > 0 && party.id !== parties[0]?.id)?.name
+      || defaultClientName;
+
     // Rates come from private wg_contract_rates rows. Graph-rate fallback is
     // dev-only and disabled unless VITE_ALLOW_GRAPH_RATE_FALLBACK=true.
     const rates = await resolveProjectRates(projectId).catch(() => ({} as Record<string, PersonRate>));
@@ -846,7 +875,7 @@ export function InvoicesWorkspace({
     // (including inside a consolidated invoice's timesheetIds) is skipped.
     const existingKeys = new Set<string>();
     storedInvoices.forEach((invoice) => {
-      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, defaultClientName, personNameLookup, weekLookup);
+      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, billingClientName, billingNameLookup, weekLookup);
       existingKeys.add(getInvoiceKey(normalized));
       (invoice.timesheetIds || []).forEach((key) => existingKeys.add(key));
     });
@@ -860,16 +889,20 @@ export function InvoicesWorkspace({
     const missingRateNames = Array.from(new Set(
       weeksToInvoice
         .filter((week) => {
-          const rate = rates[week.personId];
+          const rate = rates[weekBillingPersonId(week)];
           return !rate || rate.masked || rate.rate <= 0;
         })
-        .map((week) => personNameLookup[week.personId]?.name || week.personId)
+        .map((week) => {
+          const billingPersonId = weekBillingPersonId(week);
+          return billingNameLookup[billingPersonId]?.name || billingPersonId;
+        })
     ));
     if (missingRateNames.length > 0) {
-      toast.warning(
-        `No private billing rate found for: ${missingRateNames.join(', ')}. Drafts use 0 — company finance/admin must set rates in the Graph tab.`,
+      toast.error(
+        `Set a private billing rate for ${missingRateNames.join(', ')} before generating invoices. No zero-value drafts were created.`,
         { duration: 8000 },
       );
+      return;
     }
 
     const draftsToCreate = consolidateInvoices
@@ -878,8 +911,8 @@ export function InvoicesWorkspace({
             group,
             projectId,
             currentProjectName,
-            defaultClientName,
-            personNameLookup,
+            billingClientName,
+            billingNameLookup,
             rates,
             todayIso,
             index,
@@ -893,9 +926,9 @@ export function InvoicesWorkspace({
             week,
             projectId,
             currentProjectName,
-            defaultClientName,
-            personNameLookup,
-            rates[week.personId],
+            billingClientName,
+            billingNameLookup,
+            rates[weekBillingPersonId(week)],
             todayIso,
             index,
             projectTemplate,

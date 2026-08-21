@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { createClient } from '../../utils/supabase/client';
 import { projectId as supabaseProjectId } from '../../utils/supabase/info';
 import { getInvitableRolesForRole, getRoleDescription } from '../../utils/collaboration/permissions';
+import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import type { ProjectRole } from '../../types/collaboration';
 
 const supabase = createClient();
@@ -29,6 +30,12 @@ const ROLE_PERSONA: Record<ProjectRole, string> = {
 // Only these roles can be turned into a mapped, time-submitting worker
 // (wg_assign_project_member_as_worker rejects Owner/Editor).
 const WORKER_ELIGIBLE_ROLES: ProjectRole[] = ['Contributor'];
+const NO_APPROVAL_PARTY = 'none';
+
+interface ApprovalPartyOption {
+  id: string;
+  name: string;
+}
 
 interface ProjectInviteMemberDialogProps {
   open: boolean;
@@ -50,6 +57,10 @@ export function ProjectInviteMemberDialog({
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [role, setRole] = useState<ProjectRole>('Viewer');
+  const [partyGraphNodeId, setPartyGraphNodeId] = useState(NO_APPROVAL_PARTY);
+  const [approvalParties, setApprovalParties] = useState<ApprovalPartyOption[]>([]);
+  const [partyOptionsLoading, setPartyOptionsLoading] = useState(false);
+  const [partyOptionsError, setPartyOptionsError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const availableRoles = useMemo(() => getInvitableRolesForRole(currentUserRole), [currentUserRole]);
@@ -64,10 +75,58 @@ export function ProjectInviteMemberDialog({
     setRole(availableRoles.includes('Viewer') ? 'Viewer' : availableRoles[0]);
   }, [availableRoles, open, role]);
 
+  useEffect(() => {
+    if (!open || !projectId || !canSendInvite) {
+      setApprovalParties([]);
+      setPartyOptionsError('');
+      return;
+    }
+
+    let cancelled = false;
+    setPartyOptionsLoading(true);
+    setPartyOptionsError('');
+
+    void fetchScopedGraph(projectId)
+      .then((graph) => {
+        if (cancelled) return;
+        const permittedPartyIds = currentUserRole === 'Owner'
+          ? null
+          : new Set(graph.meta.viewerPartyIds || []);
+        const parties = graph.nodes
+          .filter((node) => node?.type === 'party' && typeof node?.id === 'string')
+          .filter((node) => !permittedPartyIds || permittedPartyIds.has(node.id))
+          .map((node) => ({
+            id: node.id as string,
+            name: String(node?.data?.name || node?.data?.label || node.id),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setApprovalParties(parties);
+        setPartyGraphNodeId((current) => (
+          current === NO_APPROVAL_PARTY || parties.some((party) => party.id === current)
+            ? current
+            : NO_APPROVAL_PARTY
+        ));
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setApprovalParties([]);
+        setPartyOptionsError(err?.message || 'Approval organizations could not be loaded.');
+      })
+      .finally(() => {
+        if (!cancelled) setPartyOptionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canSendInvite, currentUserRole, open, projectId]);
+
   function resetForm() {
     setUserName('');
     setUserEmail('');
     setRole(availableRoles.includes('Viewer') ? 'Viewer' : availableRoles[0] || 'Viewer');
+    setPartyGraphNodeId(NO_APPROVAL_PARTY);
+    setPartyOptionsError('');
     setError('');
   }
 
@@ -118,6 +177,7 @@ export function ProjectInviteMemberDialog({
           userName: userName.trim() || undefined,
           userEmail: normalizedEmail,
           role,
+          partyGraphNodeId: partyGraphNodeId === NO_APPROVAL_PARTY ? undefined : partyGraphNodeId,
         }),
       });
 
@@ -132,7 +192,9 @@ export function ProjectInviteMemberDialog({
         description:
           data?.emailStatus === 'logged'
             ? 'Email was logged locally because SMTP is not configured yet.'
-            : `${normalizedEmail} will receive the invite for ${trimmedProjectName}.`,
+            : partyGraphNodeId === NO_APPROVAL_PARTY
+              ? `${normalizedEmail} will receive the invite for ${trimmedProjectName}.`
+              : `${normalizedEmail} will join as a real approver for the selected organization.`,
       });
     } catch (err: any) {
       const message = err?.message || 'Failed to send invitation.';
@@ -193,7 +255,7 @@ export function ProjectInviteMemberDialog({
 
           {canSendInvite ? (
             <p className="text-xs text-muted-foreground">
-              New members join the organization represented by your active project membership. This cannot be selected or changed from the browser.
+              Normal members join your active project organization. An explicit approval responsibility is verified again by the server and may target only an organization you administer; project Owners can bootstrap a counterparty approver.
             </p>
           ) : null}
 
@@ -244,6 +306,39 @@ export function ProjectInviteMemberDialog({
             </Select>
             {availableRoles.includes(role) ? (
               <p className="text-xs text-muted-foreground">{getRoleDescription(role)}</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Approval responsibility (optional)</Label>
+            <Select
+              value={partyGraphNodeId}
+              onValueChange={setPartyGraphNodeId}
+              disabled={!canSendInvite || loading || partyOptionsLoading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={partyOptionsLoading ? 'Loading organizations...' : 'No approval responsibility'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_APPROVAL_PARTY}>No approval responsibility</SelectItem>
+                {approvalParties.map((party) => (
+                  <SelectItem key={party.id} value={party.id}>
+                    Represents {party.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {partyGraphNodeId !== NO_APPROVAL_PARTY ? (
+              <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                On acceptance, this real account becomes an approver for the selected organization. It receives no rate visibility and cannot edit timesheets.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Leave this unset for a normal collaborator or worker invitation.
+              </p>
+            )}
+            {partyOptionsError ? (
+              <p className="text-xs text-amber-700">{partyOptionsError} Normal invitations are still available.</p>
             ) : null}
           </div>
 

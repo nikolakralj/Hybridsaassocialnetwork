@@ -64,6 +64,7 @@ import type {
 } from '../../types/workgraph';
 import type { PartyEntry } from '../../utils/graph/auto-generate';
 import { getProject, updateProject } from '../../utils/api/projects-api';
+import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { assignPartyApprover } from '../../utils/api/organizations-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
@@ -1511,18 +1512,24 @@ export function WorkGraphBuilder({
 
     async function loadProjectGraph() {
       try {
-        const data = await getProject(projectId, accessToken);
+        const [data, scopedGraph] = await Promise.all([
+          getProject(projectId, accessToken),
+          fetchScopedGraph(projectId),
+        ]);
         if (cancelled) return;
         const fetchedStartDate = data?.project?.startDate || data?.project?.start_date || null;
         if (fetchedStartDate) {
           setProjectStartDate(fetchedStartDate);
           sessionStorage.setItem('currentProjectStartDate', fetchedStartDate);
         }
-        if (data?.project?.graph?.nodes?.length > 0) {
-          setAllNodes(data.project.graph.nodes);
-          setAllEdges(data.project.graph.edges || []);
+        if (scopedGraph.nodes.length > 0) {
+          setAllNodes(scopedGraph.nodes as BaseNode[]);
+          setAllEdges(scopedGraph.edges as BaseEdge[]);
           setGraphLoaded(true);
-          console.log(`[WorkGraph] Loaded ${data.project.graph.nodes.length} nodes from project ${projectId}`);
+          console.log(
+            `[WorkGraph] Loaded ${scopedGraph.nodes.length} server-scoped nodes from project ${projectId}`,
+            scopedGraph.meta,
+          );
         } else {
           if (!cancelled) {
             if (isDemoProject) {
@@ -1604,7 +1611,6 @@ export function WorkGraphBuilder({
     });
     const nameDirPayload = JSON.stringify(dir);
     sessionStorage.setItem(`workgraph-name-dir:${projectId}`, nameDirPayload);
-    try { localStorage.setItem(`workgraph-name-dir:${projectId}`, nameDirPayload); } catch { /* quota */ }
     // Notify ProjectWorkspace that the name directory is available/updated
     window.dispatchEvent(new CustomEvent('workgraph-namedir-updated', { detail: { projectId } }));
 
@@ -1679,7 +1685,6 @@ export function WorkGraphBuilder({
 
     const approvalDirPayload = JSON.stringify({ parties });
     sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload);
-    try { localStorage.setItem(`workgraph-approval-dir:${projectId}`, approvalDirPayload); } catch { /* quota */ }
   }, [viewerOptions, allNodes, allEdges, projectId]);
 
   // When viewer changes in the graph, persist the identity for other tabs.

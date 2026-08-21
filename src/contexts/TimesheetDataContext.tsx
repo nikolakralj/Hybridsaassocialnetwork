@@ -36,6 +36,9 @@ import {
   validateTimesheetWeek,
 } from '../types/timesheets';
 import { getApprovalStepsForParty, type ApprovalParty } from '../utils/graph/approval-fallback';
+import { fetchScopedGraph } from '../utils/api/scoped-graph-api';
+import { buildScopedGraphDirectories } from '../utils/graph/scoped-graph-directories';
+import type { BaseEdge, BaseNode } from '../types/workgraph';
 
 // ============================================================================
 // Types
@@ -64,6 +67,8 @@ export type WeekStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
 
 export interface StoredWeek {
   personId: string;
+  /** Project graph identity used for names, party grouping, and private rates. */
+  graphNodeId?: string;
   weekLabel: string;   // 'Nov 3-7'
   weekStart: string;   // '2025-11-03' ISO date (Monday)
   days: StoredDay[];   // always 5 (Mon-Fri)
@@ -272,50 +277,30 @@ function readNameDir(projectId: string): Record<string, NameDirEntry> {
 
 function readApprovalParties(projectId: string): ApprovalParty[] {
   if (!projectId) return [];
-  // Try sessionStorage first (written by Graph tab / wizard)
   const parsed = readSessionJson<{ parties?: ApprovalParty[] }>(`workgraph-approval-dir:${projectId}`);
   if (Array.isArray(parsed?.parties) && parsed!.parties.length > 0) return parsed!.parties;
-
-  // Fallback: try localStorage (durable copy persisted alongside sessionStorage)
-  try {
-    const lsRaw = localStorage.getItem(`workgraph-approval-dir:${projectId}`);
-    if (lsRaw) {
-      const lsParsed = JSON.parse(lsRaw);
-      const lsParties = Array.isArray(lsParsed?.parties) ? lsParsed.parties : [];
-      if (lsParties.length > 0) {
-        // Re-hydrate sessionStorage so subsequent reads are fast
-        sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, lsRaw);
-        return lsParties;
-      }
-    }
-  } catch { /* localStorage unavailable or corrupt — continue */ }
-
   return [];
 }
 
-/** Persist approval directory to BOTH sessionStorage and localStorage. */
+/** Persist only the current signed-in session's server-scoped directory. */
 function writeApprovalParties(projectId: string, parties: ApprovalParty[]): void {
   const payload = JSON.stringify({ parties });
   try { sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, payload); } catch { /* quota */ }
-  try { localStorage.setItem(`workgraph-approval-dir:${projectId}`, payload); } catch { /* quota */ }
 }
 
 async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
   const sessionParties = readApprovalParties(projectId);
   if (sessionParties.length > 0) return sessionParties;
 
-  // DB fallback
+  // Server-truth fallback. Approval routing consumes the same privity
+  // projection as WorkGraph; it never downloads the raw project graph.
   try {
-    const data = await getProject(projectId, accessToken);
-    const projectParties = data?.project?.parties;
-
-    let resolved: ApprovalParty[] = [];
-    if (Array.isArray(projectParties)) {
-      resolved = projectParties as ApprovalParty[];
-    } else {
-      const nestedParties = (projectParties as { parties?: ApprovalParty[] })?.parties;
-      resolved = Array.isArray(nestedParties) ? nestedParties : [];
-    }
+    void accessToken;
+    const graph = await fetchScopedGraph(projectId);
+    const resolved = buildScopedGraphDirectories(
+      graph.nodes as BaseNode[],
+      graph.edges as BaseEdge[],
+    ).approvalDirectory;
 
     // If we got parties from the DB, persist them locally so future reads don't
     // hit the network again.
@@ -439,8 +424,7 @@ async function getApprovalRouteForSubmitter(projectId: string, personId: string,
   if (parties.length === 0) {
     console.warn('[approval-route] No parties found for project', projectId,
       '| sessionStorage key:', `workgraph-approval-dir:${projectId}`,
-      '| sessionStorage value:', sessionStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200),
-      '| localStorage value:', localStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200));
+      '| sessionStorage value:', sessionStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200));
     return null;
   }
 
@@ -718,6 +702,7 @@ function apiWeekToStored(
 
   return normalizeStoredWeek({
     personId,
+    graphNodeId: apiWeek.graphNodeId || ownIdentity?.graphNodeId,
     weekLabel: apiWeek.weekLabel || generateWeekLabel(apiWeek.weekStart),
     weekStart: apiWeek.weekStart,
     days: (apiWeek.days || []).map((d: any) => ({
@@ -1289,8 +1274,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         const submittedAt = new Date().toISOString();
         const nameDir = readNameDir(projectId);
         const approvalParties = readApprovalParties(projectId);
-        const submitterName = nameDir[personId]?.name || normalizedWeek.personId || user?.user_metadata?.full_name || 'Submitted timesheet';
-        const submitterOrgId = nameDir[personId]?.orgId;
+        const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
+        const submitterOrgId = nameDir[personId]?.orgId || approvalParties.find((party) =>
+          party.people.some((person) => person.id === personId)
+        )?.id;
         const submitterOrg = submitterOrgId
           ? approvalParties.find((party) => party.id === submitterOrgId)?.name || nameDir[submitterOrgId]?.name || submitterOrgId
           : undefined;
@@ -1356,8 +1343,10 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         const submittedAt = new Date().toISOString();
         const nameDir = readNameDir(projectId);
         const approvalParties = readApprovalParties(projectId);
-        const submitterName = nameDir[personId]?.name || normalizedWeek.personId || user?.user_metadata?.full_name || 'Submitted timesheet';
-        const submitterOrgId = nameDir[personId]?.orgId;
+        const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
+        const submitterOrgId = nameDir[personId]?.orgId || approvalParties.find((party) =>
+          party.people.some((person) => person.id === personId)
+        )?.id;
         const submitterOrg = submitterOrgId
           ? approvalParties.find((party) => party.id === submitterOrgId)?.name || nameDir[submitterOrgId]?.name || submitterOrgId
           : undefined;

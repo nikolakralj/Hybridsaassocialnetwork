@@ -10,6 +10,8 @@ export interface TokenInvitation {
   projectName?: string;
   inviter?: string;
   role: string;
+  partyGraphNodeId?: string;
+  partyName?: string;
   expiry?: string;
   status: InvitationStatus;
   email?: string;

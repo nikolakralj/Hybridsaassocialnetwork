@@ -2,6 +2,9 @@
 // Handles approval records and queue
 
 import { createClient } from '../supabase/client';
+import { fetchScopedGraph } from './scoped-graph-api';
+import { buildScopedGraphDirectories } from '../graph/scoped-graph-directories';
+import type { BaseEdge, BaseNode } from '../../types/workgraph';
 
 const supabase = createClient();
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -183,29 +186,13 @@ function normalizeMatchValue(value?: string | null): string {
 }
 
 function readSessionJson<T>(key: string): T | null {
-  const storages: Array<Storage | undefined> = [];
-  if (typeof sessionStorage !== 'undefined') storages.push(sessionStorage);
-  if (typeof localStorage !== 'undefined') storages.push(localStorage);
-
-  for (const storage of storages) {
-    try {
-      const raw = storage?.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as T;
-      if (storage === localStorage && typeof sessionStorage !== 'undefined') {
-        try {
-          sessionStorage.setItem(key, raw);
-        } catch {
-          // Ignore promotion failures.
-        }
-      }
-      return parsed;
-    } catch {
-      // Try next storage backend.
-    }
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : null;
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 function writeSessionJson<T>(key: string, value: T): void {
@@ -219,13 +206,6 @@ function writeSessionJson<T>(key: string, value: T): void {
     // ignore quota/storage errors
   }
 
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(key, payload);
-    }
-  } catch {
-    // ignore quota/storage errors
-  }
 }
 
 function readNameDir(projectId: string): Record<string, NameDirEntry> {
@@ -320,17 +300,11 @@ async function loadApprovalParties(projectId: string): Promise<ApprovalDirParty[
     return hydratedSession;
   }
   try {
-    const { data, error } = await supabase
-      .from('wg_projects')
-      .select('parties')
-      .eq('id', projectId)
-      .maybeSingle();
-
-    if (error || !data?.parties) return [];
-
-    const resolvedParties = Array.isArray(data.parties)
-      ? data.parties as ApprovalDirParty[]
-      : (data.parties as { parties?: ApprovalDirParty[] })?.parties;
+    const graph = await fetchScopedGraph(projectId);
+    const resolvedParties = buildScopedGraphDirectories(
+      graph.nodes as BaseNode[],
+      graph.edges as BaseEdge[],
+    ).approvalDirectory as ApprovalDirParty[];
 
     if (Array.isArray(resolvedParties) && resolvedParties.length > 0) {
       const hydratedResolved = await hydrateApprovalParties(projectId, resolvedParties);
@@ -446,30 +420,36 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
       .filter((step) => Number(step.step) > currentLayer)
       .sort((a, b) => Number(a.step) - Number(b.step))[0];
 
-    if (!nextStep) return false;
-
-    await createApproval({
-      projectId: String(dbApproval.project_id),
-      subjectType: dbApproval.subject_type,
-      subjectId: String(dbApproval.subject_id),
-      subjectSnapshot: {
-        ...subjectSnapshot,
-        currentApproverName: nextStep.approverName,
-        currentApproverNodeId: nextStep.approverNodeId,
-        currentApproverUserRef: nextStep.approverUserRef,
+    if (nextStep) {
+      await createApproval({
+        projectId: String(dbApproval.project_id),
+        subjectType: dbApproval.subject_type,
+        subjectId: String(dbApproval.subject_id),
+        subjectSnapshot: {
+          ...subjectSnapshot,
+          currentApproverName: nextStep.approverName,
+          currentApproverNodeId: nextStep.approverNodeId,
+          currentApproverUserRef: nextStep.approverUserRef,
+          approvalLayer: nextStep.step,
+        },
+        approverUserId: nextStep.approverUserRef,
+        approverName: nextStep.approverName,
+        approverNodeId: nextStep.approverNodeId,
         approvalLayer: nextStep.step,
-      },
-      approverUserId: nextStep.approverUserRef,
-      approverName: nextStep.approverName,
-      approverNodeId: nextStep.approverNodeId,
-      approvalLayer: nextStep.step,
-      status: 'pending',
-      submittedAt: new Date().toISOString(),
-      graphVersionId: dbApproval.graph_version_id || undefined,
-      submitterUserId: dbApproval.submitter_user_id || undefined,
-    });
+        status: 'pending',
+        submittedAt: new Date().toISOString(),
+        graphVersionId: dbApproval.graph_version_id || undefined,
+        submitterUserId: dbApproval.submitter_user_id || undefined,
+      });
 
-    return true;
+      return true;
+    }
+
+    // A submitter's scoped graph can intentionally omit upstream people and
+    // parties. In that case the immutable submission snapshot may end at the
+    // internal layer even though the current approver can see an upstream
+    // billing route. Re-resolve below instead of treating the short snapshot as
+    // proof that the chain is complete.
   }
 
   const parsed = parseTimesheetSubject(String(dbApproval.subject_id));
@@ -490,7 +470,10 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
   }
 
   if (currentIndex < 0) {
-    currentIndex = Math.max(0, currentLayer - 1);
+    // buildApprovalPartyRoute returns only parties upstream of the submitter.
+    // If the current internal party is therefore absent, start before index 0
+    // so the first upstream party becomes the next approval layer.
+    currentIndex = -1;
     console.warn('[approvals.nextLayer] Unable to resolve current party from approver node; falling back to approval layer index', {
       currentLayer,
       currentPartyId,
@@ -545,6 +528,20 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
   const approverRef = selectedApprover?.id || nextParty.id;
   const approverNodeId = selectedApprover?.id || nextParty.id;
   const approverName = selectedApprover?.name || nextParty.name || approverRef;
+  const nextApprovalLayer = currentIndex < 0 ? currentLayer + 1 : nextIndex + 1;
+  const resolvedApprovalRoute = subjectSnapshot
+    ? [
+        ...(subjectSnapshot.approvalRoute || []),
+        {
+          step: nextApprovalLayer,
+          partyId: nextParty.id,
+          partyName: nextParty.name,
+          approverNodeId,
+          approverUserRef: approverRef,
+          approverName,
+        },
+      ]
+    : undefined;
   await createApproval({
     projectId: String(dbApproval.project_id),
     subjectType: dbApproval.subject_type,
@@ -555,13 +552,14 @@ async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean
           currentApproverName: approverName,
           currentApproverNodeId: approverNodeId,
           currentApproverUserRef: approverRef,
-          approvalLayer: nextIndex + 1,
+          approvalLayer: nextApprovalLayer,
+          approvalRoute: resolvedApprovalRoute,
         }
       : undefined,
     approverUserId: approverRef,
     approverName,
     approverNodeId,
-    approvalLayer: nextIndex + 1,
+    approvalLayer: nextApprovalLayer,
     status: 'pending',
     submittedAt: new Date().toISOString(),
     graphVersionId: dbApproval.graph_version_id || undefined,
