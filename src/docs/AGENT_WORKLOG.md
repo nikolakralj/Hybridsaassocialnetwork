@@ -1077,3 +1077,24 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
   because active `AGENTS.md` prohibits it.
 - Residual: the drafts are QA records only and remain deliberately unissued;
   Croatian EN 16931/fiscalization readiness is not yet complete.
+
+## 2026-07-20 - [REVIEW] Claude reviewed + committed Codex's C3/trust/M2 pass
+
+- Codex left a 44-min pass uncommitted (38 files) then ran out of credits. Claude
+  reviewed, verified live, and committed in 4 chunks: f0e3e02 (trust-core+C3
+  backend), b882cb0 (C3 app flow + M2 wiring + defect fixes), e4bb701 (landing/
+  pricing), 0e3ba3a (docs). Tree clean.
+- **Verified live:** migrations 029/030/031 applied; wg_link_member_as_party_approver
+  present; build passes (38 files); no secrets.
+- **029 auth reviewed sound:** invitee self-link allowed ONLY when the party-tagged
+  invite was issued by owner/verified-admin — no arbitrary self-linking.
+- **030 closes my trust findings F-2 (invoice lifecycle/immutability), F-3 (worker-
+  setup org-ownership guard), F-4 (person contract signatory).** APPROVED.
+- **M2 CORRECTION:** contrary to Codex's mid-session verdict, `fetchScopedGraph` IS
+  now called in production reads — WorkGraphContext (loadGraphContext), WorkGraphBuilder,
+  TimesheetDataContext, InvoicesWorkspace, ProjectInviteMemberDialog. Privity is now
+  server-enforced on read, not just client-masked. M2 substantially done.
+- **Landing:** removed false "SOC 2 / GDPR" badge; honest e-invoicing FAQ. Good.
+- **Blocked on real inputs (NOT fabricated):** Rodman's real billing rate; James's
+  real email + James personally accepting/approving G2's layer. These finish the
+  real 3-account proof.
