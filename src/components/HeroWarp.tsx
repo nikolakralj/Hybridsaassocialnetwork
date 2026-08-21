@@ -12,9 +12,8 @@ export function HeroWarp({ onGetStarted }: HeroWarpProps) {
   const [selectedIntent, setSelectedIntent] = useState<PersonaType | null>(null);
 
   const intents = [
-    { id: "freelancer" as PersonaType, label: "I'm freelancing", icon: Users },
-    { id: "company" as PersonaType, label: "I hire contractors", icon: Building2 },
-    { id: "agency" as PersonaType, label: "I place talent", icon: Network },
+    { id: "agency" as PersonaType, label: "Staffing agency", icon: Network },
+    { id: "company" as PersonaType, label: "Consulting firm", icon: Building2 },
   ];
 
   return (
@@ -31,21 +30,20 @@ export function HeroWarp({ onGetStarted }: HeroWarpProps) {
           variant="secondary"
           className="mb-6 px-4 py-1.5 text-xs font-medium bg-accent-brand/10 text-accent-brand border-accent-brand/20"
         >
-          Open Beta — Building in public
+          Founding pilots — hands-on onboarding
         </Badge>
 
         {/* Headline */}
         <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl mb-6 font-semibold tracking-tight leading-[1.08]">
-          The work platform for
+          Approved work becomes an invoice.
           <br className="hidden sm:block" />
-          <span className="text-accent-brand"> technical freelancers</span>
+          <span className="text-accent-brand"> Without chasing three companies.</span>
         </h1>
 
         {/* Subtext — honest, not hype */}
         <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
-          Find contracts, track time, get approvals, and invoice — all connected
-          through a graph that maps how companies, agencies, and freelancers
-          actually work together.
+          WorkGraph gives staffing and consulting agencies one verifiable chain
+          from submitted time, through each counterparty approval, to invoice-ready work.
         </p>
 
         {/* Intent pills */}
@@ -77,11 +75,11 @@ export function HeroWarp({ onGetStarted }: HeroWarpProps) {
             className="h-12 px-8 text-base rounded-xl font-medium gap-2"
             onClick={() => onGetStarted?.("", selectedIntent || undefined)}
           >
-            Get started free
+            Start a paid pilot
             <ArrowRight className="w-4 h-4" />
           </Button>
           <p className="text-xs text-muted-foreground">
-            No credit card required · Free during beta
+            Counterparty approvers join free · Pilot setup included · Human-controlled approvals
           </p>
         </div>
 
@@ -116,15 +114,15 @@ function ProductPreview() {
           {/* Header row */}
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm font-semibold text-foreground">Welcome back, Sarah</div>
-              <div className="text-[11px] text-muted-foreground">Here's your overview for this month.</div>
+              <div className="text-sm font-semibold text-foreground">Month-end close</div>
+              <div className="text-[11px] text-muted-foreground">From approved time to an invoice-ready run.</div>
             </div>
             <div className="flex gap-2">
               <div className="h-7 px-3 rounded-md bg-muted text-[11px] flex items-center gap-1.5 text-muted-foreground">
-                <BarChart3 className="w-3 h-3" /> Browse Jobs
+                <BarChart3 className="w-3 h-3" /> Check readiness
               </div>
               <div className="h-7 px-3 rounded-md bg-foreground text-background text-[11px] flex items-center gap-1.5">
-                <Clock className="w-3 h-3" /> Submit Timesheet
+                <Clock className="w-3 h-3" /> Review approvals
               </div>
             </div>
           </div>
@@ -132,10 +130,10 @@ function ProductPreview() {
           {/* Stat cards */}
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: "Earnings", value: "$12,450", sub: "+15.3%", color: "bg-emerald-50 text-emerald-600" },
-              { label: "Hours Logged", value: "92.5", sub: "87% billable", color: "bg-blue-50 text-blue-600" },
-              { label: "Pending Approvals", value: "3", sub: "Worth $4,500", color: "bg-amber-50 text-amber-600" },
-              { label: "Active Contracts", value: "5", sub: "2 expiring soon", color: "bg-violet-50 text-violet-600" },
+              { label: "Approved hours", value: "64", sub: "2 approved weeks", color: "bg-emerald-50 text-emerald-600" },
+              { label: "Pending approvals", value: "1", sub: "Assigned to the next party", color: "bg-blue-50 text-blue-600" },
+              { label: "Invoice-ready", value: "2", sub: "Weeks ready for billing", color: "bg-amber-50 text-amber-600" },
+              { label: "Setup blockers", value: "1", sub: "Missing private rate", color: "bg-violet-50 text-violet-600" },
             ].map((stat) => (
               <div key={stat.label} className="p-3 rounded-lg border border-border/40 bg-card text-left">
                 <div className="flex items-center gap-2 mb-2">
@@ -155,8 +153,8 @@ function ProductPreview() {
             {/* Chart */}
             <div className="col-span-2 p-3 rounded-lg border border-border/40 bg-card">
               <div className="flex items-center justify-between mb-3">
-                <div className="text-[11px] font-medium text-foreground">Earnings Trend</div>
-                <div className="text-[10px] text-muted-foreground">Last 30 days</div>
+                <div className="text-[11px] font-medium text-foreground">Approval-to-invoice progress</div>
+                <div className="text-[10px] text-muted-foreground">Current close</div>
               </div>
               {/* Mini chart bars */}
               <div className="flex items-end gap-1 h-16">
@@ -174,9 +172,9 @@ function ProductPreview() {
             <div className="p-3 rounded-lg border border-border/40 bg-card space-y-3">
               <div className="text-[11px] font-medium text-foreground">Quick Actions</div>
               {[
-                { icon: FileText, label: "Log Hours" },
+                { icon: FileText, label: "Check Readiness" },
                 { icon: CheckCircle, label: "Review Approvals" },
-                { icon: Users, label: "My Network" },
+                { icon: Users, label: "Generate Invoice" },
               ].map((action) => (
                 <div key={action.label} className="flex items-center gap-2 p-1.5 rounded-md bg-muted/40">
                   <action.icon className="w-3 h-3 text-muted-foreground" />

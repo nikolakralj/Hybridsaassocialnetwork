@@ -111,7 +111,7 @@ export function TopBar({ mode = "guest", onSignIn, onGetStarted }: TopBarProps) 
                 onClick={onGetStarted} 
                 className="rounded-xl font-medium"
               >
-                Get started free
+                Start pilot
               </Button>
             </>
           )}
@@ -124,7 +124,7 @@ export function TopBar({ mode = "guest", onSignIn, onGetStarted }: TopBarProps) 
             size="sm"
             className="rounded-xl font-medium"
           >
-            Get started
+            Start pilot
           </Button>
 
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
@@ -182,7 +182,7 @@ export function AnnouncementBar() {
     <div className="bg-accent-brand text-white py-1.5 px-4 relative">
       <div className="max-w-7xl mx-auto text-center">
         <p className="text-sm m-0 font-medium">
-          We're in open beta — Join free →
+          Founding paid pilots are open — close one real month with us →
         </p>
       </div>
       <button

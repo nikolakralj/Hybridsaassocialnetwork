@@ -16,10 +16,10 @@ export function FinalCTABanner({ onGetStarted }: FinalCTABannerProps) {
 
       <div className="max-w-4xl mx-auto text-center relative z-10">
         <h2 className="text-4xl md:text-5xl font-semibold tracking-tight mb-6 leading-tight">
-          Run your freelance career at WorkGraph speed
+          Close your next contractor month without the approval chase
         </h2>
         <p className="text-xl mb-12 opacity-85 max-w-2xl mx-auto leading-relaxed">
-          We're building in public and shipping fast. Join the open beta and help shape the future of freelance work infrastructure.
+          We configure one real project, invite the real counterparties, and prove the path from submitted time to an invoice-ready close.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
           <Button
@@ -27,7 +27,7 @@ export function FinalCTABanner({ onGetStarted }: FinalCTABannerProps) {
             onClick={onGetStarted}
             className="h-14 px-10 text-base bg-background text-foreground hover:bg-background/95 rounded-xl font-medium apple-shadow-lg hover:apple-shadow-xl apple-transition hover:scale-[1.02] active:scale-[0.98]"
           >
-            Start for free
+            Start a paid pilot
             <ArrowRight className="w-5 h-5 ml-2" strokeWidth={2.5} />
           </Button>
           <Button
@@ -40,7 +40,7 @@ export function FinalCTABanner({ onGetStarted }: FinalCTABannerProps) {
           </Button>
         </div>
         <p className="text-sm mt-8 opacity-60">
-          Free forever for individuals · No credit card required
+          Counterparty approvers join free · Pilot scope confirmed before onboarding
         </p>
       </div>
     </section>

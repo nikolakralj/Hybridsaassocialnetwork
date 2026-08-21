@@ -8,16 +8,24 @@ import {
 export function PricingFAQ() {
   const faqs = [
     {
-      question: "Is my profile public?",
-      answer: "Your Personal Profile visibility is your choice. You can keep it private, share with your network, or make it fully public. Worker Records (created by companies/agencies) are always private to that organization.",
+      question: "Who is the first version for?",
+      answer: "Small staffing, development, and consulting agencies that coordinate workers, suppliers, and client approvers across a recurring monthly timesheet-to-invoice process.",
     },
     {
-      question: "Can I hire contractors compliantly?",
-      answer: "Yes. WorkGraph supports direct contracts, EoR partnerships, and vendor arrangements. Built-in approval chains, audit trails, and multi-party invoicing ensure compliance with your internal processes.",
+      question: "Why are counterparty approvers free?",
+      answer: "They are part of the workflow, not the buyer. Removing per-seat friction makes it easier for the operating agency to get real suppliers and clients into the approval chain.",
     },
     {
-      question: "How do payouts work?",
-      answer: "Freelancers auto-generate invoices from approved timesheets. Companies approve and pay via their preferred method (ACH, wire, Stripe). Agencies can handle 3-way splits (agency fee, worker pay, client billing) in one flow.",
+      question: "Does WorkGraph move money or replace accounting software?",
+      answer: "Not today. WorkGraph prepares and tracks invoice records from approved work. Payment execution, reconciliation, and accounting-system sync remain with your existing tools during the pilot.",
+    },
+    {
+      question: "Is Croatian e-invoicing already certified?",
+      answer: "No. The product stores structured invoice fields and EN 16931-oriented template metadata, but certified Croatian e-invoice XML, fiscalization, and intermediary delivery are still a readiness track—not a current compliance claim.",
+    },
+    {
+      question: "How is cross-company data protected?",
+      answer: "The pilot architecture uses database policies, guarded server functions, account-bound approvals, private rate records, and server-scoped graph payloads. Every pilot still receives a security and workflow readiness review before real commercial use.",
     },
   ];
 
@@ -26,7 +34,7 @@ export function PricingFAQ() {
       <h3 className="text-center mb-8 text-xl font-semibold">Common questions</h3>
       <Accordion type="single" collapsible className="w-full">
         {faqs.map((faq, index) => (
-          <AccordionItem key={index} value={`item-${index}`}>
+          <AccordionItem key={faq.question} value={`item-${index}`}>
             <AccordionTrigger className="text-left font-medium">
               {faq.question}
             </AccordionTrigger>

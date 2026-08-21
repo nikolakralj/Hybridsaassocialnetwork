@@ -6,14 +6,14 @@ export function BenefitSections() {
     {
       icon: Network,
       iconColor: "bg-blue-500/10 text-blue-600",
-      title: "A graph that models real work relationships",
+      title: "One chain of responsibility across every company",
       description:
-        "WorkGraph uses a 3-tier graph data model (Company → Agency → Client) to map how organizations actually collaborate. Not flat contact lists — real organizational relationships with scoped permissions.",
+        "Model the supplier, agency, client, workers, and approval path once. Each party sees the part of the chain it is permitted to act on.",
       features: [
-        "Company, Agency, and Client node types",
-        "Relationship-Based Access Control (ReBAC)",
-        "Persona switching — see the platform from any perspective",
-        "SVG auto-layout visualization engine",
+        "Project-specific organization and worker identities",
+        "Server-scoped graph projection",
+        "Private commercial fields stay outside unauthorized browser payloads",
+        "Visible approval and billing relationships",
       ],
       imageUrl:
         "https://images.unsplash.com/photo-1770159116807-9b2a7bb82294?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmcmVlbGFuY2VyJTIwbGFwdG9wJTIwY29kaW5nJTIwZGFyayUyMG1pbmltYWx8ZW58MXx8fHwxNzczMjgxOTAwfDA&ixlib=rb-4.1.0&q=80&w=1080",
@@ -22,14 +22,14 @@ export function BenefitSections() {
     {
       icon: Briefcase,
       iconColor: "bg-amber-500/10 text-amber-600",
-      title: "Projects with built-in compliance",
+      title: "Real people approve their own layer",
       description:
-        "Create projects with statements of work, approval chains, and region-aware settings. Every contractor interaction has a paper trail.",
+        "Invite a named counterparty approver to represent their organization. Approval requests route to that person's account instead of a shared admin workaround.",
       features: [
-        "Project creation wizard with SOW builder",
-        "Multi-currency and region support",
-        "Work week configuration",
-        "Member management with role-based access",
+        "Party-tagged invitations",
+        "Account-to-organization approver linking",
+        "Database-enforced approval ownership",
+        "Who-approved-what audit trail",
       ],
       imageUrl:
         "https://images.unsplash.com/photo-1695462131553-5f532df1768d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0ZWNobmljYWwlMjB0ZWFtJTIwcmVtb3RlJTIwd29yayUyMHZpZGVvJTIwY2FsbHxlbnwxfHx8fDE3NzMyODE5MDF8MA&ixlib=rb-4.1.0&q=80&w=1080",
@@ -38,14 +38,14 @@ export function BenefitSections() {
     {
       icon: Clock,
       iconColor: "bg-emerald-500/10 text-emerald-600",
-      title: "Hours-first timesheets that flow through the graph",
+      title: "Invoice only when the work is ready",
       description:
-        "Our timesheet system is designed around hours, not tasks. Log time, submit for approval, and watch it cascade through your multi-party approval chain automatically.",
+        "Approved weeks roll into a monthly seller invoice, while readiness checks stop missing private rates from becoming zero-value drafts.",
       features: [
         "Weekly timesheet grid with task tagging",
         "Multi-party cascading approvals",
-        "SLA tracking for approval deadlines",
-        "Automatic invoice generation from approved hours",
+        "One monthly invoice per seller organization",
+        "Issued and paid invoice lifecycle locking",
       ],
       imageUrl:
         "https://images.unsplash.com/photo-1702479743967-3dcccd4a671d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBkYXNoYm9hcmQlMjBhbmFseXRpY3MlMjBzY3JlZW4lMjBkYXJrfGVufDF8fHx8MTc3MzIzMzkwMXww&ixlib=rb-4.1.0&q=80&w=1080",
@@ -58,12 +58,11 @@ export function BenefitSections() {
       <div className="max-w-5xl mx-auto">
         <div className="text-center mb-16">
           <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-3">
-            Built different, on purpose
+            Built for the operational handoff that spreadsheets miss
           </h2>
           <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-            Most freelancer tools are glorified spreadsheets. WorkGraph is a
-            relationship-aware platform that understands organizational
-            complexity.
+            WorkGraph connects the evidence of work, the people authorized to
+            approve it, and the billing output that follows.
           </p>
         </div>
 
