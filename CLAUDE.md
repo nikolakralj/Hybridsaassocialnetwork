@@ -56,6 +56,15 @@ See `src/docs/TASK_BACKLOG.md` for full task cards.
 - Runs `npm run build` before marking any task `[REVIEW]`.
 - Updates `AGENT_WORKLOG.md` with what changed + residual risks.
 
+### Git workflow — ALL agents (adopted 2026-10-09)
+- Never commit directly to `codex/c3-trust-revenue` or `main`; they change only by merged PR.
+- One task = one branch (`claude/…`, `codex/…`, `grok/…`/`cursor/…`) cut from latest
+  `origin/codex/c3-trust-revenue`; one agent per folder (own clone or `git worktree`).
+- Push → PR into `codex/c3-trust-revenue` with: what changed, how verified, assumptions,
+  residual risks, worklog entry. Small PRs, one backlog item each.
+- Claude reviews the diff → GO merges; changes requested → fix on the same PR.
+- Migrations in a PR are drafts, applied only after merge. Full rules: `AGENT_ONBOARDING.md` §3a.
+
 ## File Ownership
 
 | File | Owner | Rule |

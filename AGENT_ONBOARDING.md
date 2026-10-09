@@ -45,6 +45,24 @@ NOT a code problem: recruiting 3 paying pilot agencies. That is the real green l
   Keep migration files in sync with the live DB.
 - **Claude has GO/NO-GO gate authority.** No phase advances without review.
 
+## 3a. Git workflow — every agent, every change (adopted 2026-10-09)
+Every collision this project hit came from two agents editing the same folder at once.
+From now on ALL agents (Claude, Codex, Grok) work the way Grok's PR #1 did:
+- **Never commit directly to `codex/c3-trust-revenue` or `main`.** They change only by merged PR.
+- **One task = one branch**, cut from the latest `origin/codex/c3-trust-revenue`:
+  `claude/<topic>`, `codex/<topic>`, `grok/<topic>` (Grok's `cursor/<topic>` is fine).
+- **One agent per folder.** Each agent works in its own clone or `git worktree`,
+  never in a working directory another agent is using.
+- Start every run with `git fetch` + `git status`; never build on someone else's dirty tree.
+- **Push the branch and open a PR into `codex/c3-trust-revenue`.** The PR description says:
+  what changed, how it was verified (`npm run build` result, signed-in click-through),
+  assumptions made, residual risks. Append your `AGENT_WORKLOG.md` entry in the same PR.
+- **Keep PRs small** — one backlog item each. If the base moved, merge it in before review.
+- **Claude reviews the diff, not the summary.** GO → merged. Changes requested → fix on
+  the same branch and push to the same PR. Nothing merges without Claude's GO.
+- **Migrations in a PR are drafts.** They are applied to the live DB only after merge,
+  deliberately, via SQL Editor/MCP — never `supabase db push`.
+
 ## 4. Gotchas that will waste your day (see CLAUDE.md "Things That Bite You")
 - `.update().eq()` silently succeeds on 0 rows → use `.select('id')` and check length,
   or `.maybeSingle()` + null check (the "Cannot coerce" error = RLS blocked, 0 rows).
