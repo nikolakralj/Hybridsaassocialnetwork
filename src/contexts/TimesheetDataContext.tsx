@@ -243,7 +243,7 @@ export function getMondaysForMonth(monthKey: string): string[] {
 }
 
 /** True when any day of the Mon–Fri week touches the given month. */
-function weekOverlapsMonth(weekStart: string, month: string): boolean {
+export function weekOverlapsMonth(weekStart: string, month: string): boolean {
   if (monthOf(weekStart) === month) return true;
   const friday = weekEndIso(weekStart);
   return monthOf(friday) === month;

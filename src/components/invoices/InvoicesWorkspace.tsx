@@ -158,12 +158,76 @@ function parseTimesheetKey(key?: string): { personId: string; weekStart: string 
   };
 }
 
-function makeTimesheetKey(personId: string, weekStart: string): string {
+export function makeTimesheetKey(personId: string, weekStart: string): string {
   return `${personId}:${weekStart}`;
 }
 
-function weekBillingPersonId(week: StoredWeek): string {
+export function weekBillingPersonId(week: StoredWeek): string {
   return week.graphNodeId || week.personId;
+}
+
+/** Approved weeks only. Draft, submitted, and rejected weeks are not billable. */
+export function filterApprovedWeeks<T extends { status: string }>(weeks: T[]): T[] {
+  return weeks.filter((week) => week.status === 'approved');
+}
+
+/**
+ * Keys already covered by a stored invoice, including every timesheet id on a
+ * consolidated invoice. A later month that overlaps the same week must see
+ * these keys and skip the week.
+ */
+export function collectInvoicedTimesheetKeys(
+  entries: Array<{ invoiceKey: string; timesheetIds?: string[] }>,
+): Set<string> {
+  const keys = new Set<string>();
+  entries.forEach((entry) => {
+    if (entry.invoiceKey) keys.add(entry.invoiceKey);
+    (entry.timesheetIds || []).forEach((key) => {
+      if (key) keys.add(key);
+    });
+  });
+  return keys;
+}
+
+export function excludeInvoicedWeeks<T extends { personId: string; weekStart: string }>(
+  weeks: T[],
+  existingKeys: Set<string>,
+): T[] {
+  return weeks.filter((week) => !existingKeys.has(makeTimesheetKey(week.personId, week.weekStart)));
+}
+
+/**
+ * Workers who must not be invoiced. A missing, masked, or non-positive rate
+ * blocks generation. Callers must not build a draft for these weeks — the
+ * draft builder would otherwise fall through to a zero amount.
+ */
+export function missingBillableRateNames(
+  weeks: StoredWeek[],
+  rates: Record<string, PersonRate | undefined>,
+  nameFor: (billingPersonId: string) => string,
+): string[] {
+  return Array.from(new Set(
+    weeks
+      .filter((week) => {
+        const rate = rates[weekBillingPersonId(week)];
+        return !rate || rate.masked || rate.rate <= 0;
+      })
+      .map((week) => nameFor(weekBillingPersonId(week))),
+  ));
+}
+
+/**
+ * When any selected week lacks a billable rate, no drafts are returned.
+ * A zero amount is not a stand-in for a missing rate.
+ */
+export function weeksEligibleForInvoiceDrafts(
+  weeks: StoredWeek[],
+  rates: Record<string, PersonRate | undefined>,
+  nameFor: (billingPersonId: string) => string,
+): { weeks: StoredWeek[]; missingRateNames: string[] } {
+  const missingRateNames = missingBillableRateNames(weeks, rates, nameFor);
+  if (missingRateNames.length > 0) return { weeks: [], missingRateNames };
+  return { weeks, missingRateNames };
 }
 
 function uiStatusFromApiStatus(status: ApiInvoiceStatus): InvoiceDraft['status'] {
@@ -415,7 +479,7 @@ function countWorkedDays(week: StoredWeek): number {
   return week.days.filter((day) => (day.totalHours ?? day.hours ?? 0) > 0).length;
 }
 
-function buildDraftFromWeek(
+export function buildDraftFromWeek(
   week: StoredWeek,
   projectId: string,
   projectName: string,
@@ -519,7 +583,7 @@ function groupWeeksBySellerOrg(weeks: StoredWeek[], projectId: string): SellerWe
   return Array.from(groups.values());
 }
 
-function buildConsolidatedDraft(
+export function buildConsolidatedDraft(
   group: SellerWeekGroup,
   projectId: string,
   projectName: string,
@@ -629,7 +693,7 @@ function toInvoicePayload(invoice: InvoiceDraft) {
   };
 }
 
-function getInvoiceKey(invoice: Pick<InvoiceDraft, 'id' | 'personId' | 'weekStart' | 'timesheetKey' | 'number'>): string {
+export function getInvoiceKey(invoice: Pick<InvoiceDraft, 'id' | 'personId' | 'weekStart' | 'timesheetKey' | 'number'>): string {
   if (invoice.timesheetKey) return invoice.timesheetKey;
   if (invoice.personId && invoice.weekStart) return makeTimesheetKey(invoice.personId, invoice.weekStart);
   return invoice.number || invoice.id;
@@ -753,9 +817,7 @@ export function InvoicesWorkspace({
   }, [handleMonthChange]);
 
   const allWeeksForMonth = useMemo(() => store.getAllWeeksForMonth(monthKey), [store, monthKey, store.version]);
-  const approvedWeeks = useMemo(() => {
-    return allWeeksForMonth.filter((week) => week.status === 'approved');
-  }, [allWeeksForMonth]);
+  const approvedWeeks = useMemo(() => filterApprovedWeeks(allWeeksForMonth), [allWeeksForMonth]);
 
   const weekLookup = useMemo(() => {
     const map = new Map<string, { weekLabel: string }>();
@@ -873,40 +935,37 @@ export function InvoicesWorkspace({
 
     // Dedup BEFORE building: a week already covered by any stored invoice
     // (including inside a consolidated invoice's timesheetIds) is skipped.
-    const existingKeys = new Set<string>();
-    storedInvoices.forEach((invoice) => {
-      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, billingClientName, billingNameLookup, weekLookup);
-      existingKeys.add(getInvoiceKey(normalized));
-      (invoice.timesheetIds || []).forEach((key) => existingKeys.add(key));
-    });
+    const existingKeys = collectInvoicedTimesheetKeys(
+      storedInvoices.map((invoice) => {
+        const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, billingClientName, billingNameLookup, weekLookup);
+        return {
+          invoiceKey: getInvoiceKey(normalized),
+          timesheetIds: invoice.timesheetIds,
+        };
+      }),
+    );
 
-    const weeksToInvoice = approvedWeeks.filter((week) => !existingKeys.has(makeTimesheetKey(week.personId, week.weekStart)));
+    const weeksToInvoice = excludeInvoicedWeeks(approvedWeeks, existingKeys);
     if (weeksToInvoice.length === 0) {
       toast.info('All approved weeks already have invoices.');
       return;
     }
 
-    const missingRateNames = Array.from(new Set(
-      weeksToInvoice
-        .filter((week) => {
-          const rate = rates[weekBillingPersonId(week)];
-          return !rate || rate.masked || rate.rate <= 0;
-        })
-        .map((week) => {
-          const billingPersonId = weekBillingPersonId(week);
-          return billingNameLookup[billingPersonId]?.name || billingPersonId;
-        })
-    ));
-    if (missingRateNames.length > 0) {
+    const rateGate = weeksEligibleForInvoiceDrafts(
+      weeksToInvoice,
+      rates,
+      (billingPersonId) => billingNameLookup[billingPersonId]?.name || billingPersonId,
+    );
+    if (rateGate.missingRateNames.length > 0) {
       toast.error(
-        `Set a private billing rate for ${missingRateNames.join(', ')} before generating invoices. No zero-value drafts were created.`,
+        `Set a private billing rate for ${rateGate.missingRateNames.join(', ')} before generating invoices. No zero-value drafts were created.`,
         { duration: 8000 },
       );
       return;
     }
 
     const draftsToCreate = consolidateInvoices
-      ? groupWeeksBySellerOrg(weeksToInvoice, projectId).map((group, index) => {
+      ? groupWeeksBySellerOrg(rateGate.weeks, projectId).map((group, index) => {
           const draft = buildConsolidatedDraft(
             group,
             projectId,
@@ -921,7 +980,7 @@ export function InvoicesWorkspace({
           );
           return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
         })
-      : weeksToInvoice.map((week, index) => {
+      : rateGate.weeks.map((week, index) => {
           const draft = buildDraftFromWeek(
             week,
             projectId,
