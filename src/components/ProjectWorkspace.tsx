@@ -1,7 +1,7 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
-  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck
+  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck, ClipboardCheck
 } from "lucide-react";
 import { ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
@@ -43,10 +43,13 @@ const LazyProjectApprovalsTab = lazy(() =>
 const LazyInvoicesWorkspace = lazy(() =>
   import("./invoices/InvoicesWorkspace").then((mod) => ({ default: mod.InvoicesWorkspace }))
 );
+const LazyCloseReadinessGate = lazy(() =>
+  import("./close/CloseReadinessGate").then((mod) => ({ default: mod.CloseReadinessGate }))
+);
 const tabLoadingFallback = <div className="p-8 text-muted-foreground">Loading...</div>;
 
 // Module definitions
-type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "invoices" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
+type ModuleId = "overview" | "project-graph" | "timesheets" | "approvals" | "close" | "invoices" | "contracts" | "documents" | "tasks" | "analytics" | "team" | "messages" | "graph-snapshot";
 
 interface Module {
   id: ModuleId;
@@ -222,6 +225,14 @@ export function ProjectWorkspace({
       name: "Approvals",
       icon: CheckSquare,
       description: "Manage pending approvals and tasks",
+      category: "core",
+      isEnabled: true,
+    },
+    {
+      id: "close",
+      name: "Close",
+      icon: ClipboardCheck,
+      description: "Missing hours, pending approver, rate, and PO for each worker-month",
       category: "core",
       isEnabled: true,
     },
@@ -880,6 +891,17 @@ export function ProjectWorkspace({
                   projectName={projectName}
                   viewerName={effectiveViewer?.name}
                   viewerNodeId={effectiveViewer?.nodeId}
+                />
+              </Suspense>
+            </TabsContent>
+
+            <TabsContent value="close" className="space-y-6">
+              <Suspense fallback={tabLoadingFallback}>
+                <LazyCloseReadinessGate
+                  projectId={projectId}
+                  projectName={projectName}
+                  canConfirmRates={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
+                  members={teamMembers}
                 />
               </Suspense>
             </TabsContent>
