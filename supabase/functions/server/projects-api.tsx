@@ -79,6 +79,7 @@ function rowToProject(row: any) {
     startDate: row.start_date,
     endDate: row.end_date ?? null,
     workWeek: row.work_week,
+    requirePurchaseOrder: row.require_purchase_order === true,
     status: row.status,
     supplyChainStatus: row.supply_chain_status ?? undefined,
     ownerId: row.owner_id,
@@ -663,6 +664,7 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     if (body.startDate !== undefined) updateData.start_date = body.startDate.slice(0, 10);
     if (body.endDate !== undefined) updateData.end_date = body.endDate ? body.endDate.slice(0, 10) : null;
     if (body.workWeek !== undefined) updateData.work_week = body.workWeek;
+    if (body.requirePurchaseOrder !== undefined) updateData.require_purchase_order = body.requirePurchaseOrder === true;
     if (body.status !== undefined) updateData.status = body.status;
     if (body.supplyChainStatus !== undefined) updateData.supply_chain_status = body.supplyChainStatus;
     if (body.graph !== undefined) updateData.graph = body.graph;

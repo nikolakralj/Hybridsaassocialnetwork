@@ -1098,3 +1098,20 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - **Blocked on real inputs (NOT fabricated):** Rodman's real billing rate; James's
   real email + James personally accepting/approving G2's layer. These finish the
   real 3-account proof.
+
+## 2026-10-09 - [DONE] close-readiness-gate
+
+- Added the project workspace **Close** tab (`CloseReadinessGate`). For each worker and the shared selected month it shows missing hours, the pending approver, billing-rate presence, purchase-order presence, and whether that worker-month is invoice-ready.
+- Rules live in `src/utils/close-readiness.ts`. Weeks come from `getMondaysForMonth` (same calendar as the timesheet grid) plus the timesheet store. Pending approvers come from `getApprovalQueue`. Rates come from `resolveProjectRates` (private `wg_contract_rates`). Purchase orders come from scoped-graph `po` nodes / `poNumber` fields and `wg_documents` rows of type `purchase_order`.
+- A worker-month is invoice-ready only when every week that has already started has hours and status `approved`, a positive unmasked bill rate is on file, and a usable PO is linked to that worker or their organization. Future weeks do not block. There is no assumed weekly-hours target. Missing data stays missing; a failed rate, approval, or PO load stays unknown.
+- Approver-only people and people on a client party are left off the grid unless they already have timesheets. The string "Me" is not treated as an approver name.
+- `npm run build` passes. The Close tab is its own chunk: 21.08 kB (6.71 kB gzip). Existing circular manual-chunk warnings remain. No project test script exists; the readiness rules were checked with a node script covering missing hours, pending approver, missing/hidden rate, draft vs linked PO, and the invoice-ready path.
+- Residual: a PO that names only another party does not clear this worker. A week with any hours above zero is not marked missing, because no expected-hours field exists. Document RLS from migration 006 may reject the PO query; the screen then keeps graph POs and otherwise shows the PO check as not loaded. Signed-in browser pass was not run in this environment.
+
+## 2026-10-09 - [DONE] close-readiness-gate PO opt-in
+
+- Claude review on PR #1: purchase-order check is now opt-in per project, off by default. There was no persisted project-settings store (the configuration drawer only keeps those flags in memory), so migration `032_project_require_purchase_order.sql` adds `wg_projects.require_purchase_order BOOLEAN NOT NULL DEFAULT false`. Nikola applies it; it was not pushed to the database from here.
+- When the flag is off, the Close tab shows a linked PO number or "Not required", and neither a missing PO nor a failed `wg_documents` read blocks invoice-ready. When the flag is on, the previous PO gate stays. Owners and editors get a "Require a purchase order" switch once the column can be read. The switch confirms the saved value; if migration 032 or the project API deploy is still pending, the save is rejected and the switch stays off.
+- `npm run build` passes. The readiness-rule script passed with the setting on and off.
+- Residual: no owner credentials in this environment, so the NAS Close tab was not opened and no screenshot was taken.
+

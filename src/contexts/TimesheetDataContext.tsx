@@ -210,8 +210,9 @@ function weekHasHoursBeforeProjectStart(week: StoredWeek, projectStartDate: stri
 
 /** Return Monday dates whose week overlaps a month key (YYYY-MM).
  *  Includes the prior-month Monday when the month starts mid-week (e.g. Apr 1 = Wed
- *  → the Mar 30 week has Apr days and must appear in the April view). */
-function getMondaysForMonth(monthKey: string): string[] {
+ *  → the Mar 30 week has Apr days and must appear in the April view).
+ *  Exported so month-close uses the same weeks as the timesheet grid. */
+export function getMondaysForMonth(monthKey: string): string[] {
   const [yearRaw, monthRaw] = monthKey.split('-').map(Number);
   if (!yearRaw || !monthRaw || monthRaw < 1 || monthRaw > 12) return [];
 
