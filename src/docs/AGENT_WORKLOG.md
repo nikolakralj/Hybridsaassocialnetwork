@@ -1115,3 +1115,27 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` passes. The readiness-rule script passed with the setting on and off.
 - Residual: no owner credentials in this environment, so the NAS Close tab was not opened and no screenshot was taken.
 
+## 2026-10-09 - [DONE] regression-tests
+
+- Added Vitest 3 (`vitest@^3.2.7`, `npm test`, `vitest.config.ts` merged with the existing Vite config). Vitest 5 was not used because it requires Vite 6.4+ and this repo is on Vite 6.3.5.
+- No product calculation change. Invoice generation now calls the same approved-week filter, already-invoiced skip, and missing-rate block that the tests call. `buildDraftFromWeek`, `buildConsolidatedDraft`, `buildInvoiceRequestBody`, `getMondaysForMonth`, and `weekOverlapsMonth` were already the implementations; they are exported so the tests reach them.
+- Unit tests (`npm test`: 2 files, 17 tests, all passed, including 2 expected failures):
+  - Close readiness (`src/utils/close-readiness.test.ts`): fully approved September 2026 with a positive rate is invoice-ready; missing hours names the week; a submitted week names the pending approver; "Me" is not an approver name; a missing or zero rate blocks; PO gate off (omitted or false) ignores a missing PO and a failed document load; PO gate on blocks on missing PO and on an unread document list, and clears when a usable PO is linked.
+  - Invoice maths (`src/utils/invoice-calculation.test.ts`): hours × hourly rate is the line amount; VAT is rounded to the cent on the subtotal (100 at 25% → 25; 10.10 at 25% → 2.53); a consolidated draft total equals the sum of the per-worker totals and the VAT total follows that sum; draft, submitted, and rejected weeks are excluded; a timesheet id already stored on an invoice, including a second line of a consolidated invoice, is not invoiced again; a missing, masked, zero, or partial-team rate returns no drafts and no 0 amount.
+  - Month grid: `getMondaysForMonth('2026-09')` is 31 Aug through 28 Sep; `getMondaysForMonth('2026-10')` starts at 28 Sep (the week of 29 Sep) and includes 5 Oct. That Monday overlaps both months. Once its timesheet key is stored, the other month does not invoice it again.
+- Known failures, left failing on purpose (`it.fails`):
+  - `buildDraftFromWeek` does not round the line amount to the cent. 1 hour × 10.005 is stored as 10.005, not 10.01. VAT rounding is separate and does round.
+  - A week that crosses a month (Mon 28 Sep–Fri 2 Oct 2026, the week containing 29 Sep; 5 Oct is the next Monday) is one timesheet line for all 32 hours. There is no day split into 16 September hours and 16 October hours, so the month that invoices the week also bills the other month's days. It is not billed twice, because the timesheet key is shared.
+- Not unit-tested, because it is not a pure function and was not refactored:
+  - `groupWeeksBySellerOrg` reads sessionStorage approval parties. Consolidated totals are tested by passing a seller group straight into `buildConsolidatedDraft`.
+  - `createInvoice` writes through Supabase. Neither it nor `wg_invoices` checks that every `timesheet_ids` entry is an approved week. Only the workspace filter does.
+  - Signed-in browser pass was not run. The workspace change is the same filter moved into named functions.
+- SQL: `supabase/tests/033_trust_role_regression.sql`. Same shape as `030_trust_c3_regression.sql` (one transaction, `ROLLBACK`). Synthetic auth users, orgs, parties, rates (1.11 pay, 2.22 bill, 0.33 markup, 0.44 cost — fixture markers, not commercial rates), one worker contract, one agency→other invoice, one submitted week. Not executed here; there are no database credentials, and it must not be pushed.
+  - As the client approver: cannot read agency pay/bill/markup/cost, cannot read the worker contract, cannot read the invoice between the other parties, cannot update the graph, cannot retarget their membership or call `wg_link_member_as_party_approver` for the agency or the other company (expects 42501).
+  - As the worker: can read their pay row, cannot read bill/markup/cost, cannot set their own week to approved (expects 42501).
+  - Issued invoice: notes edit and issued→draft expect SQLSTATE 22023.
+  - Known failures recorded in the result rows, not raised: an expired pending invite can be updated to accepted, and an accepted invite can be set back to pending. There is no `used_at`. `supabase/functions/server/invitations-api.tsx` is the guard (410 expired, 409 already processed).
+- How to run the SQL, as `postgres`, whole file in one transaction: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/033_trust_role_regression.sql`. A clean run prints `wg_regression_033_results` and rolls back. Do not `supabase db push`.
+- Verification: `npm test` passed (17 tests). `npm run build` passed. Pre-existing circular manual-chunk warnings remain. No chunk from this change was sized against the 400 kB gzip gate beyond the build completing.
+- Residual: Claude should decide whether cent rounding, day-level month splits, a database invite guard, and a server-side approved-timesheet check are bugs. This pass did not change those behaviours.
+
