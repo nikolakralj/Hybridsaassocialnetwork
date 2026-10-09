@@ -1108,3 +1108,10 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` passes. The Close tab is its own chunk: 21.08 kB (6.71 kB gzip). Existing circular manual-chunk warnings remain. No project test script exists; the readiness rules were checked with a node script covering missing hours, pending approver, missing/hidden rate, draft vs linked PO, and the invoice-ready path.
 - Residual: a PO that names only another party does not clear this worker. A week with any hours above zero is not marked missing, because no expected-hours field exists. Document RLS from migration 006 may reject the PO query; the screen then keeps graph POs and otherwise shows the PO check as not loaded. Signed-in browser pass was not run in this environment.
 
+## 2026-10-09 - [DONE] close-readiness-gate PO opt-in
+
+- Claude review on PR #1: purchase-order check is now opt-in per project, off by default. There was no persisted project-settings store (the configuration drawer only keeps those flags in memory), so migration `032_project_require_purchase_order.sql` adds `wg_projects.require_purchase_order BOOLEAN NOT NULL DEFAULT false`. Nikola applies it; it was not pushed to the database from here.
+- When the flag is off, the Close tab shows a linked PO number or "Not required", and neither a missing PO nor a failed `wg_documents` read blocks invoice-ready. When the flag is on, the previous PO gate stays. Owners and editors get a "Require a purchase order" switch once the column can be read. The switch confirms the saved value; if migration 032 or the project API deploy is still pending, the save is rejected and the switch stays off.
+- `npm run build` passes. The readiness-rule script passed with the setting on and off.
+- Residual: no owner credentials in this environment, so the NAS Close tab was not opened and no screenshot was taken.
+

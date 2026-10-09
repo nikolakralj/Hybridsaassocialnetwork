@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Switch } from '@/components/ui/switch';
+import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContext } from '../../contexts/MonthContext';
 import { getMondaysForMonth, useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import type { StoredWeek } from '../../types/timesheets';
@@ -22,6 +25,7 @@ import { buildPersonToOrgMap } from '../workgraph/graph-visibility';
 import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { buildScopedGraphDirectories } from '../../utils/graph/scoped-graph-directories';
 import { getApprovalQueue, type ApprovalQueueItem } from '../../utils/api/approvals-supabase';
+import { updateProject } from '../../utils/api/projects-api';
 import { resolveProjectRates, type PersonRate } from '../../utils/api/invoices-api';
 import { createClient } from '../../utils/supabase/client';
 import {
@@ -206,10 +210,21 @@ function rateLabel(state: CloseRateState): string {
 }
 
 function poLabel(state: ClosePoState, detail?: string): string {
+  if (state === 'not_required') return detail || 'Not required';
   if (state === 'set') return detail || 'Set';
   if (state === 'missing') return 'Missing';
   if (state === 'not_usable') return detail || 'Not active';
   return 'Could not load';
+}
+
+async function readRequirePurchaseOrder(projectId: string): Promise<boolean | null> {
+  const { data, error } = await createClient()
+    .from('wg_projects')
+    .select('require_purchase_order')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (error) return null;
+  return data?.require_purchase_order === true;
 }
 
 function approverLabel(row: CloseReadinessRow): string {
@@ -235,6 +250,7 @@ export function CloseReadinessGate({
   members = [],
 }: CloseReadinessGateProps) {
   const store = useTimesheetStore();
+  const { accessToken } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonthContext();
   const currentMonth = selectedMonth instanceof Date ? selectedMonth : new Date(selectedMonth);
   const monthKey = monthKeyFromDate(currentMonth);
@@ -251,6 +267,9 @@ export function CloseReadinessGate({
   const [purchaseOrders, setPurchaseOrders] = useState<CloseReadinessPurchaseOrder[]>([]);
   const [purchaseOrdersLoaded, setPurchaseOrdersLoaded] = useState(false);
   const [approvalsLoaded, setApprovalsLoaded] = useState(false);
+  const [requirePurchaseOrder, setRequirePurchaseOrder] = useState(false);
+  const [purchaseOrderSettingAvailable, setPurchaseOrderSettingAvailable] = useState(false);
+  const [savingPurchaseOrderSetting, setSavingPurchaseOrderSetting] = useState(false);
   const [graphWarning, setGraphWarning] = useState<string | null>(null);
   const [documentWarning, setDocumentWarning] = useState<string | null>(null);
 
@@ -349,6 +368,37 @@ export function CloseReadinessGate({
     };
   }, [projectId, store.version]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void readRequirePurchaseOrder(projectId).then((value) => {
+      if (cancelled) return;
+      setPurchaseOrderSettingAvailable(value !== null);
+      setRequirePurchaseOrder(value === true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const handleRequirePurchaseOrder = async (checked: boolean) => {
+    const previous = requirePurchaseOrder;
+    setRequirePurchaseOrder(checked);
+    setSavingPurchaseOrderSetting(true);
+    try {
+      await updateProject(projectId, { requirePurchaseOrder: checked }, accessToken);
+      const confirmed = await readRequirePurchaseOrder(projectId);
+      if (confirmed !== checked) {
+        throw new Error('The purchase-order setting was not saved. Apply migration 032 and deploy the project API.');
+      }
+    } catch (error) {
+      setRequirePurchaseOrder(previous);
+      const message = error instanceof Error ? error.message : 'Could not save the purchase-order setting.';
+      toast.error(message);
+    } finally {
+      setSavingPurchaseOrderSetting(false);
+    }
+  };
+
   const rows = useMemo(() => buildCloseReadinessRows({
     monthKey,
     expectedWeekStarts: getMondaysForMonth(monthKey),
@@ -371,6 +421,7 @@ export function CloseReadinessGate({
     viewerCanConfirmRates: canConfirmRates,
     purchaseOrdersLoaded,
     approvalsLoaded,
+    requirePurchaseOrder,
   }), [
     approvals,
     canConfirmRates,
@@ -382,6 +433,7 @@ export function CloseReadinessGate({
     purchaseOrders,
     purchaseOrdersLoaded,
     approvalsLoaded,
+    requirePurchaseOrder,
     rates,
     ratesLoaded,
     store,
@@ -398,7 +450,7 @@ export function CloseReadinessGate({
 
   const readyCount = rows.filter((row) => row.invoiceReady).length;
   const unlinkedPoCount = countUnlinkedPurchaseOrders(purchaseOrders);
-  const showDocumentWarning = Boolean(documentWarning);
+  const showDocumentWarning = Boolean(documentWarning) && requirePurchaseOrder;
 
   return (
     <div className="flex h-full flex-col space-y-6">
@@ -406,8 +458,24 @@ export function CloseReadinessGate({
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Close readiness</h2>
           <p className="text-sm text-slate-500">
-            {projectName} · {monthLabel}. A worker-month is invoice-ready when started weeks have hours, every one of those weeks is approved, a billing rate is on file, and a purchase order is linked.
+            {projectName} · {monthLabel}. A worker-month is invoice-ready when every started week has hours and is approved, and a billing rate is on file.
+            {requirePurchaseOrder
+              ? ' This project also requires a usable purchase order linked to the worker or their organization.'
+              : ' A linked purchase order is shown when one exists. It is not required for close.'}
           </p>
+          {canConfirmRates && purchaseOrderSettingAvailable ? (
+            <div className="flex items-center gap-3 pt-2">
+              <Switch
+                id="require-purchase-order"
+                checked={requirePurchaseOrder}
+                disabled={savingPurchaseOrderSetting}
+                onCheckedChange={(checked) => void handleRequirePurchaseOrder(checked)}
+              />
+              <label htmlFor="require-purchase-order" className="text-sm text-slate-700">
+                Require a purchase order
+              </label>
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center rounded-md border border-slate-200 bg-white shadow-sm">
@@ -574,7 +642,7 @@ export function CloseReadinessGate({
                     </Badge>
                   </TableCell>
                   <TableCell className="max-w-[220px] whitespace-normal">
-                    <Badge variant="outline" className={stateClass(row.poState === 'set')}>
+                    <Badge variant="outline" className={row.poState === 'not_required' ? 'border-slate-200 bg-slate-50 text-slate-700' : stateClass(row.poState === 'set')}>
                       {poLabel(row.poState, row.poDetail)}
                     </Badge>
                   </TableCell>
@@ -595,7 +663,7 @@ export function CloseReadinessGate({
         </Card>
       )}
 
-      {unlinkedPoCount > 0 ? (
+      {requirePurchaseOrder && unlinkedPoCount > 0 ? (
         <p className="text-xs text-muted-foreground">
           {unlinkedPoCount === 1
             ? '1 purchase order on this project is not linked to a worker or organization, so it does not clear the PO check.'

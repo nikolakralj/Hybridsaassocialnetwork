@@ -8,7 +8,7 @@
  */
 
 export type CloseRateState = 'set' | 'missing' | 'hidden' | 'unknown';
-export type ClosePoState = 'set' | 'missing' | 'not_usable' | 'unknown';
+export type ClosePoState = 'set' | 'missing' | 'not_usable' | 'unknown' | 'not_required';
 
 export interface CloseReadinessWorker {
   personId: string;
@@ -74,6 +74,8 @@ export interface CloseReadinessInput {
   purchaseOrdersLoaded: boolean;
   /** False when the pending-approval query failed. */
   approvalsLoaded: boolean;
+  /** Off by default. When false, a PO is informational and never blocks close. */
+  requirePurchaseOrder?: boolean;
 }
 
 export interface CloseReadinessRow {
@@ -357,6 +359,12 @@ function poStateFor(
   const identity = identitySet(worker);
   if (worker.orgId) identity.add(worker.orgId);
   const linked = input.purchaseOrders.filter((order) => order.linkedIds.some((id) => identity.has(id)));
+  if (input.requirePurchaseOrder !== true) {
+    const numbers = unique(linked.map((order) => order.poNumber).filter(Boolean));
+    return numbers.length > 0
+      ? { state: 'not_required', detail: numbers.join(', ') }
+      : { state: 'not_required' };
+  }
   const usable = linked.filter((order) => purchaseOrderIsUsable(order, input.today));
   if (usable.length > 0) {
     return { state: 'set', detail: unique(usable.map((order) => order.poNumber)).join(', ') };
