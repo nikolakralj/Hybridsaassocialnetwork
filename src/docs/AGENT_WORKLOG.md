@@ -1115,3 +1115,11 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` passes. The readiness-rule script passed with the setting on and off.
 - Residual: no owner credentials in this environment, so the NAS Close tab was not opened and no screenshot was taken.
 
+## 2026-10-11 - [DONE] prod blank page + Vercel SPA rewrite
+
+- Production home was blank. `npm run build` warned `Circular chunk: vendor -> vendor-react -> vendor` (and vendor-charts / vendor-ui). `react-dom` imports `scheduler`, and `react-router` imports `cookie` / `set-cookie-parser`; those landed in `vendor` while Rollup's commonjs helper lived in `vendor-react`. Evaluating that cycle loaded Radix (`vendor-ui`) before `React.forwardRef` existed: `Cannot read properties of undefined (reading 'forwardRef')`, `#root` empty. A second cycle, `victory-vendor` (in `vendor`) importing `d3` (in `vendor-charts`), then threw `Cannot access '…' before initialization` once the React cycle was broken.
+- `vite.config.ts` keeps `scheduler`, `loose-envify`, `cookie`, and `set-cookie-parser` in `vendor-react`, and `victory-vendor` in `vendor-charts`. The production build no longer reports circular chunks. `vendor-react` has no imports of other chunks.
+- Added `vercel.json` with the documented SPA rewrite `{ "source": "/(.*)", "destination": "/index.html" }`. Vercel serves real files before rewrites, so `/assets/*` stays intact. Direct `/app/project-workspace` was Vercel's platform 404 because no rewrite existed.
+- Verified with `npm run build` then `vite preview` in headless Chrome: before the chunk fix, home page `#root` was empty and the console had the `forwardRef` TypeError. After, the landing page renders ("Approved work becomes an invoice.") with no page error. `/app/project-workspace` loads the bundle and, signed out, redirects to `/?auth=signin&next=%2Fapp%2Fproject-workspace` with the sign-in email field. Favicon 404 only. No `npm test` script on this branch.
+- Residual: the sign-in dialog still logs Radix's missing-description warning. Chunk split is unchanged aside from those package assignments. Preview deployment check is recorded on the PR if Vercel posted a URL.
+
