@@ -7,9 +7,27 @@ import path from 'path';
 const normalizeId = (id: string) => id.replace(/\\/g, '/');
 const NODE_MODULES_SEGMENT = '/node_modules/';
 
-const VENDOR_REACT_PACKAGES = ['react', 'react-dom', 'react-router', 'react-router-dom'];
+// Keep React and the packages it (and react-router) import in one chunk.
+// react-dom imports scheduler; react-router imports cookie and set-cookie-parser.
+// If those land in `vendor`, Rollup emits a vendor <-> vendor-react cycle.
+// vendor then pulls vendor-charts, which pulls vendor-ui, and Radix/recharts
+// call React.forwardRef while the react export is still uninitialized.
+// That is the production blank page: "Cannot read properties of undefined (reading 'forwardRef')".
+const VENDOR_REACT_PACKAGES = [
+  'react',
+  'react-dom',
+  'react-router',
+  'react-router-dom',
+  'scheduler',
+  'loose-envify',
+  'cookie',
+  'set-cookie-parser',
+];
 const VENDOR_FLOW_PACKAGES = ['@xyflow/react'];
-const VENDOR_CHARTS_PACKAGES = ['recharts', 'd3-'];
+// victory-vendor re-exports d3. It must stay with the d3/recharts chunk.
+// Otherwise vendor <-> vendor-charts cycles, and the production build throws
+// "Cannot access 'X' before initialization" before React renders.
+const VENDOR_CHARTS_PACKAGES = ['recharts', 'd3-', 'victory-vendor'];
 const VENDOR_UI_PACKAGES = [
   '@radix-ui/',
   'lucide-react',
