@@ -1133,3 +1133,10 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` passes. Headless Chrome against `vite preview`: Forgot password opens the reset form; a nonexistent example.com address shows the neutral confirmation; `/reset-password` without a session shows the invalid-link state; `/#error=…&error_code=otp_expired` lands on `/reset-password` with the expired copy; a fake `#access_token&type=recovery` hash does not open the set-password form and the token is removed from the URL. No page exceptions.
 - Residual: a real mailbox link was not clicked, so `updateUser({ password })` was not exercised in the browser. Implicit links work in any browser; a future PKCE switch only works in the browser that requested the email. An `otp_expired` signup-confirmation error on `/` is shown on this same screen.
 
+## 2026-10-13 - [DONE] password-recovery follow-ups
+
+- Claude's review of the merged reset flow: `/reset-password` showed the set-password form to any signed-in user, and there was no way to leave that page for the workspace.
+- The set-password form now renders only when this tab arrived through a recovery link (`passwordRecovery`: `PASSWORD_RECOVERY`, a recovery hash/code/`token_hash`, or the same-tab recovery flag) and the session is ready. Opening `/reset-password` directly shows a short message and a "Request a reset email" link instead of the form.
+- **Skip** on that page clears the recovery redirect and goes to `/app/project-workspace` when signed in, or `/` when not. Minimum password length is unchanged. No test runner added.
+
+
