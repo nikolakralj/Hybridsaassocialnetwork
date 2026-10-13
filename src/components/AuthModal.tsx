@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { PASSWORD_RESET_SENT_MESSAGE } from '../utils/auth/password-recovery';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -12,15 +13,18 @@ interface AuthModalProps {
   defaultMode?: 'signin' | 'signup';
 }
 
+type AuthMode = 'signin' | 'signup' | 'forgot';
+
 export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthModalProps) {
-  const { signIn, signUp, error, clearError } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>(defaultMode);
+  const { signIn, signUp, requestPasswordReset, error, clearError } = useAuth();
+  const [mode, setMode] = useState<AuthMode>(defaultMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -33,6 +37,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
     setPassword('');
     setName('');
     setLocalError('');
+    setResetSent(false);
     clearError();
   };
 
@@ -41,8 +46,31 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
     setMode(m => m === 'signin' ? 'signup' : 'signin');
   };
 
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError('');
+    clearError();
+    if (!email.trim()) {
+      setLocalError('Enter your email address.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await requestPasswordReset(email);
+      setResetSent(true);
+    } catch (err: any) {
+      setLocalError(err.message || 'Could not send a reset email. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (mode === 'forgot') {
+      await handleForgot(e);
+      return;
+    }
     setLocalError('');
     clearError();
 
@@ -90,12 +118,14 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
       <DialogContent className="sm:max-w-md" aria-describedby="auth-modal-description">
         <DialogHeader>
           <DialogTitle className="text-center text-xl">
-            {mode === 'signin' ? 'Welcome back' : 'Create your account'}
+            {mode === 'signin' ? 'Welcome back' : mode === 'forgot' ? 'Reset your password' : 'Create your account'}
           </DialogTitle>
           <DialogDescription id="auth-modal-description" className="text-center text-sm">
             {mode === 'signin'
               ? 'Sign in to access your workspace'
-              : 'Get started with WorkGraph in seconds'}
+              : mode === 'forgot'
+                ? 'Enter your email and we will send a reset link'
+                : 'Get started with WorkGraph in seconds'}
           </DialogDescription>
         </DialogHeader>
 
@@ -125,27 +155,51 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="auth-password">Password</Label>
-            <div className="relative">
-              <Input
-                id="auth-password"
-                type={showPassword ? 'text' : 'password'}
-                placeholder={mode === 'signup' ? 'Min 6 characters' : 'Enter password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                className="pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
+          {mode !== 'forgot' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="auth-password">Password</Label>
+                {mode === 'signin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocalError('');
+                      setResetSent(false);
+                      clearError();
+                      setMode('forgot');
+                    }}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer underline-offset-4 hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  id="auth-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder={mode === 'signup' ? 'Min 6 characters' : 'Enter password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {resetSent && mode === 'forgot' && (
+            <div className="rounded-lg bg-muted px-3 py-2">
+              <p className="text-sm text-foreground m-0">{PASSWORD_RESET_SENT_MESSAGE}</p>
+            </div>
+          )}
 
           {displayError && (
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2">
@@ -153,14 +207,14 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
             </div>
           )}
 
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" disabled={loading || (mode === 'forgot' && resetSent)}>
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                {mode === 'signin' ? 'Signing in...' : 'Creating account...'}
+                {mode === 'signin' ? 'Signing in...' : mode === 'forgot' ? 'Sending...' : 'Creating account...'}
               </>
             ) : (
-              mode === 'signin' ? 'Sign in' : 'Create account'
+              mode === 'signin' ? 'Sign in' : mode === 'forgot' ? 'Send reset link' : 'Create account'
             )}
           </Button>
         </form>
@@ -173,7 +227,9 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
           >
             {mode === 'signin'
               ? "Don't have an account? Sign up"
-              : 'Already have an account? Sign in'}
+              : mode === 'forgot'
+                ? 'Back to sign in'
+                : 'Already have an account? Sign in'}
           </button>
         </div>
       </DialogContent>

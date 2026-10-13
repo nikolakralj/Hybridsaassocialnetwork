@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { capturePasswordRecoveryFromWindow, shouldDetectPasswordRecoverySession } from '../auth/password-recovery';
 import { projectId, publicAnonKey } from './info';
 
 // Create a singleton Supabase client
@@ -13,7 +14,16 @@ export function createClient() {
         auth: {
           autoRefreshToken: false,   // Prevent background token refresh timer
           persistSession: true,
-          detectSessionInUrl: false, // Don't scan URL for auth tokens
+          // flowType stays at the auth-js default (`implicit`). Recovery mail
+          // therefore uses a hash (`#access_token&type=recovery`), including
+          // dashboard mail that lands on the Site URL `/`. PKCE `?code=` is
+          // handled as well if flowType is switched later.
+          // Scan the URL only for those recovery hashes so PASSWORD_RECOVERY
+          // fires. Other auth hashes are still ignored.
+          detectSessionInUrl: (url, params) => {
+            capturePasswordRecoveryFromWindow();
+            return shouldDetectPasswordRecoverySession(url, params);
+          },
         },
         realtime: {
           params: {
