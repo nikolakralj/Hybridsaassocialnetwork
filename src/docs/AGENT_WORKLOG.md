@@ -1133,3 +1133,9 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - `npm run build` passes. Headless Chrome against `vite preview`: Forgot password opens the reset form; a nonexistent example.com address shows the neutral confirmation; `/reset-password` without a session shows the invalid-link state; `/#error=…&error_code=otp_expired` lands on `/reset-password` with the expired copy; a fake `#access_token&type=recovery` hash does not open the set-password form and the token is removed from the URL. No page exceptions.
 - Residual: a real mailbox link was not clicked, so `updateUser({ password })` was not exercised in the browser. Implicit links work in any browser; a future PKCE switch only works in the browser that requested the email. An `otp_expired` signup-confirmation error on `/` is shown on this same screen.
 
+## 2026-10-14 - [DONE] ignore invalid VITE_SUPABASE_ANON_KEY
+
+- `src/utils/supabase/info.tsx` used `VITE_SUPABASE_ANON_KEY` whenever it was non-empty. A placeholder or truncated value replaced the built-in anon key and broke Supabase calls.
+- The env value is used only when it starts with `sb_publishable_`, or starts with `eyJ` and contains exactly two dots. Anything else is ignored, the built-in key is used, and `console.warn` names the variable only. The warning does not include the rejected value or the fallback key. An unset variable still falls back quietly.
+- `npm run build` passes. No tests added.
+
