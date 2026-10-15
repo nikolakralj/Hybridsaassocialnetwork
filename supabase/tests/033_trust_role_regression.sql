@@ -105,7 +105,11 @@ VALUES (
       jsonb_build_object('id', 'party_reg_client', 'type', 'party', 'data', jsonb_build_object('name', 'Synthetic Client', 'partyType', 'client')),
       jsonb_build_object('id', 'party_reg_other', 'type', 'party', 'data', jsonb_build_object('name', 'Synthetic Other Company', 'partyType', 'company'))
     ),
-    'edges', '[]'::jsonb
+    -- Since 035 an issued invoice needs a billsTo edge from seller to buyer.
+    'edges', jsonb_build_array(
+      jsonb_build_object('id', 'e_reg_033_ac', 'source', 'party_reg_agency', 'target', 'party_reg_client', 'type', 'billsTo'),
+      jsonb_build_object('id', 'e_reg_033_ao', 'source', 'party_reg_agency', 'target', 'party_reg_other', 'type', 'billsTo')
+    )
   ),
   '[]'::jsonb
 );
