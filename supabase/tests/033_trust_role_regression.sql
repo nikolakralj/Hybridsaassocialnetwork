@@ -25,8 +25,6 @@ CREATE TEMP TABLE wg_regression_033_results (
   detail TEXT NOT NULL
 ) ON COMMIT DROP;
 
-ALTER TABLE auth.users DISABLE TRIGGER USER;
-
 INSERT INTO auth.users (
   instance_id,
   id,
@@ -66,8 +64,6 @@ FROM (
     ('22222222-2222-4222-8222-222222222222'::uuid, 'client-approver@example.test', 'Synthetic Client Approver'),
     ('33333333-3333-4333-8333-333333333333'::uuid, 'worker@example.test', 'Synthetic Worker')
 ) AS users(id, email, display_name);
-
-ALTER TABLE auth.users ENABLE TRIGGER USER;
 
 INSERT INTO public.wg_organizations (id, name, profile_visibility, owner_user_id, created_by)
 VALUES
@@ -198,7 +194,7 @@ INSERT INTO public.wg_project_invitations (
   id, project_id, project_name, email, role, invited_by, expires_at, status
 ) VALUES (
   'invite_reg_033_expired', 'proj_reg_033', 'Synthetic regression project',
-  'expired-invitee@example.test', 'Commenter',
+  'client-approver@example.test', 'Commenter',
   '11111111-1111-4111-8111-111111111111', NOW() - INTERVAL '1 day', 'pending'
 );
 
@@ -276,13 +272,36 @@ BEGIN
 END;
 $$;
 
--- Invitation expiry and single-use are not database constraints. The accept
--- route in supabase/functions/server/invitations-api.tsx rejects status other
--- than pending and expires_at in the past. These probes record that gap.
+GRANT SELECT, UPDATE ON public.wg_projects TO authenticated;
+GRANT SELECT, UPDATE ON public.wg_project_members TO authenticated;
+GRANT SELECT ON public.wg_contract_rates TO authenticated;
+GRANT SELECT ON public.wg_contracts TO authenticated;
+GRANT SELECT ON public.wg_invoices TO authenticated;
+GRANT SELECT, UPDATE ON public.wg_timesheet_weeks TO authenticated;
+GRANT INSERT ON wg_regression_033_results TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wg_link_member_as_party_approver(TEXT, TEXT, TEXT) TO authenticated;
+GRANT SELECT, UPDATE ON public.wg_project_invitations TO authenticated;
+
+SET LOCAL ROLE authenticated;
+
+-- Invitation expiry and single-use, probed as the invitee (not the table owner).
+-- The invitee's only policy on wg_project_invitations is SELECT by email, so a
+-- direct UPDATE must match no rows. The accept route in invitations-api.tsx
+-- additionally returns 410 for an expired invite and 409 for a used one.
 DO $$
 DECLARE
   updated_rows INTEGER := 0;
 BEGIN
+  PERFORM set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
+  PERFORM set_config(
+    'request.jwt.claims',
+    '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated","email":"client-approver@example.test"}',
+    true
+  );
+  IF auth.uid() IS DISTINCT FROM '22222222-2222-4222-8222-222222222222'::uuid THEN
+    RAISE EXCEPTION 'auth.uid() did not follow the invitee fixture (%)', auth.uid();
+  END IF;
+
   BEGIN
     UPDATE public.wg_project_invitations
     SET status = 'accepted',
@@ -298,7 +317,7 @@ BEGIN
       VALUES (
         'expired_invite_rejected',
         'pass',
-        'A direct update of an expired pending invite matched no rows.'
+        'As the invitee, a direct update of an expired pending invite matched no rows.'
       );
     ELSE
       RAISE EXCEPTION 'expired invite update succeeded' USING ERRCODE = 'P0001';
@@ -316,7 +335,7 @@ BEGIN
       VALUES (
         'expired_invite_rejected',
         'known_failure',
-        'Direct SQL can mark an expired pending invite accepted. wg_project_invitations has expires_at but no trigger. invitations-api.tsx returns 410 when expires_at is past.'
+        'The invitee could mark an expired pending invite accepted directly.'
       );
   END;
 
@@ -335,7 +354,7 @@ BEGIN
       VALUES (
         'used_invite_rejected',
         'pass',
-        'A direct replay of an accepted invite matched no rows.'
+        'As the invitee, reopening an accepted invite matched no rows.'
       );
     ELSE
       RAISE EXCEPTION 'used invite was reopened' USING ERRCODE = 'P0001';
@@ -353,22 +372,11 @@ BEGIN
       VALUES (
         'used_invite_rejected',
         'known_failure',
-        'Direct SQL can set an accepted invite back to pending. There is no used_at column. invitations-api.tsx returns 409 when status is not pending.'
+        'The invitee could set an accepted invite back to pending directly.'
       );
   END;
 END;
 $$;
-
-GRANT SELECT, UPDATE ON public.wg_projects TO authenticated;
-GRANT SELECT, UPDATE ON public.wg_project_members TO authenticated;
-GRANT SELECT ON public.wg_contract_rates TO authenticated;
-GRANT SELECT ON public.wg_contracts TO authenticated;
-GRANT SELECT ON public.wg_invoices TO authenticated;
-GRANT SELECT, UPDATE ON public.wg_timesheet_weeks TO authenticated;
-GRANT INSERT ON wg_regression_033_results TO authenticated;
-GRANT EXECUTE ON FUNCTION public.wg_link_member_as_party_approver(TEXT, TEXT, TEXT) TO authenticated;
-
-SET LOCAL ROLE authenticated;
 
 -- Rightful reader can see the fixture. If this fails, later denials are meaningless.
 DO $$
