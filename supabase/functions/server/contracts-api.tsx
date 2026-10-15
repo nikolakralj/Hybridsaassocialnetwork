@@ -57,13 +57,10 @@ function rowToContract(row: any, options: { canViewRates?: boolean } = {}) {
     recipientName: extra.recipientName ?? row.client_name ?? "Client",
     // Financial
     baseHourlyRate: baseRate,
+    // Only rates someone entered. Travel/overtime/on-call are never derived
+    // from the base rate; an unset work type has no rate and cannot be billed.
     workTypeRates: canViewRates
-      ? (extra.workTypeRates ?? {
-          regular: baseRate,
-          travel: Math.round(baseRate * 0.5),
-          overtime: Math.round(baseRate * 1.5),
-          oncall: Math.round(baseRate * 0.75),
-        })
+      ? (extra.workTypeRates ?? { regular: baseRate })
       : {},
     contractNumber: extra.contractNumber ?? `CTR-${row.id.slice(-6)}`,
     currency: row.currency ?? extra.currency ?? "EUR",
@@ -330,12 +327,8 @@ contractsRouter.post("/make-server-f8b491be/api/contracts", async (c) => {
       recipientType: body.recipientType || "company",
       recipientName: body.recipientName || "Client",
       baseHourlyRate: baseRate,
-      workTypeRates: body.workTypeRates || {
-        regular: baseRate,
-        travel: Math.round(baseRate * 0.5),
-        overtime: Math.round(baseRate * 1.5),
-        oncall: Math.round(baseRate * 0.75),
-      },
+      // Only rates someone entered; nothing is derived from the base rate.
+      workTypeRates: body.workTypeRates || { regular: baseRate },
       contractNumber: body.contractNumber || `CTR-${Date.now().toString().slice(-6)}`,
       billingCycle: body.billingCycle || "monthly",
       hideRateFromProvider: body.hideRateFromProvider || false,

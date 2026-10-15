@@ -13,6 +13,13 @@ import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek } from '../../types/timesheets';
+import { lineAmount, sumMoney } from '../../utils/money';
+import {
+  blockingKeysFor,
+  formatBillingPeriod,
+  sliceWeekToMonth,
+  type BillableWeek,
+} from '../../utils/billing-period';
 import type { BaseEdge, BaseNode } from '../../types/workgraph';
 import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { buildScopedGraphDirectories } from '../../utils/graph/scoped-graph-directories';
@@ -148,13 +155,16 @@ function readPartyIds(projectId: string): { fromPartyId: string; toPartyId: stri
   };
 }
 
-function parseTimesheetKey(key?: string): { personId: string; weekStart: string } | null {
+function parseTimesheetKey(key?: string): { personId: string; weekStart: string; billingMonth?: string } | null {
   if (!key) return null;
-  const parts = key.split(':');
+  // Month-part keys (billing-period.ts) end in "@YYYY-MM".
+  const [base, billingMonth] = key.split('@');
+  const parts = base.split(':');
   if (parts.length < 2) return null;
   return {
     personId: parts.slice(0, -1).join(':'),
     weekStart: parts[parts.length - 1],
+    ...(billingMonth && /^\d{4}-\d{2}$/.test(billingMonth) ? { billingMonth } : {}),
   };
 }
 
@@ -189,11 +199,34 @@ export function collectInvoicedTimesheetKeys(
   return keys;
 }
 
-export function excludeInvoicedWeeks<T extends { personId: string; weekStart: string }>(
+export function excludeInvoicedWeeks<T extends { personId: string; weekStart: string; billingKey?: string }>(
   weeks: T[],
   existingKeys: Set<string>,
 ): T[] {
-  return weeks.filter((week) => !existingKeys.has(makeTimesheetKey(week.personId, week.weekStart)));
+  return weeks.filter((week) => {
+    const keys = week.billingKey
+      ? blockingKeysFor(week as unknown as BillableWeek)
+      : [makeTimesheetKey(week.personId, week.weekStart)];
+    return !keys.some((key) => existingKeys.has(key));
+  });
+}
+
+/**
+ * Approved weeks billable in `monthKey`, cut to that month's calendar days.
+ * Candidates come from this month and the previous one, so weekend days that
+ * spill into this month are not lost. Parts with no hours are dropped.
+ */
+export function billableWeeksForMonth(candidateWeeks: StoredWeek[], monthKey: string): BillableWeek[] {
+  const seen = new Set<string>();
+  const parts: BillableWeek[] = [];
+  filterApprovedWeeks(candidateWeeks).forEach((week) => {
+    const id = makeTimesheetKey(week.personId, week.weekStart);
+    if (seen.has(id)) return;
+    seen.add(id);
+    const part = sliceWeekToMonth(week, monthKey);
+    if (part && part.totalHours > 0) parts.push(part);
+  });
+  return parts.sort((a, b) => a.weekStart.localeCompare(b.weekStart) || a.personId.localeCompare(b.personId));
 }
 
 /**
@@ -500,14 +533,18 @@ export function buildDraftFromWeek(
   const rateType = usableRate?.rateType ?? 'unknown';
   const rate = usableRate?.rate ?? 0;
   const quantity = rateType === 'daily' ? countWorkedDays(week) : hours;
-  const amount = quantity * rate;
+  const amount = lineAmount(quantity, rate);
   const unitLabel = rateType === 'daily' ? 'days' : 'hours';
+  const part = (week as Partial<BillableWeek>).billingKey ? (week as BillableWeek) : null;
+  const billingKey = part?.billingKey || makeTimesheetKey(week.personId, week.weekStart);
+  const partSuffix = part?.isPartialWeek ? `_${part.billingMonth}` : '';
+  const periodLabel = part?.isPartialWeek ? `${week.weekLabel}, ${formatBillingPeriod(part.billingPeriod)} only` : week.weekLabel;
   const currency = usableRate?.currency || template?.currency || 'EUR';
 
   const shortPerson = billingPersonId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
   const weekStamp = week.weekStart.replace(/-/g, '');
   const base: InvoiceDraft = {
-    id: `inv_${billingPersonId}_${week.weekStart}`,
+    id: `inv_${billingPersonId}_${week.weekStart}${partSuffix}`,
     templateId: null,
     number: `INV-${weekStamp}-${shortPerson || String(index + 1).padStart(3, '0')}`,
     projectId,
@@ -524,11 +561,11 @@ export function buildDraftFromWeek(
     amount,
     currency,
     status: 'draft',
-    timesheetKey: makeTimesheetKey(week.personId, week.weekStart),
+    timesheetKey: billingKey,
     lineItems: [
       {
-        id: `line_${billingPersonId}_${week.weekStart}`,
-        description: `Approved timesheet - ${week.weekLabel} (${personName}, ${quantity} ${unitLabel})`,
+        id: `line_${billingPersonId}_${week.weekStart}${partSuffix}`,
+        description: `Approved timesheet - ${periodLabel} (${personName}, ${quantity} ${unitLabel})`,
         quantity,
         unitPrice: rate,
         amount,
@@ -600,7 +637,7 @@ export function buildConsolidatedDraft(
   );
 
   const lineItems: InvoiceLineItem[] = perWeek.map((draft) => ({
-    id: `line_${draft.personId}_${draft.weekStart}`,
+    id: draft.lineItems?.[0]?.id || `line_${draft.personId}_${draft.weekStart}`,
     description: draft.lineItems?.[0]?.description
       || `Approved timesheet - ${draft.weekLabel} (${draft.personName})`,
     quantity: draft.lineItems?.[0]?.quantity ?? draft.hours,
@@ -608,7 +645,7 @@ export function buildConsolidatedDraft(
     amount: draft.amount,
   }));
 
-  const totalAmount = perWeek.reduce((acc, draft) => acc + draft.amount, 0);
+  const totalAmount = sumMoney(perWeek.map((draft) => draft.amount));
   const totalHours = perWeek.reduce((acc, draft) => acc + draft.hours, 0);
   const earliest = [...group.weeks].sort((a, b) => a.weekStart.localeCompare(b.weekStart))[0];
   const currency = perWeek.find((draft) => draft.currency)?.currency || 'EUR';
@@ -628,8 +665,8 @@ export function buildConsolidatedDraft(
     currency,
     fromPartyName: group.sellerName || perWeek[0].fromPartyName,
     toPartyName: group.buyerName || perWeek[0].toPartyName || clientName,
-    timesheetKey: makeTimesheetKey(perWeek[0].personId, perWeek[0].weekStart),
-    timesheetIds: group.weeks.map((week) => makeTimesheetKey(week.personId, week.weekStart)),
+    timesheetKey: perWeek[0].timesheetKey || makeTimesheetKey(perWeek[0].personId, perWeek[0].weekStart),
+    timesheetIds: perWeek.map((draft) => draft.timesheetKey || makeTimesheetKey(draft.personId, draft.weekStart)),
     lineItems,
   };
 
@@ -761,6 +798,10 @@ function normalizePersistedInvoice(
 }
 
 function formatMonthKeyForInvoice(invoice: Pick<InvoiceDraft, 'weekStart' | 'date' | 'timesheetKey'>): string | null {
+  // A month part of a week that crosses months is billed in its own month,
+  // not the month the week starts in.
+  const billingMonth = parseTimesheetKey(invoice.timesheetKey)?.billingMonth;
+  if (billingMonth) return billingMonth;
   if (invoice.weekStart) return invoice.weekStart.slice(0, 7);
   const parsed = parseTimesheetKey(invoice.timesheetKey);
   if (parsed?.weekStart) return parsed.weekStart.slice(0, 7);
@@ -817,7 +858,18 @@ export function InvoicesWorkspace({
   }, [handleMonthChange]);
 
   const allWeeksForMonth = useMemo(() => store.getAllWeeksForMonth(monthKey), [store, monthKey, store.version]);
-  const approvedWeeks = useMemo(() => filterApprovedWeeks(allWeeksForMonth), [allWeeksForMonth]);
+  const previousMonthKey = useMemo(() => {
+    const [y, m] = monthKey.split('-').map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  }, [monthKey]);
+  // Calendar-day billing: a week that crosses months is billed in two parts.
+  const approvedWeeks = useMemo(
+    () => billableWeeksForMonth(
+      [...allWeeksForMonth, ...store.getAllWeeksForMonth(previousMonthKey)],
+      monthKey,
+    ),
+    [allWeeksForMonth, monthKey, previousMonthKey, store, store.version],
+  );
 
   const weekLookup = useMemo(() => {
     const map = new Map<string, { weekLabel: string }>();

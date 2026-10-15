@@ -13,6 +13,7 @@
 // ============================================================================
 
 import { createClient } from '../supabase/client';
+import { lineAmount, roundMoney, sumMoney, taxOn } from '../money';
 
 const supabase = createClient();
 const ALLOW_GRAPH_RATE_FALLBACK = import.meta.env.VITE_ALLOW_GRAPH_RATE_FALLBACK === 'true';
@@ -712,13 +713,14 @@ function buildLineItemsFromPayload(payload: InvoicePayload): InvoiceLineItem[] {
       description: normalizeString(item.description),
       quantity: toNumber(item.quantity),
       unitPrice: toNumber(item.unitPrice),
-      amount: toNumber(item.amount, toNumber(item.quantity) * toNumber(item.unitPrice)),
+      // Every line is rounded to the cent; an explicit amount is kept but rounded.
+      amount: roundMoney(toNumber(item.amount, lineAmount(toNumber(item.quantity), toNumber(item.unitPrice)))),
     }));
   }
 
   const hours = toNumber(payload.hours);
   const rate = toNumber(payload.rate);
-  const amount = toNumber(payload.amount, hours * rate);
+  const amount = roundMoney(toNumber(payload.amount, lineAmount(hours, rate)));
   return [
     {
       id: generateId('line'),
@@ -768,10 +770,12 @@ export function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvo
 
   const lineItems = buildLineItemsFromPayload(payload);
   const totals = deriveLineItemTotals(lineItems);
-  const subtotal = Math.max(0, toNumber(payload.subtotal, totals.amount));
+  // Subtotal is the sum of the rounded lines (a client-sent subtotal that
+  // disagrees with its own lines is ignored); VAT is rounded on that subtotal.
+  const subtotal = Math.max(0, sumMoney(lineItems.map((item) => item.amount)));
   const taxRate = Math.min(100, Math.max(0, toNumber(payload.taxRate, 0)));
-  const taxTotal = Math.max(0, toNumber(payload.taxTotal, Math.round(subtotal * taxRate) / 100));
-  const total = Math.max(0, toNumber(payload.total, subtotal + taxTotal));
+  const taxTotal = Math.max(0, roundMoney(toNumber(payload.taxTotal, taxOn(subtotal, taxRate))));
+  const total = roundMoney(subtotal + taxTotal);
   const projectId = normalizeString(payload.projectId);
 
   return {

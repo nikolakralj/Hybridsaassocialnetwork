@@ -133,7 +133,9 @@ async function fetchRealEarningsChart(accessToken?: string | null): Promise<Earn
       .slice(-8) // Last 8 weeks
       .map(([date, { hours }]) => ({
         date,
-        amount: Math.round(hours * 100), // Estimate at $100/hr default
+        // No money estimate: rates are private and invoices are the source of
+        // amounts. The dashboard chart plots hours.
+        amount: 0,
         hours,
       }));
   } catch {
@@ -154,9 +156,16 @@ async function fetchRealHoursBreakdown(accessToken?: string | null): Promise<Hou
     const totalHours = weeks.reduce((sum: number, w: any) =>
       sum + (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0), 0);
 
-    // Distribute hours across projects (evenly for now since weeks don't have projectId linkage yet)
+    // Weeks carry projectId; count each project's real hours.
+    const hoursByProject = new Map<string, number>();
+    weeks.forEach((w: any) => {
+      if (!w.projectId) return;
+      const weekHours = (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0);
+      hoursByProject.set(w.projectId, (hoursByProject.get(w.projectId) || 0) + weekHours);
+    });
+
     return projects.slice(0, 6).map((p: any, i: number) => {
-      const projHours = totalHours > 0 ? Math.round(totalHours / projects.length) : 0;
+      const projHours = hoursByProject.get(p.id) || 0;
       return {
         project_id: p.id,
         project_name: p.name,

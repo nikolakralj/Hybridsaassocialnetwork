@@ -1170,3 +1170,12 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - **Skip** on that page clears the recovery redirect and goes to `/app/project-workspace` when signed in, or `/` when not. Minimum password length is unchanged. No test runner added.
 
 
+
+## 2026-10-15 - [DONE] Claude: money honesty — no invented rates, cent rounding, calendar-day month split
+
+- **Invented rates removed:** `contracts-api.tsx` filled travel 50% / overtime 150% / on-call 75% of the base rate when none were entered. Now only entered rates exist (`{ regular }` by default); an unset work type has no rate.
+- **No $100/hr estimate:** the dashboard chart priced every hour at $100 USD. It now plots hours logged (rates are private; amounts come from invoices). The per-project hours breakdown uses each week's real `projectId` instead of splitting hours evenly.
+- **One rounding rule everywhere** (`src/utils/money.ts`): each line rounded to the cent half away from zero (decimal-safe: 10.005 → 10.01, not 10.00 as `Math.round(x*100)/100` gives), subtotal = sum of rounded lines, VAT rounded on that subtotal. Used by invoice generation, the API body (a client subtotal that disagrees with its lines is ignored), and the print/edit view, which previously each rounded differently.
+- **Calendar-day billing** (`src/utils/billing-period.ts`): a week that crosses months is billed in two parts, each month invoicing only its own dates, keyed `person:weekStart@YYYY-MM`. A week inside one month keeps the old whole-week key, and an older whole-week invoice blocks both parts, so nothing invoiced before is billed again. Weekend days that spill into the next month are billed there. The invoice list now files a month part under its billing month (it used the week's start date, which also misfiled consolidated invoices that began with the last week of the previous month).
+- Tests: Grok's two `it.fails` are now passing tests; added month-split, legacy-key, weekend-spill, approved-only and consolidated-rounding tests plus `money.test.ts`. `npm test` 25/25, `npm run build` passes.
+- Residual: the Close-readiness gate still counts whole overlapping weeks (readiness, not money). Existing draft invoices keep their whole-week keys.
