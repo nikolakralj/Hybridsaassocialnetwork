@@ -8,6 +8,7 @@ import { ArrowLeft, Download, FileCheck2, Loader2, Pencil, Printer, Save, Send, 
 import { toast } from 'sonner';
 import type { InvoiceDraft } from './InvoicesWorkspace';
 import type { InvoiceLineItem, InvoicePayload, InvoiceTemplate } from '../../utils/api/invoices-api';
+import { lineAmount, roundMoney, sumMoney, taxOn } from '../../utils/money';
 
 function formatMoney(amount: number, currency: string): string {
   try {
@@ -125,18 +126,19 @@ export function InvoiceDetailPrintView({
   const canUseTemplates = canEdit && !editing;
 
   const displayLines = baseLines(invoice);
-  const subtotal = displayLines.reduce((acc, item) => acc + toNumber(item.amount), 0);
+  // Same rounding as invoice generation and the API body (utils/money.ts).
+  const subtotal = sumMoney(displayLines.map((item) => toNumber(item.amount)));
   const taxRate = invoice.taxRate ?? 0;
-  const tax = Math.round(subtotal * taxRate) / 100;
-  const total = subtotal + tax;
+  const tax = taxOn(subtotal, taxRate);
+  const total = roundMoney(subtotal + tax);
 
   const editSubtotal = useMemo(
-    () => form.lines.reduce((acc, line) => acc + toNumber(line.quantity) * toNumber(line.unitPrice), 0),
+    () => sumMoney(form.lines.map((line) => lineAmount(toNumber(line.quantity), toNumber(line.unitPrice)))),
     [form.lines],
   );
   const editTaxRate = Math.min(100, Math.max(0, toNumber(form.taxRate)));
-  const editTax = Math.round(editSubtotal * editTaxRate) / 100;
-  const editTotal = editSubtotal + editTax;
+  const editTax = taxOn(editSubtotal, editTaxRate);
+  const editTotal = roundMoney(editSubtotal + editTax);
 
   const setField = (field: keyof InvoiceForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -191,7 +193,7 @@ export function InvoiceDetailPrintView({
           description: line.description.trim(),
           quantity: toNumber(line.quantity),
           unitPrice: toNumber(line.unitPrice),
-          amount: Math.round(toNumber(line.quantity) * toNumber(line.unitPrice) * 100) / 100,
+          amount: lineAmount(toNumber(line.quantity), toNumber(line.unitPrice)),
         })),
         taxRate: editTaxRate,
         subtotal: undefined,

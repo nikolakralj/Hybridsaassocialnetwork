@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  billableWeeksForMonth,
   buildConsolidatedDraft,
   buildDraftFromWeek,
   collectInvoicedTimesheetKeys,
@@ -195,9 +196,8 @@ describe('invoice maths', () => {
     expect(draftFor(ready.weeks[0], rate('worker-a', 100)).amount).toBe(800);
   });
 
-  // Known failure: line amounts are the raw product. 1h * 10.005 is stored as
-  // 10.005, not 10.01. VAT rounding above is separate and does round to the cent.
-  it.fails('rounds a line amount to the cent', () => {
+  // Fixed: line amounts are rounded to the cent (half away from zero).
+  it('rounds a line amount to the cent', () => {
     const stored = week({
       personId: 'worker-a',
       weekStart: '2026-09-07',
@@ -245,10 +245,10 @@ describe('week and month splitting', () => {
     expect(excludeInvoicedWeeks([spanning], septemberKeys)).toEqual([]);
   });
 
-  // Known failure: there is no day-level split. The Mon 28 Sep–Fri 2 Oct week
-  // is one timesheet. September hours (29–30) and October hours (1–2) stay on
-  // a single line, so the month that invoices it bills the other month's days.
-  it.fails('splits the 29 Sep–5 Oct 2026 week by calendar day', () => {
+  // Fixed: billing is by calendar day. The week of Mon 28 Sep - Fri 2 Oct 2026
+  // is billed in two parts: Sep 28-30 on September's invoice, Oct 1-2 on
+  // October's, each with its own key so neither part is billed twice.
+  it('splits the 28 Sep - 2 Oct 2026 week by calendar day', () => {
     const spanning = week({
       personId: 'worker-a',
       weekStart: '2026-09-28',
@@ -260,8 +260,79 @@ describe('week and month splitting', () => {
         { day: 'Fri', hours: 8 },
       ],
     });
-    const draft = draftFor(spanning, rate('worker-a', 10));
-    const quantities = (draft.lineItems ?? []).map((line) => line.quantity).sort((left, right) => left - right);
-    expect(quantities).toEqual([16, 16]);
+    const [september] = billableWeeksForMonth([spanning], '2026-09');
+    const [october] = billableWeeksForMonth([spanning], '2026-10');
+    expect(september.totalHours).toBe(16);
+    expect(october.totalHours).toBe(16);
+    expect(september.billingKey).toBe('worker-a:2026-09-28@2026-09');
+    expect(october.billingKey).toBe('worker-a:2026-09-28@2026-10');
+
+    const septemberDraft = draftFor(september, rate('worker-a', 10));
+    const octoberDraft = draftFor(october, rate('worker-a', 10));
+    expect(septemberDraft.amount).toBe(160);
+    expect(octoberDraft.amount).toBe(160);
+    expect(septemberDraft.id).not.toBe(octoberDraft.id);
+    expect(septemberDraft.lineItems?.[0].description).toContain('28–30 Sep only');
+    expect(octoberDraft.lineItems?.[0].description).toContain('1–2 Oct only');
+
+    // September's invoice does not block October's part, and vice versa.
+    const septemberKeys = collectInvoicedTimesheetKeys([{ invoiceKey: septemberDraft.timesheetKey!, timesheetIds: [septemberDraft.timesheetKey!] }]);
+    expect(excludeInvoicedWeeks([october], septemberKeys)).toEqual([october]);
+    expect(excludeInvoicedWeeks([september], septemberKeys)).toEqual([]);
+  });
+
+  it('never re-bills a week that an older invoice covered whole', () => {
+    const spanning = week({
+      personId: 'worker-a',
+      weekStart: '2026-09-28',
+      days: [{ day: 'Tue', hours: 8 }, { day: 'Thu', hours: 8 }],
+    });
+    const legacyKeys = collectInvoicedTimesheetKeys([{ invoiceKey: makeTimesheetKey('worker-a', '2026-09-28') }]);
+    expect(excludeInvoicedWeeks(billableWeeksForMonth([spanning], '2026-09'), legacyKeys)).toEqual([]);
+    expect(excludeInvoicedWeeks(billableWeeksForMonth([spanning], '2026-10'), legacyKeys)).toEqual([]);
+  });
+
+  it('keeps the whole-week key for a week inside one month', () => {
+    const inside = week({ personId: 'worker-a', weekStart: '2026-09-14', days: [{ day: 'Mon', hours: 8 }, { day: 'Fri', hours: 8 }] });
+    const [part] = billableWeeksForMonth([inside], '2026-09');
+    expect(part.billingKey).toBe(makeTimesheetKey('worker-a', '2026-09-14'));
+    expect(part.isPartialWeek).toBe(false);
+    expect(billableWeeksForMonth([inside], '2026-10')).toEqual([]);
+  });
+
+  it('bills weekend days that spill into the next month in that month', () => {
+    const lastWeek = week({
+      personId: 'worker-a',
+      weekStart: '2026-10-26',
+      days: [
+        { day: 'Mon', hours: 8 },
+        { day: 'Sat', hours: 4 },
+        { day: 'Sun', hours: 2 },
+      ],
+    });
+    // Sat 31 Oct stays in October; Sun 1 Nov goes to November.
+    expect(billableWeeksForMonth([lastWeek], '2026-10')[0].totalHours).toBe(12);
+    expect(billableWeeksForMonth([lastWeek], '2026-11')[0].totalHours).toBe(2);
+  });
+
+  it('only bills approved weeks and skips month parts with no hours', () => {
+    const draftWeek = week({ personId: 'worker-a', weekStart: '2026-09-28', status: 'draft' });
+    const emptyOctoberPart = week({ personId: 'worker-b', weekStart: '2026-09-28', days: [{ day: 'Mon', hours: 8 }] });
+    expect(billableWeeksForMonth([draftWeek], '2026-09')).toEqual([]);
+    expect(billableWeeksForMonth([emptyOctoberPart], '2026-10')).toEqual([]);
+  });
+
+  it('totals a consolidated invoice as the sum of its rounded lines', () => {
+    const a = week({ personId: 'worker-a', weekStart: '2026-09-07', days: [{ day: 'Mon', hours: 1 }] });
+    const b = week({ personId: 'worker-b', weekStart: '2026-09-07', days: [{ day: 'Mon', hours: 1 }] });
+    const draft = buildConsolidatedDraft(
+      { weeks: [a, b] },
+      'proj_synthetic', 'Synthetic Project', 'Synthetic Client',
+      { 'worker-a': { name: 'A' }, 'worker-b': { name: 'B' } },
+      { 'worker-a': rate('worker-a', 10.005), 'worker-b': rate('worker-b', 10.005) },
+      '2026-10-09', 0, 'September 2026', null,
+    );
+    expect(draft.lineItems?.map((line) => line.amount)).toEqual([10.01, 10.01]);
+    expect(draft.amount).toBe(20.02);
   });
 });

@@ -1,5 +1,6 @@
 // ============================================================================
-// EarningsChart - Clean earnings visualization
+// EarningsChart - hours logged per week (no money estimate: rates are private
+// and invoiced amounts come from Invoices)
 // ============================================================================
 
 import React, { useId, memo } from 'react';
@@ -21,14 +22,14 @@ interface EarningsChartProps {
   currency?: string;
 }
 
-export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD' }: EarningsChartProps) {
-  const total = data.reduce((sum, d) => sum + d.amount, 0);
+export const EarningsChart = memo(function EarningsChart({ data }: EarningsChartProps) {
+  const total = data.reduce((sum, d) => sum + (d.hours || 0), 0);
   const gradientId = useId().replace(/:/g, '');
 
   const formattedData = data.map((point, index) => ({
     ...point,
     displayDate: format(new Date(point.date), 'MMM d'),
-    displayAmount: `$${point.amount.toLocaleString()}`,
+    displayHours: `${(point.hours || 0).toLocaleString()} h`,
     _uniqueKey: `${point.date}-${index}`,
   }));
 
@@ -37,12 +38,12 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Earnings Trend</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Last 30 days</p>
+            <h3 className="text-sm font-semibold text-foreground">Hours logged</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Last 8 weeks with time</p>
           </div>
           <div className="text-right">
             <p className="text-lg font-semibold text-foreground tracking-tight">
-              ${total.toLocaleString()}
+              {total.toLocaleString()} h
             </p>
             <p className="text-[11px] text-muted-foreground">Total</p>
           </div>
@@ -80,7 +81,7 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
               fontSize={11}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+              tickFormatter={(value) => `${value}h`}
             />
             <Tooltip
               contentStyle={{
@@ -91,7 +92,7 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
                 fontSize: '12px',
                 boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
               }}
-              formatter={(value: number) => [`$${value.toLocaleString()}`, 'Earned']}
+              formatter={(value: number) => [`${value.toLocaleString()} h`, 'Logged']}
               labelFormatter={(label: string) => {
                 const dateStr = label.split('-').slice(0, 3).join('-');
                 try { return format(new Date(dateStr), 'MMM d, yyyy'); } catch { return label; }
@@ -99,7 +100,7 @@ export const EarningsChart = memo(function EarningsChart({ data, currency = 'USD
             />
             <Area
               type="monotone"
-              dataKey="amount"
+              dataKey="hours"
               stroke="var(--accent-brand)"
               strokeWidth={2}
               fill={`url(#earnings-grad-${gradientId})`}
