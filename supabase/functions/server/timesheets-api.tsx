@@ -18,6 +18,26 @@ function db() {
   );
 }
 
+// Client that runs as the caller, so RLS (migration 034) decides which weeks
+// they may read.
+function userDb(c: any) {
+  const token = c.req.header("Authorization")?.split(" ")[1];
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
+// The week guard trigger (034) raises 42501 for locked weeks and for status
+// changes outside the approval workflow. Surface those as 409, not 500.
+function lockedWeekResponse(c: any, err: any) {
+  if (err?.code === "42501") {
+    return c.json({ error: err.message, code: "timesheet_locked" }, 409);
+  }
+  return null;
+}
+
 async function getAuthUser(c: any): Promise<{ id: string; email: string } | null> {
   const token = c.req.header("Authorization")?.split(" ")[1];
   if (!token) return null;
@@ -77,30 +97,6 @@ async function canReviewTimesheet(reviewerId: string, weekRow: any): Promise<boo
   return member.can_approve === true || member.role === "Owner" || member.role === "Editor";
 }
 
-async function canReadAllProjectTimesheets(userId: string, projectId: string): Promise<boolean> {
-  const client = db();
-  const { data: project, error: projectError } = await client
-    .from("wg_projects")
-    .select("owner_id")
-    .eq("id", projectId)
-    .maybeSingle();
-
-  if (projectError) throw projectError;
-  if (!project) return false;
-  if (project.owner_id === userId) return true;
-
-  const { data: member, error: memberError } = await client
-    .from("wg_project_members")
-    .select("role, can_approve")
-    .eq("project_id", projectId)
-    .eq("user_id", userId)
-    .not("accepted_at", "is", null)
-    .maybeSingle();
-
-  if (memberError) throw memberError;
-  return member?.role === "Owner" || member?.role === "Editor";
-}
-
 // ---------------------------------------------------------------------------
 // GET /make-server-f8b491be/api/timesheets?month=YYYY-MM
 // ---------------------------------------------------------------------------
@@ -111,21 +107,14 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
 
     const month = c.req.query("month");
     const projectId = c.req.query("project_id") || c.req.query("projectId");
-    const canReadProject = projectId
-      ? await canReadAllProjectTimesheets(user.id, projectId)
-      : false;
 
-    let query = db()
+    // Runs as the caller: the worker sees their own weeks, the project owner
+    // sees the project, an assigned approver sees the weeks they approve, and
+    // verified admins of the worker's party see that party's weeks.
+    let query = userDb(c)
       .from("wg_timesheet_weeks")
       .select("*")
       .order("week_start", { ascending: false });
-
-    // Project owners/editors need project rows for billing. Assigned party
-    // approvers use their approval queue and must not receive unrelated time.
-    // Everyone else is strictly limited to their own rows.
-    if (!canReadProject) {
-      query = query.eq("user_id", user.id);
-    }
 
     if (month) {
       const [year, mon] = month.split("-").map(Number);
@@ -143,7 +132,7 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
     if (error) throw error;
 
     const graphNodeByUserId = new Map<string, string>();
-    if (projectId && canReadProject && (data || []).length > 0) {
+    if (projectId && (data || []).length > 0) {
       const userIds = Array.from(new Set((data || []).map((row: any) => row.user_id).filter(Boolean)));
       const { data: memberRows, error: memberError } = await db()
         .from("wg_project_members")
@@ -209,14 +198,24 @@ timesheetsRouter.put("/make-server-f8b491be/api/timesheets/:weekStart", async (c
     // Row ID encodes user + week for O(1) lookup, matching original KV key pattern
     const rowId = `${user.id}:${weekStart}`;
 
+    // Status comes from the approval workflow, never from this body: a new row
+    // is a draft and an existing row keeps its status.
+    const { data: existing, error: existingError } = await db()
+      .from("wg_timesheet_weeks")
+      .select("status")
+      .eq("id", rowId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    const { status: _ignoredStatus, ...content } = body || {};
     const upsertRow = {
       id: rowId,
       user_id: user.id,
       project_id: body.projectId || null,
       week_start: weekStart,
-      status: body.status || "draft",
+      status: existing?.status || "draft",
       // Full StoredWeek blob: ensures any frontend fields survive round-trips
-      data: { ...body, personId: user.id, weekStart },
+      data: { ...content, personId: user.id, weekStart },
     };
 
     const { data, error } = await db()
@@ -225,7 +224,11 @@ timesheetsRouter.put("/make-server-f8b491be/api/timesheets/:weekStart", async (c
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const locked = lockedWeekResponse(c, error);
+      if (locked) return locked;
+      throw error;
+    }
     console.log(`Timesheet saved: ${user.id} week ${weekStart}`);
     return c.json({ week: rowToWeek(data) });
   } catch (err: any) {
@@ -247,6 +250,16 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
     const requestedStatus = body.status;
     if (!["draft", "submitted", "approved", "rejected"].includes(requestedStatus)) {
       return c.json({ error: `Invalid status: ${requestedStatus}` }, 400);
+    }
+    // Since 034, submit/recall/approve/reject are database RPCs that compute
+    // the approval route on the server (wg_submit_timesheet,
+    // wg_recall_timesheet, wg_decide_approval). This route only reopens your
+    // own rejected week.
+    if (requestedStatus !== "draft") {
+      return c.json({
+        error: "Submit, approve and reject timesheets through the approval workflow.",
+        code: "use_approval_workflow",
+      }, 409);
     }
 
     // Approvers pass the submitter's auth user id when syncing someone else's week.
@@ -317,7 +330,11 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
       .select("*")
       .single();
 
-    if (ue) throw ue;
+    if (ue) {
+      const locked = lockedWeekResponse(c, ue);
+      if (locked) return locked;
+      throw ue;
+    }
     console.log(`Timesheet status: ${targetUserId} week ${weekStart} -> ${requestedStatus}`);
     return c.json({ week: rowToWeek(updated) });
   } catch (err: any) {
@@ -341,7 +358,11 @@ timesheetsRouter.delete("/make-server-f8b491be/api/timesheets/:weekStart", async
       .eq("user_id", user.id)
       .eq("week_start", weekStart);
 
-    if (error) throw error;
+    if (error) {
+      const locked = lockedWeekResponse(c, error);
+      if (locked) return locked;
+      throw error;
+    }
     console.log(`Timesheet deleted: ${user.id} week ${weekStart}`);
     return c.json({ success: true });
   } catch (err: any) {

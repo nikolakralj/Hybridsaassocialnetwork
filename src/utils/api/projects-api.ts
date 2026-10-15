@@ -399,7 +399,8 @@ async function supabaseCreateProject(input: SupabaseProjectInput) {
       graph: input.graph || null,
       parties: input.parties || null,
     })
-    .select()
+    // graph/parties are not client-readable (migration 034); return metadata only.
+    .select(PROJECT_METADATA_COLUMNS)
     .single();
 
   if (projError) throw new Error(`Failed to create project in DB: ${projError.message}`);

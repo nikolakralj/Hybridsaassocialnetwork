@@ -15,19 +15,20 @@ import { toast } from 'sonner';
 import { useAuth } from './AuthContext';
 import {
   listTimesheets,
+  recallTimesheet,
+  reopenRejectedTimesheet,
   saveTimesheetWeek,
-  updateTimesheetStatus,
+  submitTimesheetForApproval,
 } from '../utils/api/timesheets-api';
 import { getMyProjectMembership, getProject } from '../utils/api/projects-api';
 import {
   approveItem,
-  createApproval,
-  deleteApproval,
   getLatestPendingApproval,
   rejectItem,
   type ApprovalSubjectSnapshot,
 } from '../utils/api/approvals-supabase';
 import type { SubmissionEnvelope, TimeEntry } from '../types/timesheets';
+import type { ApprovalParty } from '../utils/graph/approval-fallback';
 import {
   normalizeStoredDay,
   normalizeStoredWeek,
@@ -35,10 +36,6 @@ import {
   sumWeekBillableHours,
   validateTimesheetWeek,
 } from '../types/timesheets';
-import { getApprovalStepsForParty, type ApprovalParty } from '../utils/graph/approval-fallback';
-import { fetchScopedGraph } from '../utils/api/scoped-graph-api';
-import { buildScopedGraphDirectories } from '../utils/graph/scoped-graph-directories';
-import type { BaseEdge, BaseNode } from '../types/workgraph';
 
 // ============================================================================
 // Types
@@ -126,23 +123,6 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
 // produces requests that look valid but are disconnected from the real route.
 const DEFAULT_PROJECT_ID = '';
 type NameDirEntry = { name?: string; type?: string; orgId?: string };
-
-interface ApprovalRoute {
-  approvalLayer: number;
-  approverName: string;
-  approverNodeId: string;
-  approverUserRef: string;
-  steps: ApprovalRouteStep[];
-}
-
-interface ApprovalRouteStep {
-  step: number;
-  partyId: string;
-  partyName?: string;
-  approverNodeId: string;
-  approverUserRef: string;
-  approverName: string;
-}
 
 function mkDays(hours: number[]): StoredDay[] {
   return DAY_LABELS.map((day, i) => normalizeStoredDay({ day, hours: hours[i] ?? 0 }));
@@ -284,329 +264,6 @@ function readApprovalParties(projectId: string): ApprovalParty[] {
 }
 
 /** Persist only the current signed-in session's server-scoped directory. */
-function writeApprovalParties(projectId: string, parties: ApprovalParty[]): void {
-  const payload = JSON.stringify({ parties });
-  try { sessionStorage.setItem(`workgraph-approval-dir:${projectId}`, payload); } catch { /* quota */ }
-}
-
-async function loadApprovalParties(projectId: string, accessToken?: string | null): Promise<ApprovalParty[]> {
-  const sessionParties = readApprovalParties(projectId);
-  if (sessionParties.length > 0) return sessionParties;
-
-  // Server-truth fallback. Approval routing consumes the same privity
-  // projection as WorkGraph; it never downloads the raw project graph.
-  try {
-    void accessToken;
-    const graph = await fetchScopedGraph(projectId);
-    const resolved = buildScopedGraphDirectories(
-      graph.nodes as BaseNode[],
-      graph.edges as BaseEdge[],
-    ).approvalDirectory;
-
-    // If we got parties from the DB, persist them locally so future reads don't
-    // hit the network again.
-    if (resolved.length > 0) {
-      writeApprovalParties(projectId, resolved);
-    }
-    return resolved;
-  } catch {
-    return [];
-  }
-}
-
-function findNextApprovalParty(
-  submitterPartyId: string,
-  parties: ApprovalParty[],
-  submitterPersonId: string,
-): ApprovalParty | null {
-  const partyMap = new Map(parties.map((party) => [party.id, party]));
-  const submitterParty = partyMap.get(submitterPartyId);
-  if (!submitterParty) return null;
-
-  const visited = new Set<string>([submitterPartyId]);
-  const queue = [...submitterParty.billsTo]
-    .map((targetId) => partyMap.get(targetId))
-    .filter((party): party is ApprovalParty => Boolean(party))
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
-
-  while (queue.length > 0) {
-    const party = queue.shift();
-    if (!party || visited.has(party.id)) continue;
-    visited.add(party.id);
-
-    const approvers = party.people.filter((person) => person.canApprove && person.id !== submitterPersonId);
-    if (approvers.length > 0) {
-      return party;
-    }
-
-    for (const targetId of party.billsTo) {
-      if (visited.has(targetId)) continue;
-      const nextParty = partyMap.get(targetId);
-      if (nextParty) queue.push(nextParty);
-    }
-  }
-
-  return null;
-}
-
-function buildApprovalRouteSteps(
-  submitterPartyId: string,
-  parties: ApprovalParty[],
-  submitterPersonId: string,
-  ownerId?: string | null,
-): ApprovalRouteStep[] {
-  const partyMap = new Map(parties.map((party) => [party.id, party]));
-  const submitterParty = partyMap.get(submitterPartyId);
-  if (!submitterParty) return [];
-
-  // Route = the submitter's own org (internal approval) followed by everyone
-  // it bills upstream. Internal review must not be skipped, and the chain must
-  // not dead-end just because an upstream client has no account yet.
-  const routeParties: ApprovalParty[] = [submitterParty];
-  const visited = new Set<string>([submitterPartyId]);
-  const queue = [...submitterParty.billsTo];
-
-  while (queue.length > 0) {
-    const partyId = queue.shift();
-    if (!partyId || visited.has(partyId)) continue;
-    visited.add(partyId);
-
-    const party = partyMap.get(partyId);
-    if (!party) continue;
-
-    routeParties.push(party);
-    for (const nextPartyId of party.billsTo) {
-      if (!visited.has(nextPartyId)) queue.push(nextPartyId);
-    }
-  }
-
-  // Is a person authorized to approve on behalf of a party?
-  //  - explicitly flagged canApprove, OR
-  //  - the project owner (authorized in their own org by definition).
-  const isOwner = (person: { id: string }) =>
-    Boolean(ownerId) && person.id === ownerId;
-  const isAuthorized = (person: { id: string; canApprove?: boolean }) =>
-    person.canApprove === true || isOwner(person);
-
-  const steps: ApprovalRouteStep[] = [];
-
-  for (const party of routeParties) {
-    const isOwnOrg = party.id === submitterPartyId;
-    const others = [...party.people]
-      .filter((person) => person.id !== submitterPersonId)
-      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
-
-    const authorized = others.find(isAuthorized);
-
-    // Internal (own-org) approval must come from someone with authority (owner
-    // or a designated approver) — never a peer/subordinate. If none exists,
-    // skip internal review and route upstream.
-    // Upstream parties: any representative can approve; if the party has no
-    // people yet (e.g. the client hasn't been invited), use a placeholder that
-    // routes to the party itself ("waiting on <party>").
-    const chosen = isOwnOrg ? authorized : (authorized || others[0]);
-    if (isOwnOrg && !chosen) continue;
-
-    steps.push({
-      step: steps.length + 1,
-      partyId: party.id,
-      partyName: party.name,
-      approverNodeId: party.id,
-      approverUserRef: chosen ? chosen.id : party.id,
-      approverName: (chosen && (chosen.name || party.name)) || party.name || party.id,
-    });
-  }
-
-  return steps;
-}
-
-async function getApprovalRouteForSubmitter(projectId: string, personId: string, accessToken?: string | null): Promise<ApprovalRoute | null> {
-  const parties = await loadApprovalParties(projectId, accessToken);
-  if (parties.length === 0) {
-    console.warn('[approval-route] No parties found for project', projectId,
-      '| sessionStorage key:', `workgraph-approval-dir:${projectId}`,
-      '| sessionStorage value:', sessionStorage.getItem(`workgraph-approval-dir:${projectId}`)?.slice(0, 200));
-    return null;
-  }
-
-  console.log('[approval-route] Loaded', parties.length, 'parties for project', projectId,
-    '| party names:', parties.map(p => `${p.name}(${p.people.length}ppl, billsTo:${p.billsTo.length})`).join(', '));
-
-  // The project owner is an authorized internal approver by definition, even if
-  // their graph node was never flagged canApprove.
-  let ownerId: string | null = null;
-  try {
-    const proj = await getProject(projectId, accessToken);
-    const projectRow = (proj as { project?: Record<string, unknown> })?.project;
-    ownerId = (projectRow?.ownerId as string) || (projectRow?.owner_id as string) || null;
-  } catch { /* owner lookup is best-effort */ }
-
-  let submitterParty = parties.find((party) => party.people.some((person) => person.id === personId));
-  let fallbackUsed = submitterParty ? 'direct' : 'none';
-
-  // Fallback 1: submitter not in any party's people list (floating node).
-  // Use the name directory's orgId to find the submitter's party.
-  if (!submitterParty) {
-    const nameDir = readNameDir(projectId);
-    const orgId = nameDir[personId]?.orgId;
-    console.log('[approval-route] Fallback 1: nameDir orgId for', personId, '=', orgId);
-    if (orgId) {
-      submitterParty = parties.find((p) => p.id === orgId);
-      if (submitterParty) fallbackUsed = 'nameDir';
-    }
-  }
-
-  // Fallback 2: try the viewer meta (the identity the user is currently "viewing as")
-  if (!submitterParty) {
-    const viewerRaw = readSessionJson<{ nodeId?: string; orgId?: string }>(`workgraph-viewer-meta:${projectId}`);
-    console.log('[approval-route] Fallback 2: viewerMeta =', viewerRaw);
-    if (viewerRaw?.orgId) {
-      submitterParty = parties.find((p) => p.id === viewerRaw.orgId);
-      if (submitterParty) fallbackUsed = 'viewerMeta';
-    }
-  }
-
-  // Fallback 3: if the submitter is the project owner, they belong to the first
-  // non-client party that bills upstream (the "Your Organization" party).
-  if (!submitterParty) {
-    submitterParty = parties.find((p) => p.billsTo.length > 0 && p.partyType !== 'client');
-    if (!submitterParty) submitterParty = parties[0]; // absolute last resort
-    if (submitterParty) fallbackUsed = 'firstParty';
-    console.log('[approval-route] Fallback 3: using first party =', submitterParty?.name);
-  }
-
-  if (!submitterParty) {
-    console.warn('[approval-route] All fallbacks exhausted, no submitterParty found');
-    return null;
-  }
-
-  console.log('[approval-route] Using submitterParty:', submitterParty.name, '(via', fallbackUsed, ')');
-
-  // Primary path: tolerant route builder. Owner-as-internal-approver + upstream
-  // placeholders mean a worker can always submit — the chain never dead-ends on
-  // a missing designated approver or an un-invited upstream client.
-  const tolerantSteps = buildApprovalRouteSteps(submitterParty.id, parties, personId, ownerId);
-  if (tolerantSteps.length > 0) {
-    const first = tolerantSteps[0];
-    console.info('[approval-route] resolved via tolerant builder:',
-      tolerantSteps.map((s) => `step${s.step}(${s.approverName})`).join(' → '));
-    return {
-      approvalLayer: first.step,
-      approverName: first.approverName,
-      approverNodeId: first.approverNodeId,
-      approverUserRef: first.approverUserRef,
-      steps: tolerantSteps,
-    };
-  }
-
-  // Walk approval steps — skip any step where the only approver is the submitter themselves
-  // (self-approval). If Nikola is the approver in their own party, route upstream to next DAG node.
-  const steps = getApprovalStepsForParty(submitterParty.id, parties);
-  console.log('[approval-route] Steps for party', submitterParty.name, ':', steps.length,
-    'steps', steps.map(s => `step${s.step}(${s.partyId}, approvers:[${s.approverIds.join(',')}])`).join(', '));
-
-  let firstStep = steps.find((step) => {
-    if (step.approverIds.length === 0) return true;
-    return !step.approverIds.every((id) => id === personId);
-  });
-
-  // All steps are self-approval — find the next upstream party that has real approvers.
-  // This is the core fix: findNextApprovalParty walks the billsTo DAG beyond the submitter's
-  // party and finds the first party with an approver who isn't the submitter.
-  if (!firstStep) {
-    console.log('[approval-route] All steps are self-approval, walking upstream via findNextApprovalParty');
-    const nextParty = findNextApprovalParty(submitterParty.id, parties, personId);
-    if (nextParty) {
-      const nextApprovers = nextParty.people
-        .filter((p) => p.canApprove && p.id !== personId)
-        .map((p) => p.id);
-      console.log('[approval-route] Found upstream party:', nextParty.name, 'with approvers:', nextApprovers);
-      if (nextApprovers.length > 0) {
-        firstStep = {
-          step: 1,
-          partyId: nextParty.id,
-          partyType: nextParty.partyType || 'company',
-          approverIds: nextApprovers,
-        };
-      }
-    }
-  }
-
-  if (!firstStep) {
-    // Last resort: scan ALL parties for anyone who can approve and isn't the submitter
-    console.log('[approval-route] findNextApprovalParty failed too, scanning all parties');
-    for (const party of parties) {
-      const approvers = party.people
-        .filter((p) => p.canApprove && p.id !== personId);
-      if (approvers.length > 0) {
-        firstStep = {
-          step: 1,
-          partyId: party.id,
-          partyType: party.partyType || 'company',
-          approverIds: approvers.map((p) => p.id),
-        };
-        console.log('[approval-route] Found approver in party', party.name, ':', approvers.map(a => a.name || a.id));
-        break;
-      }
-    }
-  }
-
-  if (!firstStep) {
-    console.warn('[approval-route] No approver found in any party after exhaustive search');
-    return null;
-  }
-
-  let resolvedStep = firstStep;
-  let eligibleApprovers = firstStep.approverIds.filter((id) => id !== personId);
-
-  if (eligibleApprovers.length === 0) {
-    const nextParty = findNextApprovalParty(submitterParty.id, parties, personId);
-    if (nextParty) {
-      resolvedStep = {
-        ...firstStep,
-        partyId: nextParty.id,
-        partyType: nextParty.partyType,
-        approverIds: nextParty.people
-          .filter((person) => person.canApprove && person.id !== personId)
-          .map((person) => person.id),
-      };
-      eligibleApprovers = resolvedStep.approverIds.filter((id) => id !== personId);
-    }
-  }
-
-  if (eligibleApprovers.length === 0) {
-    console.warn('[approval-route] No eligible approvers found after step resolution');
-    return null;
-  }
-
-  let routeSteps = buildApprovalRouteSteps(submitterParty.id, parties, personId);
-
-  if (routeSteps.length === 0) {
-    routeSteps = [{
-      step: 1,
-      partyId: resolvedStep.partyId,
-      partyName: parties.find((party) => party.id === resolvedStep.partyId)?.name,
-      approverNodeId: resolvedStep.partyId,
-      approverUserRef: [...eligibleApprovers].sort()[0] || resolvedStep.partyId,
-      approverName: parties.find((party) => party.id === resolvedStep.partyId)?.name || [...eligibleApprovers].sort()[0] || resolvedStep.partyId,
-    }];
-  }
-
-  const firstRouteStep = routeSteps[0];
-  const approverUserRef = firstRouteStep.approverUserRef;
-  const partyName = parties.find((party) => party.id === resolvedStep.partyId)?.name;
-  const approverName = firstRouteStep.approverName || partyName || readNameDir(projectId)[approverUserRef]?.name || approverUserRef;
-
-  return {
-    approvalLayer: firstRouteStep.step,
-    approverName,
-    approverNodeId: firstRouteStep.approverNodeId,
-    approverUserRef,
-    steps: routeSteps,
-  };
-}
-
-
 function buildTimesheetSubjectId(personId: string, weekStart: string): string {
   return `${personId}:${weekStart}`;
 }
@@ -1072,7 +729,6 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         await saveTimesheetWeek(weekStart, {
           days: normalizedWeek.days,
           tasks: normalizedWeek.tasks,
-          status: normalizedWeek.status,
           notes: undefined,
           projectId: activeProjectId(),
           personId,
@@ -1088,26 +744,45 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     pendingSyncs.current.set(key, timeout);
   }, [accessToken]);
 
-  const persistStatus = useCallback(async (
-    personId: string,
+  // Back to draft: recall a submitted week (before anyone approves it) or reopen
+  // a rejected one. Every other status change is an approval-workflow RPC.
+  const persistDraftStatus = useCallback(async (
     weekStart: string,
-    status: WeekStatus,
-    meta?: { note?: string; by?: string }
+    currentStatus: WeekStatus,
   ) => {
-    if (!accessToken || isDemoPersonId(personId)) return;
-
-    try {
-      await updateTimesheetStatus(weekStart, status, {
-        personId,
-        approverName: meta?.by,
-        note: meta?.note,
-        projectId: activeProjectId(),
-      }, accessToken);
-      console.log(`[TimesheetStore] Status updated: ${weekStart} -> ${status}`);
-    } catch (err) {
-      console.error(`[TimesheetStore] Failed to update status for ${weekStart}:`, err);
-      throw err instanceof Error ? err : new Error(`Failed to update status for ${weekStart}`);
+    const projectId = activeProjectId();
+    if (currentStatus === 'submitted') {
+      if (!projectId) throw new Error('Select a project before recalling time.');
+      await recallTimesheet(projectId, weekStart);
+      return;
     }
+    if (currentStatus === 'rejected') {
+      await reopenRejectedTimesheet(weekStart, projectId || undefined);
+      return;
+    }
+    if (currentStatus === 'approved') {
+      throw new Error('Approved timesheets are locked and cannot be recalled.');
+    }
+  }, []);
+
+  // Write the current days now (instead of waiting for the debounced save), so
+  // the server submits exactly what the person sees.
+  const flushWeekNow = useCallback(async (personId: string, weekStart: string, week: StoredWeek) => {
+    const key = `${personId}:${weekStart}`;
+    const pending = pendingSyncs.current.get(key);
+    if (pending) {
+      clearTimeout(pending);
+      pendingSyncs.current.delete(key);
+    }
+    const normalizedWeek = normalizeStoredWeek(week);
+    await saveTimesheetWeek(weekStart, {
+      days: normalizedWeek.days,
+      tasks: normalizedWeek.tasks,
+      notes: undefined,
+      projectId: activeProjectId(),
+      personId,
+      totalHours: normalizedWeek.totalHours,
+    }, accessToken);
   }, [accessToken]);
 
   const applyWeekStatusLocally = useCallback((
@@ -1264,70 +939,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
     }
     const isRemoteWorkflow = Boolean(accessToken && !isDemoPersonId(personId));
     if (!isRemoteWorkflow) {
-      if (status === 'submitted') {
-        const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
-        if (!approvalRoute) {
-          const description = 'No approver could be resolved from the project graph. Open the Project Graph tab, make sure this person is inside an organization that bills upstream, then try again.';
-          toast.error('Cannot submit timesheet', { description });
-          throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
-        }
-
-        const submittedAt = new Date().toISOString();
-        const nameDir = readNameDir(projectId);
-        const approvalParties = readApprovalParties(projectId);
-        const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
-        const submitterOrgId = nameDir[personId]?.orgId || approvalParties.find((party) =>
-          party.people.some((person) => person.id === personId)
-        )?.id;
-        const submitterOrg = submitterOrgId
-          ? approvalParties.find((party) => party.id === submitterOrgId)?.name || nameDir[submitterOrgId]?.name || submitterOrgId
-          : undefined;
-        const daySummary = normalizedWeek.days.map((day) => ({
-          day: day.day,
-          hours: typeof day.totalHours === 'number' ? day.totalHours : day.hours || 0,
-          notes: day.notes,
-        }));
-        const approvalSnapshot: ApprovalSubjectSnapshot = {
-          kind: 'timesheet',
-          title: `${submitterName} · ${normalizedWeek.weekLabel}`,
-          summary: `${submitterOrg || 'Unknown organization'} · ${normalizedWeek.weekLabel} · ${sumWeekHours(normalizedWeek)}h`,
-          submitterId: personId,
-          submitterName,
-          submitterOrg,
-          periodStart: normalizedWeek.weekStart,
-          periodEnd: (() => {
-            const end = new Date(`${normalizedWeek.weekStart}T00:00:00`);
-            end.setDate(end.getDate() + 4);
-            return formatISODateLocal(end);
-          })(),
-          weekLabel: normalizedWeek.weekLabel,
-          hours: sumWeekHours(normalizedWeek),
-          billableHours: sumWeekBillableHours(normalizedWeek),
-          currentApproverName: approvalRoute.approverName,
-          currentApproverNodeId: approvalRoute.approverNodeId,
-          currentApproverUserRef: approvalRoute.approverUserRef,
-          approvalLayer: approvalRoute.approvalLayer,
-          approvalRoute: approvalRoute.steps,
-          daySummary,
-        };
-
-        await createApproval({
-          projectId,
-          subjectType: 'timesheet',
-          subjectId: buildTimesheetSubjectId(personId, weekStart),
-          subjectSnapshot: approvalSnapshot,
-          approverUserId: approvalRoute.approverUserRef,
-          approverName: approvalRoute.approverName,
-          approverNodeId: approvalRoute.approverNodeId,
-          approvalLayer: approvalRoute.approvalLayer,
-          status: 'pending',
-          submittedAt,
-          submitterUserId: user?.id || personId,
-        });
-        applyWeekStatusLocally(personId, weekStart, 'submitted', meta, submittedAt);
-        return;
-      }
-
+      // Demo/offline weeks have no server approval workflow.
       applyWeekStatusLocally(personId, weekStart, status, meta);
       return;
     }
@@ -1336,12 +948,6 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       const subjectId = buildTimesheetSubjectId(personId, weekStart);
 
       if (status === 'submitted') {
-  const approvalRoute = await getApprovalRouteForSubmitter(projectId, personId, accessToken);
-        if (!approvalRoute) {
-          throw new Error(`No approval route could be resolved for ${personId} in project ${projectId}`);
-        }
-
-        const submittedAt = new Date().toISOString();
         const nameDir = readNameDir(projectId);
         const approvalParties = readApprovalParties(projectId);
         const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
@@ -1356,6 +962,8 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
           hours: typeof day.totalHours === 'number' ? day.totalHours : day.hours || 0,
           notes: day.notes,
         }));
+        // Descriptive fields only. The server adds the approval route, the
+        // current approver, and the hours stored on the week.
         const approvalSnapshot: ApprovalSubjectSnapshot = {
           kind: 'timesheet',
           title: `${submitterName} · ${normalizedWeek.weekLabel}`,
@@ -1370,43 +978,18 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
             return formatISODateLocal(end);
           })(),
           weekLabel: normalizedWeek.weekLabel,
-          hours: sumWeekHours(normalizedWeek),
           billableHours: sumWeekBillableHours(normalizedWeek),
-          currentApproverName: approvalRoute.approverName,
-          currentApproverNodeId: approvalRoute.approverNodeId,
-          currentApproverUserRef: approvalRoute.approverUserRef,
-          approvalLayer: approvalRoute.approvalLayer,
-          approvalRoute: approvalRoute.steps,
           daySummary,
         };
 
-        const approval = await createApproval({
+        await flushWeekNow(personId, weekStart, normalizedWeek);
+        const submission = await submitTimesheetForApproval(
           projectId,
-          subjectType: 'timesheet',
+          weekStart,
           subjectId,
-          subjectSnapshot: approvalSnapshot,
-          approverUserId: approvalRoute.approverUserRef,
-          approverName: approvalRoute.approverName,
-          approverNodeId: approvalRoute.approverNodeId,
-          approvalLayer: approvalRoute.approvalLayer,
-          status: 'pending',
-          submittedAt,
-          submitterUserId: user?.id,
-        });
-
-        try {
-          await persistStatus(personId, weekStart, 'submitted', meta);
-        } catch (statusError) {
-          if (approval.submittedAt === submittedAt) {
-            try {
-              await deleteApproval(approval.id);
-            } catch (rollbackError) {
-              console.error(`[TimesheetStore] Failed to rollback approval ${approval.id} after submit failure:`, rollbackError);
-            }
-          }
-          throw statusError;
-        }
-        applyWeekStatusLocally(personId, weekStart, 'submitted', meta, submittedAt);
+          approvalSnapshot as Record<string, unknown>,
+        );
+        applyWeekStatusLocally(personId, weekStart, 'submitted', meta, submission?.approval?.submitted_at);
         return;
       }
 
@@ -1421,7 +1004,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
             approvedBy: meta?.by,
             notes: meta?.note,
           });
-          const nextStatus: WeekStatus = approvalResult.spawnedNextLayer ? 'submitted' : 'approved';
+          const nextStatus: WeekStatus = approvalResult.weekStatus === 'approved' ? 'approved' : 'submitted';
           applyWeekStatusLocally(personId, weekStart, nextStatus, meta, normalizedWeek.submittedAt);
         } else {
           await rejectItem(pendingApproval.id, {
@@ -1433,9 +1016,11 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         return;
       }
 
-      await persistStatus(personId, weekStart, status, meta);
-      applyWeekStatusLocally(personId, weekStart, status, meta);
-      return;
+      if (status === 'draft') {
+        await persistDraftStatus(weekStart, normalizedWeek.status);
+        applyWeekStatusLocally(personId, weekStart, 'draft', meta);
+        return;
+      }
     } catch (error) {
       const description = formatActionError(status === 'submitted' ? 'submit' : status, error);
       console.error(`[TimesheetStore] Failed to ${status} week ${weekStart}:`, error);
@@ -1443,31 +1028,29 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       throw error instanceof Error ? error : new Error(description);
     }
 
-  }, [accessToken, applyWeekStatusLocally, persistStatus, projectStartDate, user?.id, weeks]);
+  }, [accessToken, applyWeekStatusLocally, flushWeekNow, persistDraftStatus, projectStartDate, user?.id, weeks]);
 
+  // Approves each submitted week of the month through the approval workflow,
+  // one at a time. The server refuses weeks this viewer is not assigned to.
   const batchApproveMonth = useCallback((personId: string, month: string, approverName: string): number => {
-    let count = 0;
-    const weekStartsToApprove: string[] = [];
+    const weekStartsToApprove = weeks
+      .filter(w => w.personId === personId && monthOf(w.weekStart) === month && w.status === 'submitted')
+      .map(w => w.weekStart)
+      .sort();
 
-    setWeeks(prev => prev.map(w => {
-      if (w.personId === personId && monthOf(w.weekStart) === month && w.status === 'submitted') {
-        count++;
-        weekStartsToApprove.push(w.weekStart);
-        return { ...w, status: 'approved' as const, approvedBy: approverName };
+    void (async () => {
+      for (const ws of weekStartsToApprove) {
+        try {
+          await setWeekStatus(personId, ws, 'approved', { by: approverName });
+        } catch (err) {
+          console.error(`[TimesheetStore] Failed to batch-approve ${ws}:`, err);
+          return;
+        }
       }
-      return w;
-    }));
+    })();
 
-    // Persist each approval to API
-    weekStartsToApprove.forEach(ws => {
-      void persistStatus(personId, ws, 'approved', { by: approverName }).catch(err => {
-        console.error(`[TimesheetStore] Failed to batch-approve ${ws}:`, err);
-      });
-    });
-
-    bump();
-    return count;
-  }, [bump, persistStatus]);
+    return weekStartsToApprove.length;
+  }, [setWeekStatus, weeks]);
 
   const seedMonthForPerson = useCallback((personId: string, month: string): number => {
     const mondays = getMondaysForMonth(month);
@@ -1556,22 +1139,18 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       totalBillableHours: submitCandidates.reduce((sum, week) => sum + sumWeekBillableHours(week), 0),
     };
 
-    setWeeks(prev => prev.map(w => {
-      if (w.personId !== personId || monthOf(w.weekStart) !== month) return w;
-      if (w.status !== 'draft' && w.status !== 'rejected') return w;
-      const normalized = normalizeStoredWeek(w);
-      return {
-        ...normalized,
-        status: 'submitted',
-        submittedAt,
-      };
-    }));
-
-    submitCandidates.forEach(week => {
-      void persistStatus(personId, week.weekStart, 'submitted').catch(err => {
-        console.error(`[TimesheetStore] Failed to submit ${week.weekStart}:`, err);
-      });
-    });
+    // Each week goes through the approval workflow in turn; the store marks a
+    // week submitted only after the server accepts it.
+    void (async () => {
+      for (const week of [...submitCandidates].sort((a, b) => a.weekStart.localeCompare(b.weekStart))) {
+        try {
+          await setWeekStatus(personId, week.weekStart, 'submitted');
+        } catch (err) {
+          console.error(`[TimesheetStore] Failed to submit ${week.weekStart}:`, err);
+          return;
+        }
+      }
+    })();
 
     setSubmissionEnvelopes(prev => {
       const withoutPrior = prev.filter(
@@ -1582,7 +1161,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
 
     bump();
     return envelope;
-  }, [weeks, persistStatus, bump, projectStartDate]);
+  }, [weeks, setWeekStatus, bump, projectStartDate]);
 
   const getSubmissionEnvelopes = useCallback((personId?: string, month?: string): SubmissionEnvelope[] => {
     return submissionEnvelopes.filter(envelope => {

@@ -105,7 +105,11 @@ VALUES (
       jsonb_build_object('id', 'party_reg_client', 'type', 'party', 'data', jsonb_build_object('name', 'Synthetic Client', 'partyType', 'client')),
       jsonb_build_object('id', 'party_reg_other', 'type', 'party', 'data', jsonb_build_object('name', 'Synthetic Other Company', 'partyType', 'company'))
     ),
-    'edges', '[]'::jsonb
+    -- Since 035 an issued invoice needs a billsTo edge from seller to buyer.
+    'edges', jsonb_build_array(
+      jsonb_build_object('id', 'e_reg_033_ac', 'source', 'party_reg_agency', 'target', 'party_reg_client', 'type', 'billsTo'),
+      jsonb_build_object('id', 'e_reg_033_ao', 'source', 'party_reg_agency', 'target', 'party_reg_other', 'type', 'billsTo')
+    )
   ),
   '[]'::jsonb
 );
@@ -179,6 +183,9 @@ INSERT INTO public.wg_invoices (
   'issued', '11111111-1111-4111-8111-111111111111'
 );
 
+-- Fixture setup only: since 034 a non-draft week can only be written by the
+-- approval RPCs, which set this flag while running as the function owner.
+SELECT set_config('wg.approval_write', 'on', true);
 INSERT INTO public.wg_timesheet_weeks (
   id, user_id, project_id, week_start, status, data
 ) VALUES (
@@ -189,6 +196,7 @@ INSERT INTO public.wg_timesheet_weeks (
   'submitted',
   '{"totalHours": 8}'::jsonb
 );
+SELECT set_config('wg.approval_write', 'off', true);
 
 INSERT INTO public.wg_project_invitations (
   id, project_id, project_name, email, role, invited_by, expires_at, status
@@ -272,7 +280,8 @@ BEGIN
 END;
 $$;
 
-GRANT SELECT, UPDATE ON public.wg_projects TO authenticated;
+-- Since 034, authenticated may SELECT only non-graph columns of wg_projects.
+GRANT UPDATE ON public.wg_projects TO authenticated;
 GRANT SELECT, UPDATE ON public.wg_project_members TO authenticated;
 GRANT SELECT ON public.wg_contract_rates TO authenticated;
 GRANT SELECT ON public.wg_contracts TO authenticated;
@@ -482,14 +491,6 @@ BEGIN
     RAISE EXCEPTION 'client edited the project graph';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1
-    FROM public.wg_projects
-    WHERE id = 'proj_reg_033'
-      AND graph->'nodes' @> '[{"id":"party_reg_agency"}]'::jsonb
-  ) THEN
-    RAISE EXCEPTION 'client graph update removed the agency party';
-  END IF;
 
   updated_rows := 0;
   UPDATE public.wg_project_members
@@ -616,6 +617,19 @@ END;
 $$;
 
 RESET ROLE;
+
+-- The client's graph update above matched 0 rows; confirm as the table owner.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.wg_projects
+    WHERE id = 'proj_reg_033'
+      AND graph->'nodes' @> '[{"id":"party_reg_agency"}]'::jsonb
+  ) THEN
+    RAISE EXCEPTION 'client graph update removed the agency party';
+  END IF;
+END;
+$$;
 
 SELECT check_name, outcome, detail
 FROM wg_regression_033_results

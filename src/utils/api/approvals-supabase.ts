@@ -8,7 +8,6 @@ import type { BaseEdge, BaseNode } from '../../types/workgraph';
 
 const supabase = createClient();
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const APPROVAL_CREATE_IN_FLIGHT = new Map<string, Promise<ApprovalRecord>>();
 const ROLE_PRIORITY: Record<string, number> = {
   Owner: 0,
   Editor: 1,
@@ -342,233 +341,6 @@ function deriveWeekEndIso(weekStart: string): string {
   return formatIsoDate(parsed);
 }
 
-async function buildApprovalPartyRoute(projectId: string, submitterPersonId: string): Promise<ApprovalDirParty[]> {
-  const parties = await loadApprovalParties(projectId);
-  if (parties.length === 0) return [];
-
-  const partyMap = new Map(parties.map((party) => [party.id, party]));
-  let submitterParty = parties.find((party) => (party.people || []).some((person) => person.id === submitterPersonId));
-
-  if (!submitterParty) {
-    const nameDir = readNameDir(projectId);
-    const orgIdFromDir = nameDir[submitterPersonId]?.orgId;
-    if (orgIdFromDir) {
-      submitterParty = partyMap.get(orgIdFromDir);
-      if (submitterParty) {
-        console.warn('[approvals.route] submitter orphaned from parties; recovered via nameDir.orgId',
-          { submitterPersonId, orgId: orgIdFromDir });
-      }
-    }
-  }
-
-  if (!submitterParty) {
-    submitterParty = parties.find((p) => (p.billsTo || []).length > 0 && p.partyType !== 'client');
-    if (submitterParty) {
-      console.warn('[approvals.route] submitter orphaned; falling back to first upstream-billing party',
-        { submitterPersonId, partyId: submitterParty.id });
-    }
-  }
-
-  if (!submitterParty) {
-    console.error('[approvals.route] no submitter party could be resolved; approval route empty',
-      { submitterPersonId, knownPartyIds: parties.map((p) => p.id) });
-    return [];
-  }
-
-  const visited = new Set<string>([submitterParty.id]);
-  const queue: string[] = [...(submitterParty.billsTo || [])];
-  const route: ApprovalDirParty[] = [];
-
-  while (queue.length > 0) {
-    const partyId = queue.shift()!;
-    if (visited.has(partyId)) continue;
-    visited.add(partyId);
-
-    const party = partyMap.get(partyId);
-    if (!party) continue;
-
-    route.push(party);
-
-    for (const upstreamId of party.billsTo || []) {
-      if (!visited.has(upstreamId)) queue.push(upstreamId);
-    }
-  }
-
-  console.info('[approvals.route]', {
-    projectId,
-    submitterPersonId,
-    routeIds: route.map((party) => party.id),
-  });
-
-  return route;
-}
-
-async function createNextApprovalLayerIfNeeded(dbApproval: any): Promise<boolean> {
-  if (!dbApproval || dbApproval.subject_type !== 'timesheet') return false;
-  if (!dbApproval.project_id || !dbApproval.subject_id) return false;
-
-  const subjectSnapshot = dbApproval.subject_snapshot && typeof dbApproval.subject_snapshot === 'object'
-    ? dbApproval.subject_snapshot as ApprovalSubjectSnapshot
-    : null;
-  const snapshotRoute = Array.isArray(subjectSnapshot?.approvalRoute)
-    ? subjectSnapshot.approvalRoute
-    : [];
-
-  if (snapshotRoute.length > 0) {
-    const currentLayer = Number(dbApproval.approval_layer || subjectSnapshot?.approvalLayer || 1);
-    const nextStep = snapshotRoute
-      .filter((step) => Number(step.step) > currentLayer)
-      .sort((a, b) => Number(a.step) - Number(b.step))[0];
-
-    if (nextStep) {
-      await createApproval({
-        projectId: String(dbApproval.project_id),
-        subjectType: dbApproval.subject_type,
-        subjectId: String(dbApproval.subject_id),
-        subjectSnapshot: {
-          ...subjectSnapshot,
-          currentApproverName: nextStep.approverName,
-          currentApproverNodeId: nextStep.approverNodeId,
-          currentApproverUserRef: nextStep.approverUserRef,
-          approvalLayer: nextStep.step,
-        },
-        approverUserId: nextStep.approverUserRef,
-        approverName: nextStep.approverName,
-        approverNodeId: nextStep.approverNodeId,
-        approvalLayer: nextStep.step,
-        status: 'pending',
-        submittedAt: new Date().toISOString(),
-        graphVersionId: dbApproval.graph_version_id || undefined,
-        submitterUserId: dbApproval.submitter_user_id || undefined,
-      });
-
-      return true;
-    }
-
-    // A submitter's scoped graph can intentionally omit upstream people and
-    // parties. In that case the immutable submission snapshot may end at the
-    // internal layer even though the current approver can see an upstream
-    // billing route. Re-resolve below instead of treating the short snapshot as
-    // proof that the chain is complete.
-  }
-
-  const parsed = parseTimesheetSubject(String(dbApproval.subject_id));
-  if (!parsed) return false;
-
-  const route = await buildApprovalPartyRoute(String(dbApproval.project_id), parsed.personId);
-  if (route.length === 0) return false;
-
-  const currentPartyId = String(dbApproval.approver_node_id || '');
-  const currentLayer = Number(dbApproval.approval_layer || 1);
-  const routeIds = route.map((party) => party.id);
-  let currentIndex = route.findIndex((party) => party.id === currentPartyId);
-
-  if (currentIndex < 0 && currentPartyId) {
-    currentIndex = route.findIndex((party) =>
-      (party.people || []).some((person) => person.id === currentPartyId)
-    );
-  }
-
-  if (currentIndex < 0) {
-    // buildApprovalPartyRoute returns only parties upstream of the submitter.
-    // If the current internal party is therefore absent, start before index 0
-    // so the first upstream party becomes the next approval layer.
-    currentIndex = -1;
-    console.warn('[approvals.nextLayer] Unable to resolve current party from approver node; falling back to approval layer index', {
-      currentLayer,
-      currentPartyId,
-      routeIds,
-    });
-  }
-
-  let nextIndex = currentIndex + 1;
-  let nextParty: ApprovalDirParty | undefined;
-  let sortedApprovers: ApprovalDirPerson[] = [];
-
-  while (nextIndex < route.length) {
-    const candidateParty = route[nextIndex];
-    const candidatePeople = [...(candidateParty.people || [])]
-      .filter((person) => person.canApprove)
-      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
-
-    const fallbackPeople = [...(candidateParty.people || [])]
-      .sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.id.localeCompare(b.id));
-
-    const candidateAssignees = candidatePeople.length > 0
-      ? candidatePeople
-      : fallbackPeople.length > 0
-        ? fallbackPeople
-        : [{ id: candidateParty.id, name: candidateParty.name || candidateParty.id, canApprove: true }];
-
-    if (candidateAssignees.length > 0) {
-      nextParty = candidateParty;
-      sortedApprovers = candidateAssignees;
-      if (candidatePeople.length === 0) {
-        console.warn('[approvals.nextLayer] No canApprove flag found in next party; falling back to first party member', {
-          nextPartyId: candidateParty.id,
-          fallbackAssigneeId: candidateAssignees[0]?.id || null,
-        });
-      }
-      break;
-    }
-
-    nextIndex += 1;
-  }
-
-  console.debug('[approvals.nextLayer]', {
-    currentLayer,
-    currentPartyId,
-    routeIds,
-    nextPartyId: nextParty?.id || null,
-  });
-
-  if (!nextParty) return false;
-
-  const selectedApprover = sortedApprovers[0];
-  const approverRef = selectedApprover?.id || nextParty.id;
-  const approverNodeId = selectedApprover?.id || nextParty.id;
-  const approverName = selectedApprover?.name || nextParty.name || approverRef;
-  const nextApprovalLayer = currentIndex < 0 ? currentLayer + 1 : nextIndex + 1;
-  const resolvedApprovalRoute = subjectSnapshot
-    ? [
-        ...(subjectSnapshot.approvalRoute || []),
-        {
-          step: nextApprovalLayer,
-          partyId: nextParty.id,
-          partyName: nextParty.name,
-          approverNodeId,
-          approverUserRef: approverRef,
-          approverName,
-        },
-      ]
-    : undefined;
-  await createApproval({
-    projectId: String(dbApproval.project_id),
-    subjectType: dbApproval.subject_type,
-    subjectId: String(dbApproval.subject_id),
-    subjectSnapshot: subjectSnapshot
-      ? {
-          ...subjectSnapshot,
-          currentApproverName: approverName,
-          currentApproverNodeId: approverNodeId,
-          currentApproverUserRef: approverRef,
-          approvalLayer: nextApprovalLayer,
-          approvalRoute: resolvedApprovalRoute,
-        }
-      : undefined,
-    approverUserId: approverRef,
-    approverName,
-    approverNodeId,
-    approvalLayer: nextApprovalLayer,
-    status: 'pending',
-    submittedAt: new Date().toISOString(),
-    graphVersionId: dbApproval.graph_version_id || undefined,
-    submitterUserId: dbApproval.submitter_user_id || undefined,
-  });
-
-  return true;
-}
-
 async function fetchProjectMembers(projectId: string): Promise<WgProjectMember[]> {
   const withGraphNode = await supabase
     .from('wg_project_members')
@@ -752,82 +524,6 @@ export async function resolveGraphNodeToUserId(
   return fallbackUserId;
 }
 
-function buildCreateApprovalKey(approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>): string {
-  return [
-    approval.projectId,
-    approval.subjectType,
-    approval.subjectId,
-    approval.approvalLayer,
-    approval.approverNodeId || '',
-  ].join('::');
-}
-
-function isSchemaCacheMissingColumnError(error: unknown, columnName: string): boolean {
-  const message = error instanceof Error ? error.message : String((error as any)?.message || error || '');
-  const normalized = message.toLowerCase();
-  return normalized.includes(columnName.toLowerCase()) && (
-    normalized.includes('schema cache') ||
-    normalized.includes('could not find') ||
-    normalized.includes('column')
-  );
-}
-
-async function insertApprovalRecordWithFallback(row: Record<string, any>) {
-  let workingRow = { ...row };
-  for (let i = 0; i < 3; i++) {
-    const attempt = await supabase
-      .from('approval_records')
-      .insert([workingRow])
-      .select()
-      .single();
-
-    if (!attempt.error) return attempt;
-
-    const droppable = ['subject_snapshot', 'submitter_user_id', 'graph_version_id'];
-    const missingCol = droppable.find(
-      (col) => Object.prototype.hasOwnProperty.call(workingRow, col) && isSchemaCacheMissingColumnError(attempt.error, col)
-    );
-
-    if (!missingCol) return attempt;
-
-    console.warn(`[Approvals] Column ${missingCol} not available; retrying insert without it.`);
-    const { [missingCol]: _dropped, ...rest } = workingRow;
-    workingRow = rest;
-  }
-  return supabase
-    .from('approval_records')
-    .insert([workingRow])
-    .select()
-    .single();
-}
-
-async function findExistingPendingApproval(
-  approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>
-): Promise<ApprovalRecord | null> {
-  let query = supabase
-    .from('approval_records')
-    .select('*')
-    .eq('project_id', approval.projectId)
-    .eq('subject_type', approval.subjectType)
-    .eq('subject_id', approval.subjectId)
-    .eq('approval_layer', approval.approvalLayer)
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (approval.approverNodeId) {
-    query = query.eq('approver_node_id', approval.approverNodeId);
-  }
-
-  const { data, error } = await query.maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to check existing approval: ${error.message}`);
-  }
-
-  return data ? transformApproval(data) : null;
-}
-
 function transformApproval(dbApproval: any): ApprovalRecord {
   return {
     id: dbApproval.id,
@@ -853,108 +549,6 @@ function transformApproval(dbApproval: any): ApprovalRecord {
 // ============================================================================
 // APPROVAL OPERATIONS
 // ============================================================================
-
-export async function createApproval(
-  approval: Omit<ApprovalRecord, 'id' | 'createdAt' | 'updatedAt'>
-): Promise<ApprovalRecord> {
-  const createKey = buildCreateApprovalKey(approval);
-  const existingPromise = APPROVAL_CREATE_IN_FLIGHT.get(createKey);
-  if (existingPromise) return existingPromise;
-
-  const createPromise = (async () => {
-    try {
-      const existing = await findExistingPendingApproval(approval);
-      if (existing) return existing;
-
-      const explicitApproverUuid = isUuid(approval.approverUserId) ? approval.approverUserId : undefined;
-      const resolvedApproverUserId = await resolveGraphNodeToUserId(
-        approval.projectId,
-        approval.approverUserId || approval.approverNodeId,
-        explicitApproverUuid
-      );
-
-      if (!resolvedApproverUserId) {
-        // For local projects (non-UUID IDs), approver UUID cannot always be looked up from DB.
-        // Persist a stable approver reference token instead of misrouting to submitter UUID.
-        const approverRefToken = approval.approverUserId || approval.approverNodeId;
-        if (!approverRefToken) {
-          throw new Error(
-            `Unable to resolve approver UUID for project ${approval.projectId} and node ${approval.approverUserId || approval.approverNodeId || 'unknown'}`
-          );
-        }
-        console.warn(
-          `[Approvals] Could not resolve approver UUID for node ${approval.approverUserId || approval.approverNodeId}. ` +
-          `Using approver reference token as placeholder Ã¢â‚¬â€ project must be saved to DB for UUID routing.`
-        );
-        const attempt = await insertApprovalRecordWithFallback({
-          project_id: approval.projectId,
-          subject_type: approval.subjectType,
-          subject_id: approval.subjectId,
-          subject_snapshot: approval.subjectSnapshot || null,
-          approver_user_id: approverRefToken,
-          approver_name: approval.approverName,
-          approver_node_id: approval.approverNodeId,
-          approval_layer: approval.approvalLayer,
-          status: approval.status || 'pending',
-          notes: approval.notes,
-          submitted_at: approval.submittedAt || new Date().toISOString(),
-          graph_version_id: approval.graphVersionId,
-          submitter_user_id: approval.submitterUserId || null,
-        });
-        if (attempt.error) throw new Error(`Failed to create approval: ${attempt.error.message}`);
-        return transformApproval(attempt.data);
-      }
-
-      const attempt = await insertApprovalRecordWithFallback({
-        project_id: approval.projectId,
-        subject_type: approval.subjectType,
-        subject_id: approval.subjectId,
-        subject_snapshot: approval.subjectSnapshot || null,
-        approver_user_id: resolvedApproverUserId,
-        approver_name: approval.approverName,
-        approver_node_id: approval.approverNodeId,
-        approval_layer: approval.approvalLayer,
-        status: approval.status || 'pending',
-        notes: approval.notes,
-        submitted_at: approval.submittedAt || new Date().toISOString(),
-        graph_version_id: approval.graphVersionId,
-        submitter_user_id: approval.submitterUserId || null,
-      });
-
-      if (attempt.error) {
-        console.error('Error creating approval:', attempt.error);
-        throw new Error(`Failed to create approval: ${attempt.error.message}`);
-      }
-
-      return transformApproval(attempt.data);
-    } catch (error) {
-      console.error('Error in createApproval:', error);
-      throw error;
-    } finally {
-      APPROVAL_CREATE_IN_FLIGHT.delete(createKey);
-    }
-  })();
-
-  APPROVAL_CREATE_IN_FLIGHT.set(createKey, createPromise);
-  return createPromise;
-}
-
-export async function deleteApproval(approvalId: string): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('approval_records')
-      .delete()
-      .eq('id', approvalId);
-
-    if (error) {
-      console.error('Error deleting approval:', error);
-      throw new Error(`Failed to delete approval: ${error.message}`);
-    }
-  } catch (error) {
-    console.error('Error in deleteApproval:', error);
-    throw error;
-  }
-}
 
 export async function getApprovalQueue(
   filters: ApprovalQueueFilters = {}
@@ -1280,174 +874,93 @@ export async function getLatestPendingApproval(
   }
 }
 
+// ============================================================================
+// DECISIONS — server truth (migration 034)
+// wg_decide_approval checks that the caller is the assigned approver (never the
+// submitter, never the owner on someone else's step), records the decision,
+// computes the next step from the FULL project graph, and sets the week status.
+// ============================================================================
+
+type DecisionKind = 'approved' | 'rejected' | 'changes_requested';
+
+export interface ApprovalDecisionResult {
+  approval: ApprovalRecord;
+  next: ApprovalRecord | null;
+  weekStatus: 'submitted' | 'approved' | 'rejected' | null;
+}
+
+async function decideApproval(
+  approvalId: string,
+  decision: DecisionKind,
+  notes?: string | null,
+): Promise<ApprovalDecisionResult> {
+  const { data, error } = await supabase.rpc('wg_decide_approval', {
+    p_approval_id: approvalId,
+    p_decision: decision,
+    p_notes: notes || null,
+  });
+  if (error) {
+    throw new Error(error.message || `Failed to record the ${decision} decision.`);
+  }
+  const payload = (data || {}) as { approval?: any; next?: any; weekStatus?: ApprovalDecisionResult['weekStatus'] };
+  if (!payload.approval) {
+    throw new Error('The approval decision returned no record.');
+  }
+  return {
+    approval: transformApproval(payload.approval),
+    next: payload.next ? transformApproval(payload.next) : null,
+    weekStatus: payload.weekStatus ?? null,
+  };
+}
+
 export async function approveItem(
   approvalId: string,
   data?: { approvedBy?: string; notes?: string }
-): Promise<ApprovalRecord & { spawnedNextLayer: boolean }> {
-  try {
-    // Self-approval guard: reject if the acting user is the submitter.
-    if (data?.approvedBy) {
-      const { data: existingRecord, error: fetchErr } = await supabase
-        .from('approval_records')
-        .select('submitter_user_id, status')
-        .eq('id', approvalId)
-        .maybeSingle();
-      if (fetchErr) {
-        throw new Error(`Failed to load approval for self-approval check: ${fetchErr.message}`);
-      }
-      if (existingRecord?.submitter_user_id && existingRecord.submitter_user_id === data.approvedBy) {
-        throw new Error('You cannot approve your own submission.');
-      }
-      if (existingRecord?.status && existingRecord.status !== 'pending') {
-        throw new Error(`Approval is already ${existingRecord.status}.`);
-      }
-    }
-
-    const { data: result, error } = await supabase
-      .from('approval_records')
-      .update({
-        status: 'approved',
-        decided_at: new Date().toISOString(),
-        notes: data?.notes || null,
-      })
-      .eq('id', approvalId)
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error approving item:', error);
-      throw new Error(`Failed to approve item: ${error.message}`);
-    }
-    // 0 rows updated = RLS blocked it: the caller is neither the assigned
-    // approver nor the project owner (e.g. a worker trying to self-advance).
-    if (!result) {
-      throw new Error('You cannot approve this item — only the assigned approver or the project owner can. Check which account you are signed in as.');
-    }
-
-    const spawnedNextLayer = await createNextApprovalLayerIfNeeded(result);
-    return { ...transformApproval(result), spawnedNextLayer };
-  } catch (error) {
-    console.error('Error in approveItem:', error);
-    throw error;
-  }
+): Promise<ApprovalRecord & { spawnedNextLayer: boolean; weekStatus: ApprovalDecisionResult['weekStatus'] }> {
+  const result = await decideApproval(approvalId, 'approved', data?.notes);
+  return { ...result.approval, spawnedNextLayer: Boolean(result.next), weekStatus: result.weekStatus };
 }
 
 export async function rejectItem(
   approvalId: string,
   data?: { rejectedBy?: string; reason?: string }
 ): Promise<ApprovalRecord> {
-  try {
-    const { data: result, error } = await supabase
-      .from('approval_records')
-      .update({
-        status: 'rejected',
-        decided_at: new Date().toISOString(),
-        notes: data?.reason || null,
-      })
-      .eq('id', approvalId)
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error rejecting item:', error);
-      throw new Error(`Failed to reject item: ${error.message}`);
-    }
-    if (!result) {
-      throw new Error('You cannot reject this item — only the assigned approver or the project owner can. Check which account you are signed in as.');
-    }
-
-    return transformApproval(result);
-  } catch (error) {
-    console.error('Error in rejectItem:', error);
-    throw error;
-  }
+  const result = await decideApproval(approvalId, 'rejected', data?.reason);
+  return result.approval;
 }
 
 export async function requestChanges(
   approvalId: string,
   notes: string
 ): Promise<ApprovalRecord> {
-  try {
-    const { data, error } = await supabase
-      .from('approval_records')
-      .update({
-        status: 'changes_requested',
-        decided_at: new Date().toISOString(),
-        notes,
-      })
-      .eq('id', approvalId)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error requesting changes:', error);
-      throw new Error(`Failed to request changes: ${error.message}`);
-    }
-
-    return transformApproval(data);
-  } catch (error) {
-    console.error('Error in requestChanges:', error);
-    throw error;
-  }
+  const result = await decideApproval(approvalId, 'changes_requested', notes);
+  return result.approval;
 }
 
+/** Decides each item in turn; stops at the first item the server refuses. */
 export async function bulkApprove(data: {
   approvedBy?: string;
   itemIds: string[];
   notes?: string;
 }): Promise<ApprovalRecord[]> {
-  try {
-    const { data: result, error } = await supabase
-      .from('approval_records')
-      .update({
-        status: 'approved',
-        decided_at: new Date().toISOString(),
-        notes: data.notes || null,
-      })
-      .in('id', data.itemIds)
-      .select();
-
-    if (error) {
-      console.error('Error bulk approving:', error);
-      throw new Error(`Failed to bulk approve: ${error.message}`);
-    }
-
-    for (const approvedRecord of result || []) {
-      await createNextApprovalLayerIfNeeded(approvedRecord);
-    }
-
-    return (result || []).map(transformApproval);
-  } catch (error) {
-    console.error('Error in bulkApprove:', error);
-    throw error;
+  const decided: ApprovalRecord[] = [];
+  for (const itemId of data.itemIds) {
+    const result = await decideApproval(itemId, 'approved', data.notes);
+    decided.push(result.approval);
   }
+  return decided;
 }
 
 export async function bulkReject(
   approvalIds: string[],
   notes?: string
 ): Promise<ApprovalRecord[]> {
-  try {
-    const { data, error } = await supabase
-      .from('approval_records')
-      .update({
-        status: 'rejected',
-        decided_at: new Date().toISOString(),
-        notes: notes || null,
-      })
-      .in('id', approvalIds)
-      .select();
-
-    if (error) {
-      console.error('Error bulk rejecting:', error);
-      throw new Error(`Failed to bulk reject: ${error.message}`);
-    }
-
-    return (data || []).map(transformApproval);
-  } catch (error) {
-    console.error('Error in bulkReject:', error);
-    throw error;
+  const decided: ApprovalRecord[] = [];
+  for (const approvalId of approvalIds) {
+    const result = await decideApproval(approvalId, 'rejected', notes);
+    decided.push(result.approval);
   }
+  return decided;
 }
 
 export async function getApprovalHistory(

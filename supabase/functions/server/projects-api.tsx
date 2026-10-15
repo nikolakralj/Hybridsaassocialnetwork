@@ -609,7 +609,9 @@ projectsRouter.post("/make-server-f8b491be/api/projects", async (c) => {
       if (me) throw me;
     }
 
-    const { data: finalProject } = await client.from("wg_projects").select("*").eq("id", projectId).single();
+    // graph/parties are not readable by the caller's role since 034; the caller
+    // just created this project, so read it back with the service role.
+    const { data: finalProject } = await db().from("wg_projects").select("*").eq("id", projectId).single();
     const { data: finalMembers } = await client.from("wg_project_members").select("*").eq("project_id", projectId);
 
     return c.json({
