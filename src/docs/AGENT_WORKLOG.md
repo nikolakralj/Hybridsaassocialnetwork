@@ -1139,3 +1139,10 @@ Captured from founder discussion — NOT authorized work; unlocks per decision d
 - The env value is used only when it starts with `sb_publishable_`, or starts with `eyJ` and contains exactly two dots. Anything else is ignored, the built-in key is used, and `console.warn` names the variable only. The warning does not include the rejected value or the fallback key. An unset variable still falls back quietly.
 - `npm run build` passes. No tests added.
 
+## 2026-10-13 - [DONE] password-recovery follow-ups
+
+- Claude's review of the merged reset flow: `/reset-password` showed the set-password form to any signed-in user, and there was no way to leave that page for the workspace.
+- The set-password form now renders only when this tab arrived through a recovery link (`passwordRecovery`: `PASSWORD_RECOVERY`, a recovery hash/code/`token_hash`, or the same-tab recovery flag) and the session is ready. Opening `/reset-password` directly shows a short message and a "Request a reset email" link instead of the form.
+- **Skip** on that page clears the recovery redirect and goes to `/app/project-workspace` when signed in, or `/` when not. Minimum password length is unchanged. No test runner added.
+
+

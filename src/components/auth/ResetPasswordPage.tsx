@@ -15,6 +15,7 @@ export function ResetPasswordPage() {
   const {
     user,
     loading,
+    passwordRecovery,
     recoveryError,
     requestPasswordReset,
     updatePassword,
@@ -29,10 +30,11 @@ export function ResetPasswordPage() {
   const [sending, setSending] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [requestOpen, setRequestOpen] = useState(false);
 
-  const leave = () => {
+  const skip = () => {
     dismissPasswordRecovery();
-    navigate(user ? '/app/project-workspace' : '/?auth=signin', { replace: true });
+    navigate(user ? '/app/project-workspace' : '/', { replace: true });
   };
 
   const handleUpdate = async (event: React.FormEvent) => {
@@ -80,18 +82,21 @@ export function ResetPasswordPage() {
     );
   }
 
-  const canSetPassword = Boolean(user) && !recoveryError;
+  const canSetPassword = passwordRecovery && Boolean(user) && !recoveryError;
+  const recoveryAttemptFailed = passwordRecovery && !canSetPassword;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md rounded-xl border bg-card text-card-foreground shadow-[0_1px_3px_0_rgb(0_0_0/0.04)] p-6">
         <h1 className="text-xl text-center m-0">
-          {canSetPassword ? 'Set new password' : 'Reset link not valid'}
+          {canSetPassword ? 'Set new password' : recoveryAttemptFailed ? 'Reset link not valid' : 'Reset your password'}
         </h1>
         <p className="text-center text-sm text-muted-foreground mt-2 mb-0">
           {canSetPassword
             ? 'Choose a new password for your account.'
-            : recoveryError || 'This reset link is invalid or has expired. Request a new email.'}
+            : recoveryAttemptFailed
+              ? (recoveryError || 'This reset link is invalid or has expired. Request a new email.')
+              : 'Open the link in your reset email to choose a new password.'}
         </p>
 
         {canSetPassword ? (
@@ -144,8 +149,15 @@ export function ResetPasswordPage() {
                 'Update password'
               )}
             </Button>
+            <button
+              type="button"
+              onClick={skip}
+              className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer underline-offset-4 hover:underline"
+            >
+              Skip
+            </button>
           </form>
-        ) : (
+        ) : recoveryAttemptFailed ? (
           <form onSubmit={handleResend} className="space-y-4 mt-6">
             {resetSent ? (
               <div className="rounded-lg bg-muted px-3 py-2">
@@ -181,12 +193,68 @@ export function ResetPasswordPage() {
             </Button>
             <button
               type="button"
-              onClick={leave}
+              onClick={skip}
               className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer underline-offset-4 hover:underline"
             >
-              {user ? 'Continue to workspace' : 'Back to sign in'}
+              Skip
             </button>
           </form>
+        ) : (
+          <div className="mt-6 space-y-4">
+            {requestOpen ? (
+              <form onSubmit={handleResend} className="space-y-4">
+                {resetSent ? (
+                  <div className="rounded-lg bg-muted px-3 py-2">
+                    <p className="text-sm text-foreground m-0">{PASSWORD_RESET_SENT_MESSAGE}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-email">Email</Label>
+                    <Input
+                      id="reset-email"
+                      type="email"
+                      placeholder="you@company.com"
+                      value={resetEmail}
+                      onChange={(event) => setResetEmail(event.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+                )}
+                {sendError && (
+                  <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2">
+                    <p className="text-sm text-destructive m-0">{sendError}</p>
+                  </div>
+                )}
+                <Button type="submit" className="w-full" disabled={sending || resetSent}>
+                  {sending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Sending...
+                    </>
+                  ) : (
+                    'Email me a new link'
+                  )}
+                </Button>
+              </form>
+            ) : (
+              <p className="text-center m-0">
+                <button
+                  type="button"
+                  onClick={() => setRequestOpen(true)}
+                  className="text-sm text-foreground underline underline-offset-4 bg-transparent border-0 cursor-pointer p-0"
+                >
+                  Request a reset email
+                </button>
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={skip}
+              className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors bg-transparent border-0 cursor-pointer underline-offset-4 hover:underline"
+            >
+              Skip
+            </button>
+          </div>
         )}
       </div>
     </div>
