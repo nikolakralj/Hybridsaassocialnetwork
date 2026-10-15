@@ -760,7 +760,7 @@ interface NormalizedInvoiceBody {
   paymentRef: string;
 }
 
-function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvoiceBody {
+export function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvoiceBody {
   const issueDate = normalizeString(payload.issueDate ?? payload.date) || todayIso();
   let dueDate = normalizeString(payload.dueDate) || addDays(issueDate, 30);
   // DB constraint: due_date >= issue_date
