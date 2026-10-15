@@ -151,7 +151,8 @@ src/docs/                  # OPERATIONS.md, ROADMAP.md, TASK_BACKLOG.md, AGENT_W
 | HMAC secret hardcoded in client bundle (`approval-tokens.ts`) | HIGH | ✅ RESOLVED — S2 done; `APPROVAL_TOKEN_SECRET` in edge secrets; takes full effect on deploy | — |
 | Self-approval guard is client-side only | MEDIUM | ✅ RESOLVED — 012 trigger live | — |
 | **Stale edge build deployed** (`make-server-f8b491be`) | HIGH | ✅ RESOLVED — fresh build live 2026-07-14 (B3 guards, approval tokens, invitations API) | — |
-| `wg_invoices` SELECT RLS: any accepted project member reads all project invoices | MEDIUM | Open — fine under single-account personas; fix before real worker accounts | DOC-1: signatory-org scoping (needs C1 org membership) |
+| `wg_invoices` SELECT RLS: any accepted project member reads all project invoices | MEDIUM | ✅ RESOLVED — party-scoped `wg_invoices_select_access` (verified live 2026-10-09) | — |
+| Any project member read `wg_projects.graph` (rates), all weeks, all approval records; browser computed the approval route; owner could approve other parties' steps; weeks editable after approval | CRITICAL | ✅ RESOLVED — migration 034 (2026-10-15), tests 033 + 034 | Approvals only via `wg_submit_timesheet` / `wg_decide_approval` / `wg_recall_timesheet` |
 
 ## Things That Bite You
 
@@ -169,4 +170,6 @@ src/docs/                  # OPERATIONS.md, ROADMAP.md, TASK_BACKLOG.md, AGENT_W
 
 7. **PersonaContext is dead** — killed in Phase 2. Never re-introduce it.
 
-8. **`approval_records` RLS not yet fixed** — migration 014 pending apply. Until then, any authenticated user can read all approval records.
+8. **Since 034, clients cannot SELECT `wg_projects.graph`/`parties`.** Read the graph via `wg_get_scoped_graph` or the edge function. `select('*')` on `wg_projects` as the user fails; a NEW `wg_projects` column must be added to the column GRANT in a migration or clients cannot read it.
+
+9. **Approval records and week status are written only by the 034 RPCs.** Never insert/update `approval_records` or set a week's status from the client; the week guard trigger rejects it for every role, including `service_role`. Test fixtures that need a non-draft week set `wg.approval_write` while running as postgres.

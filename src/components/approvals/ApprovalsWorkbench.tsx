@@ -561,7 +561,7 @@ export function ApprovalsWorkbench({
       notifyApprovalMutation();
       await loadApprovals();
     } catch (error) {
-      toast.error("Failed to approve");
+      toast.error("Failed to approve", { description: error instanceof Error ? error.message : undefined });
     } finally {
       setApprovingItemId(null);
     }
@@ -593,7 +593,7 @@ export function ApprovalsWorkbench({
       closeRejectDialog(true);
       await loadApprovals();
     } catch (error) {
-      toast.error("Failed to reject");
+      toast.error("Failed to reject", { description: error instanceof Error ? error.message : undefined });
     } finally {
       setRejectSubmitting(false);
     }
@@ -615,7 +615,7 @@ export function ApprovalsWorkbench({
       notifyApprovalMutation();
       await loadApprovals();
     } catch (error) {
-      toast.error("Failed to bulk approve");
+      toast.error("Failed to bulk approve", { description: error instanceof Error ? error.message : undefined });
     } finally {
       setBulkApproving(false);
     }

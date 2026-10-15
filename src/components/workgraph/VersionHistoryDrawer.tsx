@@ -218,7 +218,7 @@ export function VersionHistoryDrawer({
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Target: Rollback should complete in <1s
+                Target: Rollback should complete in {"<"}1s
               </p>
             </AlertDialogDescription>
           </AlertDialogHeader>

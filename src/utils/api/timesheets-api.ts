@@ -1,6 +1,7 @@
 // Phase 1: Timesheets Frontend API Client
-// Direct Supabase writes are kept for own-row draft/submission operations.
-// Cross-user approval/rejection must go through the server path.
+// Direct Supabase writes are kept for own-row draft content only.
+// Status changes (submit, recall, approve, reject) go through the database RPCs
+// from migration 034; the database rejects any other status write.
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
@@ -75,11 +76,12 @@ export async function saveTimesheetWeek(
               return sum + (Number.isFinite(hours) ? hours : 0);
             }, 0);
 
+      // Status is never sent: new rows default to draft, and existing rows keep
+      // the status the approval workflow gave them.
       const row: Record<string, any> = {
         id: rowId,
         user_id: ownerId,
         week_start: weekStart,
-        status: weekData.status || 'draft',
         data: {
           totalHours,
           days: weekData.days || [],
@@ -89,7 +91,6 @@ export async function saveTimesheetWeek(
         updated_at: now,
       };
       if (weekData.projectId) row.project_id = weekData.projectId;
-      if (weekData.status === 'submitted') row.submitted_at = now;
 
       const { error } = await supabase
         .from('wg_timesheet_weeks')
@@ -110,110 +111,64 @@ export async function saveTimesheetWeek(
   return data.week;
 }
 
-export async function updateTimesheetStatus(
+export interface TimesheetDecisionResult {
+  weekStatus: 'draft' | 'submitted' | 'approved' | 'rejected' | null;
+}
+
+function rpcErrorMessage(error: { message?: string } | null, fallback: string): string {
+  return error?.message || fallback;
+}
+
+/**
+ * Submit your own week for approval. The database computes the full approval
+ * route from the project graph, creates the first step, and marks the week
+ * submitted in one transaction (wg_submit_timesheet).
+ */
+export async function submitTimesheetForApproval(
+  projectId: string,
   weekStart: string,
-  status: 'draft' | 'submitted' | 'approved' | 'rejected',
-  options?: {
-    personId?: string;
-    approverName?: string;
-    note?: string;
-    projectId?: string;
-  },
-  accessToken?: string | null
+  subjectId: string,
+  snapshot: Record<string, unknown>,
 ) {
-  let rowIdForReconcile: string | null = null;
-
-  if (accessToken) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const requestedUserId = isUuid(options?.personId) ? options!.personId : null;
-      const targetsAnotherUser = Boolean(requestedUserId && requestedUserId !== user.id);
-
-      if (targetsAnotherUser && (status === 'submitted' || status === 'draft')) {
-        throw new Error('You cannot submit or reopen a timesheet for another user.');
-      }
-
-      if (!targetsAnotherUser && (status === 'approved' || status === 'rejected')) {
-        throw new Error('You cannot approve or reject your own timesheet.');
-      }
-
-      if (targetsAnotherUser) {
-        rowIdForReconcile = `${requestedUserId}:${weekStart}`;
-      } else {
-        const ownerId = user.id;
-        const rowId = `${ownerId}:${weekStart}`;
-        rowIdForReconcile = rowId;
-        const now = new Date().toISOString();
-        const updates: Record<string, any> = {
-          status,
-          updated_at: now,
-        };
-        if (status === 'submitted') updates.submitted_at = now;
-        if (status === 'approved') updates.approved_at = now;
-
-        const { data: updatedRow, error } = await supabase
-          .from('wg_timesheet_weeks')
-          .update(updates)
-          .eq('id', rowId)
-          .select('id, status')
-          .maybeSingle();
-
-        if (!error && updatedRow) return { weekStart, status };
-
-        const upsertRow: Record<string, any> = {
-          id: rowId,
-          user_id: ownerId,
-          week_start: weekStart,
-          status,
-          data: { totalHours: 0, days: [], tasks: [] },
-          submitted_at: status === 'submitted' ? now : null,
-          approved_at: status === 'approved' ? now : null,
-          created_at: now,
-          updated_at: now,
-        };
-        if (options?.projectId) upsertRow.project_id = options.projectId;
-
-        const { error: upsertError } = await supabase
-          .from('wg_timesheet_weeks')
-          .upsert(upsertRow, { onConflict: 'id' });
-
-        if (!upsertError) return { weekStart, status };
-        console.warn('[timesheets] Direct Supabase status update failed:', upsertError.message);
-
-        const { data: reconciledRow, error: reconcileError } = await supabase
-          .from('wg_timesheet_weeks')
-          .select('status')
-          .eq('id', rowId)
-          .maybeSingle();
-
-        if (!reconcileError && reconciledRow?.status === status) {
-          return { weekStart, status };
-        }
-      }
-    }
-  }
-
-  const res = await fetch(`${BASE}/timesheets/${weekStart}/status`, {
-    method: 'PATCH',
-    headers: getHeaders(accessToken),
-    body: JSON.stringify({ status, ...options }),
+  const { data, error } = await supabase.rpc('wg_submit_timesheet', {
+    p_project_id: projectId,
+    p_week_start: weekStart,
+    p_subject_id: subjectId,
+    p_snapshot: snapshot,
   });
-  const data = await res.json();
-  if (!res.ok) {
-    if (rowIdForReconcile) {
-      const { data: reconciledRow, error: reconcileError } = await supabase
-        .from('wg_timesheet_weeks')
-        .select('status')
-        .eq('id', rowIdForReconcile)
-        .maybeSingle();
+  if (error) throw new Error(rpcErrorMessage(error, 'Could not submit the timesheet.'));
+  return data as { approval: Record<string, any>; route: Array<Record<string, any>> };
+}
 
-      if (!reconcileError && reconciledRow?.status === status) {
-        return { weekStart, status };
-      }
-    }
-    throw new Error(data.error || 'Failed to update status');
-  }
-  return data.week;
+/** Pull your own submitted week back to draft before anyone has approved it. */
+export async function recallTimesheet(projectId: string, weekStart: string): Promise<TimesheetDecisionResult> {
+  const { data, error } = await supabase.rpc('wg_recall_timesheet', {
+    p_project_id: projectId,
+    p_week_start: weekStart,
+  });
+  if (error) throw new Error(rpcErrorMessage(error, 'Could not recall the timesheet.'));
+  return { weekStatus: (data as any)?.weekStatus ?? 'draft' };
+}
+
+/**
+ * Move your own rejected week back to draft so it can be edited. Every other
+ * status change goes through submitTimesheetForApproval, recallTimesheet, or
+ * the approval queue.
+ */
+export async function reopenRejectedTimesheet(weekStart: string, projectId?: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Sign in to edit this timesheet.');
+  let query = supabase
+    .from('wg_timesheet_weeks')
+    .update({ status: 'draft', updated_at: new Date().toISOString() })
+    .eq('user_id', user.id)
+    .eq('week_start', weekStart)
+    .eq('status', 'rejected');
+  if (projectId) query = query.eq('project_id', projectId);
+  const { data, error } = await query.select('id');
+  if (error) throw new Error(rpcErrorMessage(error, 'Could not reopen the timesheet.'));
+  if (!data || data.length === 0) throw new Error('Only a rejected week can be reopened.');
+  return { weekStart, status: 'draft' as const };
 }
 
 export async function deleteTimesheetWeek(weekStart: string, accessToken?: string | null) {
