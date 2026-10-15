@@ -13,23 +13,27 @@ import { FinalCTABanner } from "./FinalCTABanner";
 import { Footer } from "./Footer";
 import { PersonaType } from "./social/IntentChips";
 import { useAuth } from "../contexts/AuthContext";
+import { isPasswordRecoverySuppressed } from "../utils/auth/password-recovery";
 import { AuthModal } from "./AuthModal";
 
 export function Landing() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, passwordRecovery } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
   const requestedMode = searchParams.get("auth");
   const nextPath = searchParams.get("next") || "/app";
 
-  // If already authenticated, redirect to app
+  // If already authenticated, redirect to app. A recovery link that lands on
+  // `/` must stay out of that redirect; PasswordRecoveryRedirect sends it to
+  // /reset-password instead.
   useEffect(() => {
+    if (passwordRecovery && !isPasswordRecoverySuppressed()) return;
     if (user) {
       navigate(nextPath);
     }
-  }, [user, navigate, nextPath]);
+  }, [user, passwordRecovery, navigate, nextPath]);
 
   useEffect(() => {
     if (requestedMode === "signin" || requestedMode === "signup") {

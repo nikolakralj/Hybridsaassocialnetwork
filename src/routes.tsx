@@ -1,4 +1,7 @@
 import { createBrowserRouter } from "react-router";
+import { capturePasswordRecoveryFromWindow } from "./utils/auth/password-recovery";
+import { PasswordRecoveryRedirect } from "./components/auth/PasswordRecoveryRedirect";
+import { ResetPasswordPage } from "./components/auth/ResetPasswordPage";
 import { Landing } from "./components/Landing";
 import { PersonalProfileSetup } from "./components/onboarding/PersonalProfileSetup";
 import { FreelancerOnboarding } from "./components/onboarding/FreelancerOnboarding";
@@ -20,11 +23,21 @@ import { AppLayout } from "./components/AppLayout";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import { InviteAcceptPage } from "./components/invitations/InviteAcceptPage";
 
+// Snapshot a recovery hash before the router or auth client clears it.
+capturePasswordRecoveryFromWindow();
+
 // WorkGraph Routes - Phase 1 with real data APIs
 export const router = createBrowserRouter([
   {
+    Component: PasswordRecoveryRedirect,
+    children: [
+  {
     path: "/",
     Component: Landing,
+  },
+  {
+    path: "/reset-password",
+    Component: ResetPasswordPage,
   },
   {
     path: "/invite/:token",
@@ -62,6 +75,8 @@ export const router = createBrowserRouter([
       { path: "approve", Component: DeepLinkHandler },
       { path: "reject", Component: DeepLinkHandler },
       { path: "approval-view", Component: ApprovalsWorkbench },
+    ],
+  },
     ],
   },
 ]);
