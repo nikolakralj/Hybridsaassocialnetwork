@@ -317,6 +317,8 @@ export function ProjectWorkspace({
   const [projectStatus, setProjectStatus] = useState<string | null>(null);
   const [projectDescription, setProjectDescription] = useState("");
   const [projectParties, setProjectParties] = useState<Array<{ id: string; name: string; partyType?: string }>>([]);
+  // Lets the Settings drawer tell "0 parties" apart from "parties haven't loaded yet / failed to load".
+  const [projectPartiesStatus, setProjectPartiesStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [selfMembership, setSelfMembership] = useState<ProjectMember | null>(null);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
@@ -470,10 +472,13 @@ export function ProjectWorkspace({
       return;
     }
 
+    setProjectPartiesStatus('loading');
+
     const loadProjectMeta = async () => {
       try {
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
+          setProjectPartiesStatus('loaded');
           setProjectOwnerId(data?.project?.ownerId || null);
           setProjectStatus(typeof data?.project?.status === 'string' ? data.project.status : null);
           setProjectDescription(typeof data?.project?.description === 'string' ? data.project.description : "");
@@ -498,6 +503,7 @@ export function ProjectWorkspace({
         }
       } catch {
         if (!cancelled) {
+          setProjectPartiesStatus('error');
           setProjectOwnerId(null);
           setProjectStatus(null);
           setProjectParties([]);
@@ -1035,6 +1041,7 @@ export function ProjectWorkspace({
             setEditingProject(undefined);
           }}
           project={editingProject}
+          partiesStatus={projectPartiesStatus}
           onSave={handleSaveProject}
         />
       ) : null}

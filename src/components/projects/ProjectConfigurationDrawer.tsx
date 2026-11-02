@@ -68,6 +68,9 @@ interface ProjectConfigurationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   project?: ProjectConfiguration; // For editing existing project
+  // Whether the project's real parties (graph party nodes) have finished loading.
+  // Lets the UI tell "0 parties" apart from "still loading" / "failed to load".
+  partiesStatus?: 'loading' | 'loaded' | 'error';
   onSave: (project: ProjectConfiguration) => void | Promise<void>;
 }
 
@@ -75,6 +78,7 @@ export function ProjectConfigurationDrawer({
   isOpen,
   onClose,
   project,
+  partiesStatus = 'loaded',
   onSave,
 }: ProjectConfigurationDrawerProps) {
   const [projectName, setProjectName] = useState(project?.name || '');
@@ -296,7 +300,18 @@ export function ProjectConfigurationDrawer({
 
               {/* Parties List */}
               <div className="space-y-3">
-                {approvalChain.length === 0 ? (
+                {approvalChain.length === 0 && project && partiesStatus === 'loading' ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="h-12 w-12 mx-auto mb-3 text-gray-400 animate-pulse" />
+                    <p>Loading parties from the project graph…</p>
+                  </div>
+                ) : approvalChain.length === 0 && project && partiesStatus === 'error' ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+                    <p>Couldn't load this project's parties</p>
+                    <p className="text-sm mt-1">Close this dialog and try again. Name and description can still be saved below.</p>
+                  </div>
+                ) : approvalChain.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <Users className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                     <p>No parties in approval chain yet</p>
@@ -786,7 +801,11 @@ export function ProjectConfigurationDrawer({
         {/* Footer */}
         <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50">
           <div className="text-sm text-gray-500">
-            {approvalChain.length} parties • {contracts.length} contracts
+            {project && partiesStatus === 'loading'
+              ? 'Loading parties…'
+              : project && partiesStatus === 'error'
+                ? "Parties failed to load"
+                : `${approvalChain.length} parties • ${contracts.length} contracts`}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>
