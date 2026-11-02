@@ -743,7 +743,19 @@ projectsRouter.get("/make-server-f8b491be/api/projects/:projectId/members", asyn
       .eq("project_id", projectId);
 
     if (me) throw me;
-    return c.json({ members: (rows || []).map(rowToMember) });
+    // This route runs with the service role, so it must apply the roster
+    // scoping itself. Before, every member (client approver, subcontractor,
+    // workers) received the whole roster with every email and role.
+    // Managers keep the full list; everyone else sees their own row plus the
+    // people of their own party scope, without other people's emails.
+    if (canManageMembers(role)) {
+      return c.json({ members: (rows || []).map(rowToMember) });
+    }
+    const callerScope = await getCallerScope(projectId, user.id);
+    const visible = (rows || [])
+      .filter((row: any) => row.user_id === user.id || (callerScope && row.scope === callerScope))
+      .map((row: any) => (row.user_id === user.id ? row : { ...row, user_email: null }));
+    return c.json({ members: visible.map(rowToMember) });
   } catch (err: any) {
     return c.json({ error: `Failed to list members: ${err.message}` }, 500);
   }
