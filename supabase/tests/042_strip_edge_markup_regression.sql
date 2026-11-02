@@ -39,7 +39,7 @@ INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
       jsonb_build_object('id', 'person_james', 'type', 'person', 'data', jsonb_build_object('name', 'James', 'partyId', 'party_client', 'canApprove', true, 'userId', '04200000-0000-4000-8000-0000000000c1'))
     ),
     'edges', jsonb_build_array(
-      jsonb_build_object('id', 'e_buy', 'source', 'party_contractor', 'target', 'party_agency', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 17.25)),
+      jsonb_build_object('id', 'e_buy', 'source', 'party_contractor', 'target', 'party_agency', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 17.25, 'hourlyRate', 40)),
       jsonb_build_object('id', 'e_sell', 'source', 'party_agency', 'target', 'party_client', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 22)),
       jsonb_build_object('id', 'e_fund', 'source', 'party_client', 'target', 'party_agency', 'type', 'funds', 'data', jsonb_build_object('edgeType', 'funds', 'amount', 500))
     )
@@ -110,6 +110,11 @@ BEGIN
   END IF;
   IF buy_markup IS NOT NULL OR scoped::text LIKE '%17.25%' THEN
     RAISE EXCEPTION 'agency finance saw the contractor markup (%)', buy_markup;
+  END IF;
+  IF (
+    SELECT e->'data'->>'hourlyRate' FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_buy'
+  ) IS DISTINCT FROM '40' THEN
+    RAISE EXCEPTION 'agency finance lost the bill rate on the edge they buy';
   END IF;
 
   PERFORM public.wg_test_042_act_as('04200000-0000-4000-8000-0000000000c1');

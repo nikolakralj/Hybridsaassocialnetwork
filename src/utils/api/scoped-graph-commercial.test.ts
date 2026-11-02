@@ -17,7 +17,7 @@ describe('stripCommercialEdgeFields', () => {
       target: 'party_agency',
       type: 'billsTo',
       markup: 17.25,
-      data: { edgeType: 'billsTo', markup: 17.25, margin: 4, label: 'Contractor bills agency' },
+      data: { edgeType: 'billsTo', markup: 17.25, margin: 4, hourlyRate: 12.5, label: 'Contractor bills agency' },
     },
     {
       id: 'funded',
@@ -40,6 +40,7 @@ describe('stripCommercialEdgeFields', () => {
     expect(stripped.edges[0].data).toMatchObject({ markup: 22, label: 'Agency bills client' });
     expect(stripped.edges[1].data).toEqual({
       edgeType: 'billsTo',
+      hourlyRate: 12.5,
       label: 'Contractor bills agency',
     });
     expect(stripped.edges[2].data).toMatchObject({ amount: 500 });
@@ -55,6 +56,7 @@ describe('stripCommercialEdgeFields', () => {
       edges,
     });
     expect(stripped.edges[0].data?.markup).toBeUndefined();
+    expect(stripped.edges[1].data?.hourlyRate).toBeUndefined();
     expect(stripped.edges[0].data?.edgeType).toBe('billsTo');
     expect(stripped.edges[2].data).toMatchObject({ amount: 500, label: 'Client funds agency' });
   });
