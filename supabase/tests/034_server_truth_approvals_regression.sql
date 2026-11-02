@@ -256,6 +256,8 @@ END $$;
 DO $$
 DECLARE v_id text; r jsonb;
 BEGIN
+  -- The project owner cannot read the client's layer. The worker can.
+  PERFORM public.wg_test_034_act_as('a0340000-0000-4000-8000-00000000000b');
   SELECT id INTO v_id FROM public.approval_records
   WHERE project_id = 'proj_reg_034' AND subject_id = 'person_w:2026-09-07' AND approval_layer = 2;
   PERFORM public.wg_test_034_act_as('a0340000-0000-4000-8000-00000000000c');

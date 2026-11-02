@@ -3,7 +3,7 @@
 --
 -- A row is visible to:
 --   * the worker who owns it (timesheet) or who submitted it (approval)
---   * an Owner/Editor, or verified org admin/manager/finance, of the worker's party
+--   * a verified org admin, manager, or finance member of the worker's party
 --   * the user id named as approver on that approval row
 -- The project owner does not get a second path. A colleague in the approver's
 -- company who is not the assigned approver does not either.
@@ -21,19 +21,10 @@ STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
-  SELECT p_party_id IS NOT NULL AND auth.uid() IS NOT NULL AND (
-    EXISTS (
-      SELECT 1
-      FROM wg_project_members me
-      WHERE me.project_id = p_project_id
-        AND me.user_id = auth.uid()
-        AND me.accepted_at IS NOT NULL
-        AND me.scope = p_party_id
-        AND me.role IN ('Owner', 'Editor')
-    )
-    OR public.wg_user_can_access_project_party(
-      p_project_id, p_party_id, ARRAY['org_admin', 'org_manager', 'org_finance']
-    )
+  -- Project role and scope are not proof of party control. scope is supplied
+  -- when a member is added. Only a verified organization role on the party counts.
+  SELECT p_party_id IS NOT NULL AND auth.uid() IS NOT NULL AND public.wg_user_can_access_project_party(
+    p_project_id, p_party_id, ARRAY['org_admin', 'org_manager', 'org_finance']
   );
 $$;
 

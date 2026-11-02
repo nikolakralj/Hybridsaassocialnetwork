@@ -1191,3 +1191,10 @@ Verified Grok's 2026-10-14 review findings live, then fixed the trust and approv
 - **Calendar-day billing** (`src/utils/billing-period.ts`): a week that crosses months is billed in two parts, each month invoicing only its own dates, keyed `person:weekStart@YYYY-MM`. A week inside one month keeps the old whole-week key, and an older whole-week invoice blocks both parts, so nothing invoiced before is billed again. Weekend days that spill into the next month are billed there. The invoice list now files a month part under its billing month (it used the week's start date, which also misfiled consolidated invoices that began with the last week of the previous month).
 - Tests: Grok's two `it.fails` are now passing tests; added month-split, legacy-key, weekend-spill, approved-only and consolidated-rounding tests plus `money.test.ts`. `npm test` 25/25, `npm run build` passes.
 - Residual: the Close-readiness gate still counts whole overlapping weeks (readiness, not money). Existing draft invoices keep their whole-week keys.
+
+## 2026-11-02 - [DONE] task p0-2 party-scoped timesheet and approval reads
+
+- Files: `supabase/migrations/037_party_scoped_timesheet_and_approval_reads.sql`, `supabase/tests/037_party_scoped_reads_regression.sql`, `supabase/tests/034_server_truth_approvals_regression.sql`, client reads of `wg_timesheet_weeks_visible` and `wg_approval_records_visible`.
+- A week or approval row is visible to the worker, a verified org admin/manager/finance of that worker's party, or the assigned approver. Project Owner/Editor plus a caller-supplied `scope` is not party control. Day notes stay with the worker's party. Approver party, name, and user are blank outside one hop, and those columns are not granted on the base table.
+- Tests: `037_party_scoped_reads_regression.sql` and `034_server_truth_approvals_regression.sql` passed on a throwaway local Postgres after 037. Not applied to the live project.
+- Residual: a membership `scope` can still widen one-hop party ids used for route redaction (`wg_caller_own_party_ids`). It no longer unlocks the timesheet body.
