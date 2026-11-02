@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertScopedSupplyChainUpdate,
+  isTimesheetWeekWithWork,
   partyRemovalBlockers,
   supplyChainStructureDiff,
 } from '../../../supabase/functions/server/supply-chain-guard';
@@ -102,5 +103,20 @@ describe('party removal blockers', () => {
     expect(partyRemovalBlockers({ acceptedMembers: 1, timesheetWeeks: 2, invoices: 1 })).toEqual([
       '2 timesheet week(s)', '1 invoice(s)', '1 member(s) who already joined',
     ]);
+  });
+});
+
+describe('isTimesheetWeekWithWork', () => {
+  const day = (hours: number) => ({ day: 'Mon', hours, entries: [], totalHours: hours });
+  it('ignores empty draft weeks created by opening the Timesheets tab', () => {
+    expect(isTimesheetWeekWithWork({ status: 'draft', data: { days: [day(0), day(0)] } })).toBe(false);
+    expect(isTimesheetWeekWithWork({ status: 'draft', data: { days: [] } })).toBe(false);
+    expect(isTimesheetWeekWithWork({ status: 'draft', data: null })).toBe(false);
+  });
+  it('counts drafts with hours and anything past draft', () => {
+    expect(isTimesheetWeekWithWork({ status: 'draft', data: { days: [day(0), day(8)] } })).toBe(true);
+    expect(isTimesheetWeekWithWork({ status: 'draft', data: { days: [{ day: 'Tue', entries: [{ hours: 2 }] }] } })).toBe(true);
+    expect(isTimesheetWeekWithWork({ status: 'submitted', data: { days: [] } })).toBe(true);
+    expect(isTimesheetWeekWithWork({ status: 'approved', data: {} })).toBe(true);
   });
 });
