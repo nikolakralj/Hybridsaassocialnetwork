@@ -28,6 +28,7 @@ import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawe
 import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
 import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
+import { withWorkspaceSearch } from "../utils/workspace-link";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
@@ -146,10 +147,9 @@ export function ProjectWorkspace({
 
   useEffect(() => {
     if (!projectId) return;
-    const stored = sessionStorage.getItem('currentProjectId');
-    if (!stored || stored === 'proj-alpha') {
-      sessionStorage.setItem('currentProjectId', projectId);
-    }
+    // The query-selected project replaces whatever the session stored, before
+    // timesheets and other listeners reread currentProjectId.
+    sessionStorage.setItem('currentProjectId', projectId);
     window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
       detail: { projectId },
     }));
@@ -302,10 +302,16 @@ export function ProjectWorkspace({
     setSearchParams(next, { replace: true });
   }, [projectId, searchParams, setSearchParams]);
 
+  const openTab = (moduleId: ModuleId) => {
+    setActiveTab(moduleId);
+    setSearchParams((prev) => withWorkspaceSearch(prev, { tab: moduleId }), { replace: true });
+  };
+
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab && tab !== activeTab) setActiveTab(tab as ModuleId);
-  }, [searchParams, activeTab]);
+    if (!tab) return;
+    setActiveTab((current) => (current === tab ? current : tab as ModuleId));
+  }, [searchParams]);
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -358,7 +364,7 @@ export function ProjectWorkspace({
 
   const enableAndOpenModule = (moduleId: ModuleId) => {
     setModules(prev => prev.map(m => m.id === moduleId ? { ...m, isEnabled: true } : m));
-    setActiveTab(moduleId);
+    openTab(moduleId);
   };
 
   const handleOpenTeam = () => {
@@ -464,7 +470,7 @@ export function ProjectWorkspace({
 
   useEffect(() => {
     if (!canManageProject && activeTab === "team") {
-      setActiveTab("overview");
+      openTab("overview");
     }
   }, [activeTab, canManageProject]);
 
@@ -635,7 +641,7 @@ export function ProjectWorkspace({
   // Listen for custom tab change events (from deep links)
   useEffect(() => {
     const handleTabChange = (event: CustomEvent<ModuleId>) => {
-      setActiveTab(event.detail);
+      openTab(event.detail);
     };
     
     window.addEventListener('changeTab', handleTabChange as EventListener);
@@ -650,7 +656,7 @@ export function ProjectWorkspace({
     const module = modules.find(m => m.id === moduleId);
     if (module && !module.isEnabled) {
       toast.success(`${module.name} module added to project`);
-      setActiveTab(moduleId);
+      openTab(moduleId);
     } else if (module && module.isEnabled) {
       toast.success(`${module.name} module removed`);
     }
@@ -753,7 +759,7 @@ export function ProjectWorkspace({
       {/* Modular Tabs */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         <MonthProvider key={projectId}>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ModuleId)}>
+          <Tabs value={activeTab} onValueChange={(v) => openTab(v as ModuleId)}>
             {/* Tab List with (+) Button */}
             <div className="flex items-center gap-2 mb-6">
               <TabsList className="flex-1">
