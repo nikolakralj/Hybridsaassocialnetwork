@@ -47,6 +47,18 @@ import {
 // Types & Constants
 // ============================================================================
 
+
+// A picked calendar day as "yyyy-MM-dd" in the user's own timezone.
+// toISOString() converts to UTC first, so Nov 1 picked in Zagreb (UTC+1)
+// was stored as Oct 31.
+function toLocalDateOnly(date?: Date): string | undefined {
+  if (!date) return undefined;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export interface ProjectCreateWizardProps {
   open: boolean;
   onClose: () => void;
@@ -300,8 +312,8 @@ export function ProjectCreateWizard({
       if (onCreate) {
         await onCreate({
           name,
-          startDate: startDate?.toISOString(),
-          endDate: endDate?.toISOString(),
+          startDate: toLocalDateOnly(startDate),
+          endDate: toLocalDateOnly(endDate),
           workWeek,
           status: isDraftProject ? 'draft' : 'active',
           supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
@@ -310,7 +322,7 @@ export function ProjectCreateWizard({
         const graph = generateGraphFromWizard(parties, name);
         const result = await createProject({
           name, description: '', region: 'EU',
-          startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
+          startDate: toLocalDateOnly(startDate), endDate: toLocalDateOnly(endDate), workWeek,
           ownerName: userDisplayName(user, 'Project Owner'),
           ownerEmail: user?.email || '',
           ownerId: user?.id,
@@ -350,7 +362,7 @@ export function ProjectCreateWizard({
 
         sessionStorage.setItem('currentProjectName', name);
         if (startDate) {
-          sessionStorage.setItem('currentProjectStartDate', startDate.toISOString());
+          sessionStorage.setItem('currentProjectStartDate', toLocalDateOnly(startDate)!);
         } else {
           sessionStorage.removeItem('currentProjectStartDate');
         }
@@ -358,7 +370,7 @@ export function ProjectCreateWizard({
           const detail = {
             projectId: result.project.id,
             projectName: name,
-            projectStartDate: startDate ? startDate.toISOString() : null,
+            projectStartDate: startDate ? toLocalDateOnly(startDate)! : null,
           };
           window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
           window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
@@ -371,7 +383,7 @@ export function ProjectCreateWizard({
         if (onSuccess) {
           onSuccess(
             result.project.id,
-            startDate ? startDate.toISOString() : null,
+            startDate ? toLocalDateOnly(startDate)! : null,
             result.project.storageSource === 'cloud' ? 'cloud' : undefined
           );
         }
