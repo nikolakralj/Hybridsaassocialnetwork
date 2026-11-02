@@ -14,6 +14,7 @@
 
 import { createClient } from '../supabase/client';
 import { lineAmount, roundMoney, sumMoney, taxOn } from '../money';
+import { ratesFromScopedGraph } from './scoped-graph-rates';
 
 const supabase = createClient();
 const ALLOW_GRAPH_RATE_FALLBACK = import.meta.env.VITE_ALLOW_GRAPH_RATE_FALLBACK === 'true';
@@ -192,47 +193,6 @@ export interface SaveProjectPersonRateInput {
   currency?: string;
 }
 
-const MASK_PLACEHOLDER = '••••';
-
-function extractNodeRate(node: any): PersonRate | null {
-  const data = node?.data;
-  if (!data || typeof node?.id !== 'string') return null;
-
-  const contractType = normalizeString(data.contractType).toLowerCase();
-  const hourlyRaw = data.hourlyRate;
-  const dailyRaw = data.dailyRate;
-  const fixedRaw = data.fixedAmount;
-
-  const masked = hourlyRaw === MASK_PLACEHOLDER || dailyRaw === MASK_PLACEHOLDER;
-
-  let rateType: PersonRateType = 'unknown';
-  let rate = 0;
-  if ((contractType === 'hourly' || !contractType) && toNumber(hourlyRaw) > 0) {
-    rateType = 'hourly';
-    rate = toNumber(hourlyRaw);
-  } else if (contractType === 'daily' && toNumber(dailyRaw) > 0) {
-    rateType = 'daily';
-    rate = toNumber(dailyRaw);
-  } else if (contractType === 'fixed' && toNumber(fixedRaw) > 0) {
-    rateType = 'fixed';
-    rate = toNumber(fixedRaw);
-  } else if (toNumber(dailyRaw) > 0) {
-    rateType = 'daily';
-    rate = toNumber(dailyRaw);
-  }
-
-  if (rate <= 0 && !masked) return null;
-
-  return {
-    personId: node.id,
-    personName: normalizeString(data.name ?? data.label) || undefined,
-    rate,
-    rateType,
-    currency: normalizeString(data.currency).toUpperCase() || undefined,
-    masked,
-  };
-}
-
 async function resolvePrivateProjectRates(projectId: string): Promise<Record<string, PersonRate>> {
   const scope = normalizeString(projectId);
   if (!scope) return {};
@@ -270,23 +230,25 @@ async function resolveLegacyGraphRates(projectId: string): Promise<Record<string
   const scope = normalizeString(projectId);
   if (!scope) return {};
 
-  const { data, error } = await supabase
-    .from('wg_projects')
-    .select('graph')
-    .eq('id', scope)
-    .maybeSingle();
+  // The raw project graph is not readable (036). The scoped RPC already removed
+  // rates this caller must not see; this only copies what it returned.
+  const { data, error } = await supabase.rpc('wg_get_scoped_graph', { p_project_id: scope });
 
   if (error) {
     console.warn(`[invoices] resolveProjectRates failed for ${scope}: ${error.message}`);
     return {};
   }
 
-  const graph = (data as any)?.graph;
-  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const rates: Record<string, PersonRate> = {};
-  nodes.forEach((node: any) => {
-    const personRate = extractNodeRate(node);
-    if (personRate) rates[personRate.personId] = personRate;
+  Object.values(ratesFromScopedGraph(data as { nodes?: unknown } | null)).forEach((personRate) => {
+    rates[personRate.personId] = {
+      personId: personRate.personId,
+      personName: personRate.personName,
+      rate: personRate.rate,
+      rateType: personRate.rateType === 'unknown' ? 'hourly' : personRate.rateType,
+      currency: personRate.currency,
+      masked: personRate.masked,
+    };
   });
   return rates;
 }

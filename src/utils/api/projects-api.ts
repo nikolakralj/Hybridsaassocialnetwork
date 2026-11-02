@@ -4,9 +4,10 @@
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
+import { mergeDirectoryProject, omitCachedGraph, projectReadFromCache } from './project-directory-cache';
 import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
-const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at';
+const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at,require_purchase_order';
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
@@ -100,7 +101,7 @@ function readLocalProjects(): LocalProjectRecord[] {
 
 function readLocalProjectList() {
   return readLocalProjects()
-    .map((record) => record.project)
+    .map((record) => projectReadFromCache(record.project))
     .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .filter(Boolean);
 }
@@ -144,7 +145,7 @@ function writeLocalProjects(records: LocalProjectRecord[]) {
 
 function localListProjects() {
   return readLocalProjects()
-    .map((record) => record.project)
+    .map((record) => projectReadFromCache(record.project))
     .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .sort(sortProjects);
 }
@@ -152,7 +153,9 @@ function localListProjects() {
 function localGetProject(projectId: string) {
   const record = readLocalProjects().find((r) => r.project?.id === projectId);
   if (!record) throw new Error('Project not found');
-  return { project: record.project, members: record.members || [] };
+  // The project API is down. Return directory metadata only, never a cached
+  // unscoped graph that would bypass wg_get_scoped_graph.
+  return { project: projectReadFromCache(record.project), members: record.members || [] };
 }
 
 function buildLocalProjectStub(projectId: string) {
@@ -338,7 +341,7 @@ interface SupabaseProjectInput {
 }
 
 function mapSupabaseProjectRow(row: any) {
-  return {
+  const mapped: Record<string, any> = {
     id: row.id,
     name: row.name,
     description: row.description || '',
@@ -351,12 +354,13 @@ function mapSupabaseProjectRow(row: any) {
     status: row.status,
     supplyChainStatus: row.supply_chain_status,
     ownerId: row.owner_id,
-    parties: row.parties || null,
-    graph: row.graph || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     storageSource: 'cloud' as const,
   };
+  // Directory rows never carry graph or parties into the cache, even if a
+  // payload still has them. Those fields are read only via wg_get_scoped_graph.
+  return mapped;
 }
 
 function cacheCloudProjectList(projects: Record<string, any>[]) {
@@ -371,7 +375,7 @@ function cacheCloudProjectList(projects: Record<string, any>[]) {
   projects.forEach((project) => {
     const prior = byId.get(project.id);
     byId.set(project.id, {
-      project: { ...(prior?.project || {}), ...project, storageSource: 'cloud' as const },
+      project: mergeDirectoryProject(prior?.project, project),
       members: prior?.members || [],
     });
   });
@@ -450,8 +454,8 @@ async function supabaseListProjects(accessToken?: string | null) {
   const projectIds = new Set<string>();
 
   const { data: ownedProjects, error: ownedError } = await supabase
-    .from('wg_projects')
-    .select(PROJECT_METADATA_COLUMNS)
+    .from('wg_projects_directory')
+    .select('*')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false });
 
@@ -481,8 +485,8 @@ async function supabaseListProjects(accessToken?: string | null) {
   if (ids.length === 0) return [];
 
   const { data: projects, error: projectsError } = await supabase
-    .from('wg_projects')
-    .select(PROJECT_METADATA_COLUMNS)
+    .from('wg_projects_directory')
+    .select('*')
     .in('id', ids)
     .order('updated_at', { ascending: false });
 
@@ -698,7 +702,7 @@ export async function createProject(
     if (data?.project?.id) {
       const records = readLocalProjects().filter((r) => r.project?.id !== data.project.id);
       records.push({
-        project: { ...data.project, storageSource: 'cloud' as const },
+        project: omitCachedGraph({ ...data.project, storageSource: 'cloud' as const }),
         members: data.members || [],
       });
       writeLocalProjects(records);
@@ -736,7 +740,7 @@ async function supabaseUpdateProject(projectId: string, updates: Record<string, 
     .from('wg_projects')
     .update(dbUpdates)
     .eq('id', projectId)
-    .select()
+    .select(PROJECT_METADATA_COLUMNS)
     .single();
   if (error) throw new Error(`Failed to update project in DB: ${error.message}`);
   const mapped = mapSupabaseProjectRow(data);
