@@ -153,7 +153,7 @@ function buildProfile(user: any): UserProfile {
   return {
     id: user.id,
     email: user.email || '',
-    name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+    name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
     headline: user.user_metadata?.headline || '',
     bio: user.user_metadata?.bio || '',
     avatar_url: user.user_metadata?.avatar_url || '',

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   Building2,
   Users,
@@ -1580,7 +1581,7 @@ export function WorkGraphBuilder({
     return {
       nodeId: user.id,
       type: authType,
-      name: (user.user_metadata?.name as string) || (user.email as string) || 'Me',
+      name: userDisplayName(user, 'Me'),
       orgId: user.user_metadata?.orgId as string | undefined,
     };
   }, [user]);

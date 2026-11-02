@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
@@ -183,10 +184,7 @@ export function ProjectCreateWizard({
             id: user?.id || 'me',
             // Never store the viewer-relative label "Me" — use the real name so
             // approvals and the graph read correctly for everyone.
-            name: user?.user_metadata?.full_name
-              || user?.user_metadata?.name
-              || (user?.email ? user.email.split('@')[0] : '')
-              || 'Owner',
+            name: userDisplayName(user, 'Owner'),
             email: user?.email || '',
             // The project owner is their own organization's approver by default.
             canApprove: true,
@@ -311,7 +309,7 @@ export function ProjectCreateWizard({
         const result = await createProject({
           name, description: '', region: 'EU',
           startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
-          ownerName: user?.user_metadata?.full_name || user?.email || 'Project Owner',
+          ownerName: userDisplayName(user, 'Project Owner'),
           ownerEmail: user?.email || '',
           ownerId: user?.id,
           graph: { nodes: graph.nodes, edges: graph.edges },

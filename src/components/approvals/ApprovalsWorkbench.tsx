@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   AlertTriangle,
   CheckCircle,
@@ -1127,13 +1128,13 @@ export function ApprovalsWorkbench({
                   <div className="flex items-center gap-2">
                     <div className="h-7 w-7 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
                       <span className="text-[11px] font-bold text-emerald-700">
-                        {(viewerName || user?.user_metadata?.full_name || user?.email || "?").slice(0, 1).toUpperCase()}
+                        {(viewerName?.trim() || userDisplayName(user, "?")).slice(0, 1).toUpperCase()}
                       </span>
                     </div>
                     <div>
                       <p className="m-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">Approving as</p>
                       <p className="m-0 text-sm font-medium text-foreground leading-tight">
-                        {viewerName || user?.user_metadata?.full_name || user?.email || "You"}
+                        {viewerName?.trim() || userDisplayName(user, "You")}
                       </p>
                     </div>
                   </div>

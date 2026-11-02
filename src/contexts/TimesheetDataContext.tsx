@@ -11,6 +11,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { userDisplayName } from '../utils/auth/display-name';
 import { toast } from 'sonner';
 import { useAuth } from './AuthContext';
 import {
@@ -950,7 +951,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       if (status === 'submitted') {
         const nameDir = readNameDir(projectId);
         const approvalParties = readApprovalParties(projectId);
-        const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
+        const submitterName = nameDir[personId]?.name || userDisplayName(user) || normalizedWeek.personId || 'Submitted timesheet';
         const submitterOrgId = nameDir[personId]?.orgId || approvalParties.find((party) =>
           party.people.some((person) => person.id === personId)
         )?.id;

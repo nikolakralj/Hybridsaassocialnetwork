@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
+import { userDisplayName } from "../utils/auth/display-name";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
   Plus, Settings, Users, MessageSquare, X, Network, ShieldCheck, ClipboardCheck
@@ -886,7 +887,7 @@ export function ProjectWorkspace({
                 <LazyProjectTimesheetsView
                   projectId={projectId}
                   ownerId={user?.id || "current-user"}
-                  ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
+                  ownerName={userDisplayName(user, "Current User")}
                   contractors={[]}
                   hourlyRate={95}
                   viewerOverride={effectiveViewer ? {
