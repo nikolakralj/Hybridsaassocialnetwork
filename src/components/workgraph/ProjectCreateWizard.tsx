@@ -202,6 +202,8 @@ export function ProjectCreateWizard({
             email: user?.email || '',
             // The project owner is their own organization's approver by default.
             canApprove: true,
+            // The owner sets the rates, so they see them.
+            canViewRates: true,
           }],
           isCreator: true,
         }
@@ -952,7 +954,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
     addPerson(party.id, {
       id: `person-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: pName.trim(), email: pEmail.trim(), role: pRole.trim() || 'Member',
-      canApprove: false, canViewRates: true, canEditTimesheets: true,
+      // Rates are private by default; the owner can turn this on per person.
+      canApprove: false, canViewRates: false, canEditTimesheets: true,
       visibleToChain: true,
     });
     setPName(''); setPEmail(''); setPRole('');

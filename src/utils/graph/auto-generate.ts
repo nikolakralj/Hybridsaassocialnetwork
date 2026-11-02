@@ -226,7 +226,8 @@ export function generateGraphFromWizard(
           partyId: party.id,
           userId: person.id,
           canApprove: person.canApprove ?? false,
-          canViewRates: person.canViewRates ?? true,
+          // Private by default: only people explicitly allowed see rates.
+          canViewRates: person.canViewRates ?? false,
           canEditTimesheets: person.canEditTimesheets ?? true,
           visibleToChain: visible,
         },
