@@ -495,7 +495,7 @@ function generateInsights(workStats: WorkStats): Insight[] {
       id: 'insight-getstarted',
       type: 'opportunity',
       title: 'Get started with WorkGraph',
-      description: 'Create your first project and contract to start tracking time and earnings.',
+      description: 'Create your first project and contract to start tracking time and approvals.',
       action_label: 'Create Project',
       action_url: '/app/projects',
       icon: 'Sparkles',
