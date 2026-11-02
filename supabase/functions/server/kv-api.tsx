@@ -1,11 +1,31 @@
 import { Hono } from "npm:hono";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import * as kv from "./kv_store.tsx";
 
 const kvApiRouter = new Hono();
 
+async function requireUser(c: any): Promise<{ id: string } | Response> {
+  const token = c.req.header("Authorization")?.split(" ")[1];
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: `Bearer ${token}` } } },
+    );
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user?.id) return c.json({ error: "Unauthorized" }, 401);
+    return { id: data.user.id };
+  } catch {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+}
+
 // POST /make-server-f8b491be/kv - Set a key-value pair
 kvApiRouter.post("/make-server-f8b491be/kv", async (c) => {
   try {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
     const { key, value } = await c.req.json();
     if (!key || value === undefined) {
       return c.json({ error: "key and value are required" }, 400);
@@ -22,6 +42,8 @@ kvApiRouter.post("/make-server-f8b491be/kv", async (c) => {
 // GET /make-server-f8b491be/kv/:key - Get a value by key
 kvApiRouter.get("/make-server-f8b491be/kv/:key", async (c) => {
   try {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
     const key = c.req.param("key");
     const value = await kv.get(key);
     if (value === null || value === undefined) {
@@ -37,6 +59,8 @@ kvApiRouter.get("/make-server-f8b491be/kv/:key", async (c) => {
 // POST /make-server-f8b491be/kv/prefix - Get all values by key prefix
 kvApiRouter.post("/make-server-f8b491be/kv/prefix", async (c) => {
   try {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
     const { prefix } = await c.req.json();
     if (!prefix) {
       return c.json({ error: "prefix is required" }, 400);
@@ -52,6 +76,8 @@ kvApiRouter.post("/make-server-f8b491be/kv/prefix", async (c) => {
 // DELETE /make-server-f8b491be/kv/:key - Delete a key
 kvApiRouter.delete("/make-server-f8b491be/kv/:key", async (c) => {
   try {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
     const key = c.req.param("key");
     await kv.del(key);
     console.log(`KV deleted: ${key}`);

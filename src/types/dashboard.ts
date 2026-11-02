@@ -11,6 +11,8 @@ export interface WorkStats {
     current_period: number;
     previous_period: number;
     currency: string;
+    /** False when no saved rate in one currency exists. The amount is then not money. */
+    money_known?: boolean;
     period: 'week' | 'month' | 'year';
     trend: number; // percentage change
   };
@@ -24,6 +26,7 @@ export interface WorkStats {
     count: number;
     total_value: number;
     currency: string;
+    money_known?: boolean;
   };
   active_contracts: {
     count: number;

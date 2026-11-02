@@ -1185,21 +1185,6 @@ function EdgeProperties({
             </Select>
           </div>
 
-          <div>
-            <Label htmlFor="markup">Markup (%)</Label>
-            <Input
-              id="markup"
-              type="number"
-              min="0"
-              max="100"
-              value={edge.data?.markup || ''}
-              onChange={(e) => handleChange('markup', parseFloat(e.target.value))}
-              onFocus={handleInputFocus}
-              onClick={handleInputClick}
-              onKeyDown={handleKeyDown}
-              className="mt-1"
-            />
-          </div>
         </>
       )}
     </>

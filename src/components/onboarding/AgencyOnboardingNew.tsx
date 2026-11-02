@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
-import { projectId, publicAnonKey } from "../../utils/supabase/info";
+import { projectId } from "../../utils/supabase/info";
 
 interface AgencyOnboardingNewProps {
   userEmail: string;
@@ -24,7 +24,7 @@ export function AgencyOnboardingNew({
   onSkip 
 }: Partial<AgencyOnboardingNewProps> = {}) {
   const navigate = useNavigate();
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, accessToken } = useAuth();
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
@@ -42,11 +42,12 @@ export function AgencyOnboardingNew({
     try {
       await updateProfile({ persona_type: 'agency' });
 
+      if (!accessToken) throw new Error("Sign in again before saving your agency.");
       const agencyId = `agency-${user?.id || 'anon'}-${Date.now()}`;
       const url = `https://${projectId}.supabase.co/functions/v1/make-server-f8b491be/kv`;
-      await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
           key: `agency:${agencyId}`,
           value: JSON.stringify({
@@ -59,6 +60,10 @@ export function AgencyOnboardingNew({
           }),
         }),
       });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to save agency");
+      }
 
       toast.success(`${formData.agencyName} created!`);
       setCurrentStep(2);
