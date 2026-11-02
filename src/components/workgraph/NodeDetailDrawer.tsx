@@ -11,6 +11,7 @@
  * The graph becomes a navigation hub: click a node → see real data → jump to pages.
  */
 
+import { LinkRatesSection } from './LinkRatesSection';
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import {
   X,
@@ -76,6 +77,8 @@ interface NodeDetailDrawerProps {
   onUpdateNodeData?: (nodeId: string, patch: Record<string, any>) => Promise<void> | void;
   /** C3b: add an approver agent to a party (owner or that party's verified admin). Server-authorized. */
   onAddPartyApprover?: (partyGraphNodeId: string, email: string, displayName: string) => Promise<void>;
+  /** The signed-in user's own companies on this project (their membership scope). */
+  ownPartyIds?: string[];
 }
 
 // ============================================================================
@@ -1466,6 +1469,7 @@ export function NodeDetailDrawer({
   onNavigate,
   onUpdateNodeData,
   onAddPartyApprover,
+  ownPartyIds,
 }: NodeDetailDrawerProps) {
   const node = nodes.find(n => n.id === selectedId);
   
@@ -1635,6 +1639,11 @@ export function NodeDetailDrawer({
               edges={edges}
               onUpdateNodeData={onUpdateNodeData}
             />
+          )}
+
+          {/* Per-link rates (044): supply links on a company, employment rate on a person */}
+          {(node.type === 'party' || node.type === 'person') && (
+            <LinkRatesSection projectId={projectId} node={node} nodes={nodes} edges={edges} viewer={viewer} ownPartyIds={ownPartyIds} />
           )}
 
           {/* Timesheets (for people) — interactive with inline edit + approval */}

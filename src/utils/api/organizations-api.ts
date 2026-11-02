@@ -94,3 +94,59 @@ export async function assignPartyApprover(
 
   return data as PartyApproverResult;
 }
+
+export interface OrganizationBillingProfile {
+  organizationId: string;
+  organizationName: string;
+  legalName: string;
+  address: string;
+  taxId: string;
+  iban: string;
+  updatedAt: string | null;
+}
+
+/** Organizations the signed-in user may keep invoice details for (owner, org admin or org approver). */
+export async function listMyBillingOrganizations(): Promise<OrganizationBillingProfile[]> {
+  const rpc = (supabase.rpc as unknown as (fn: string) => Promise<{ data: unknown; error: { message?: string } | null }>);
+  // A project owner's own company may not have an organization row yet
+  // (it used to be created only by "Set up employee"); create it first.
+  // (The builder is PromiseLike only: no .catch(), so use try/catch.)
+  try {
+    await rpc.call(supabase, 'wg_ensure_my_owner_organizations');
+  } catch {
+    // Listing still works for organizations that already exist.
+  }
+  const { data, error } = await rpc.call(supabase, 'wg_list_my_billing_organizations');
+  if (error) throw new Error(error.message || 'Could not load company billing details.');
+  return ((data as Array<Record<string, string | null>>) || []).map((row) => ({
+    organizationId: String(row.organization_id),
+    organizationName: String(row.organization_name || ''),
+    legalName: row.legal_name || '',
+    address: row.address || '',
+    taxId: row.tax_id || '',
+    iban: row.iban || '',
+    updatedAt: row.updated_at || null,
+  }));
+}
+
+export async function saveOrganizationBillingProfile(
+  profile: Pick<OrganizationBillingProfile, 'organizationId' | 'legalName' | 'address' | 'taxId' | 'iban'>,
+): Promise<void> {
+  const clean = (value: string) => value.trim() || null;
+  const { error } = await (supabase.from as unknown as (table: string) => {
+    upsert: (row: Record<string, unknown>, opts: { onConflict: string }) => Promise<{ error: { message?: string; code?: string } | null }>;
+  })('wg_organization_billing_profiles').upsert(
+    {
+      organization_id: profile.organizationId,
+      legal_name: clean(profile.legalName),
+      address: clean(profile.address),
+      tax_id: clean(profile.taxId),
+      iban: clean(profile.iban.replace(/\s+/g, ' ')),
+    },
+    { onConflict: 'organization_id' },
+  );
+  if (error) {
+    if (error.code === '42501') throw new Error('Only your company\'s owner, admin or approver can change its billing details.');
+    throw new Error(error.message || 'Could not save company billing details.');
+  }
+}

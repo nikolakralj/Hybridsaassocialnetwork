@@ -314,6 +314,9 @@ export function ProjectWorkspace({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
+  // Set when the server refuses the project (not a member / unknown id). The
+  // workspace used to render every tab as an empty shell for such users.
+  const [projectAccessDenied, setProjectAccessDenied] = useState(false);
   const [projectStatus, setProjectStatus] = useState<string | null>(null);
   const [projectDescription, setProjectDescription] = useState("");
   const [projectParties, setProjectParties] = useState<Array<{ id: string; name: string; partyType?: string }>>([]);
@@ -364,6 +367,19 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
+  // Companies this user invoices FROM: a manager's own company, or the
+  // company of a party approver (they set its link rates and issue its
+  // invoices, e.g. the Sub's director billing the Agency). The database
+  // (wg_invoice_caller_controls_party) makes the same check.
+  const billingPartyIds = canManageProject
+    ? editablePartyIds
+    : (currentMembership?.canApprove && currentMembership?.scope ? [currentMembership.scope] : []);
+  // Adding/removing organizations mirrors the server rule: project owner, or
+  // an Editor of the creator (owner) organization.
+  const canManageStructure = canEditGraph && (
+    currentProjectRole === "Owner" ||
+    (currentProjectRole === "Editor" && !!ownerPartyId && currentMembership?.scope === ownerPartyId)
+  );
   const visibleTeamCount = dedupeTeamMembers(teamMembers).length;
   const teamButtonLabel = visibleTeamCount > 0 ? `Team (${visibleTeamCount})` : "Team";
   const allowedViewerIds = useMemo(
@@ -445,6 +461,16 @@ export function ProjectWorkspace({
     loadTeamMembers();
   }, [projectId, accessToken]);
 
+  // Structure edits (add/remove a company) change who is on the team.
+  useEffect(() => {
+    const onProjectUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (!detail?.projectId || detail.projectId === projectId) void loadTeamMembers();
+    };
+    window.addEventListener('workgraph-project-updated', onProjectUpdated);
+    return () => window.removeEventListener('workgraph-project-updated', onProjectUpdated);
+  }, [projectId, accessToken]);
+
   useEffect(() => {
     let cancelled = false;
     if (!projectId || !user?.id) {
@@ -479,6 +505,7 @@ export function ProjectWorkspace({
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
           setProjectPartiesStatus('loaded');
+          setProjectAccessDenied(false);
           setProjectOwnerId(data?.project?.ownerId || null);
           setProjectStatus(typeof data?.project?.status === 'string' ? data.project.status : null);
           setProjectDescription(typeof data?.project?.description === 'string' ? data.project.description : "");
@@ -501,9 +528,11 @@ export function ProjectWorkspace({
           setOwnerPartyId(creatorParty?.id || null);
           setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
         }
-      } catch {
+      } catch (error: any) {
         if (!cancelled) {
           setProjectPartiesStatus('error');
+          const message = String(error?.message || '');
+          setProjectAccessDenied(/forbidden|not found|not a member/i.test(message));
           setProjectOwnerId(null);
           setProjectStatus(null);
           setProjectParties([]);
@@ -725,6 +754,22 @@ export function ProjectWorkspace({
     setIsAddModuleOpen(false);
   };
 
+  if (projectAccessDenied) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="max-w-xl mx-auto px-6 py-16 text-center space-y-3" data-testid="project-access-denied">
+          <h1 className="m-0 text-xl font-semibold">You don't have access to this project</h1>
+          <p className="text-sm text-muted-foreground m-0">
+            It doesn't exist or you are not a member. Ask the project owner to invite you, then accept the invite on your Projects page.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => { window.location.href = '/app/projects'; }}>
+            Go to Projects
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Project Header */}
@@ -930,6 +975,7 @@ export function ProjectWorkspace({
                   asOf={asOf}
                   canEditGraph={canEditGraph}
                   editablePartyIds={editablePartyIds}
+                  canManageStructure={canManageStructure}
                   allowFullProjectView={canManageProject}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
@@ -954,6 +1000,7 @@ export function ProjectWorkspace({
                     name: effectiveViewer.name,
                     orgId: effectiveViewer.orgId,
                   } : undefined}
+                  serverScoped={!canManageProject}
                 />
               </Suspense>
             </TabsContent>
@@ -988,7 +1035,8 @@ export function ProjectWorkspace({
                 <LazyInvoicesWorkspace
                   projectId={projectId}
                   projectName={projectName}
-                  canGenerateInvoices={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
+                  canGenerateInvoices={billingPartyIds.length > 0}
+                  billingPartyIds={billingPartyIds}
                 />
                 )}
               </Suspense>

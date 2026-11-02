@@ -3,6 +3,14 @@
 // KV-backed version so the frontend requires zero changes.
 import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  assertScopedSupplyChainUpdate,
+  nodeOwnerId,
+  projectParties,
+  isTimesheetWeekWithWork,
+  partyRemovalBlockers,
+  supplyChainStructureDiff,
+} from "./supply-chain-guard.ts";
 
 const projectsRouter = new Hono();
 
@@ -165,32 +173,6 @@ async function getCallerScope(projectId: string, userId: string): Promise<string
   return typeof data?.scope === "string" && data.scope ? data.scope : null;
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function sameStringList(left: unknown, right: unknown): boolean {
-  const normalize = (value: unknown) => Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string").sort()
-    : [];
-  return stableJson(normalize(left)) === stableJson(normalize(right));
-}
-
-function idSet(values: unknown[]): Set<string> {
-  return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
-}
-
-function projectParties(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && Array.isArray((value as any).parties)) return (value as any).parties;
-  return [];
-}
-
 function partiesFromScopedGraph(graph: any): any[] {
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
@@ -239,55 +221,6 @@ function resolveCreatorPartyId(project: any): string | null {
   return null;
 }
 
-function nodeOwnerId(node: any): string | null {
-  return (
-    (typeof node?.data?.partyId === "string" && node.data.partyId) ||
-    (typeof node?.data?.orgId === "string" && node.data.orgId) ||
-    null
-  );
-}
-
-function ownedNodeIds(nodes: any[], callerScope: string): Set<string> {
-  const owned = new Set<string>([callerScope]);
-  for (const node of nodes) {
-    if (node?.id && (node?.id === callerScope || nodeOwnerId(node) === callerScope)) {
-      owned.add(node.id);
-    }
-  }
-  return owned;
-}
-
-function edgeSignature(edge: any): string {
-  return stableJson({
-    id: edge?.id,
-    type: edge?.type,
-    source: edge?.source,
-    target: edge?.target,
-    data: edge?.data || {},
-  });
-}
-
-function isPartyConnectionEdge(edge: any, partyIds: Set<string>): boolean {
-  return (
-    partyIds.has(edge?.source) &&
-    partyIds.has(edge?.target) &&
-    ["billsTo", "bills_to", "subcontracts"].includes(edge?.data?.edgeType || edge?.type)
-  );
-}
-
-function edgeCanChange(edge: any, callerScope: string, ownedIds: Set<string>, partyIds: Set<string>): boolean {
-  if (isPartyConnectionEdge(edge, partyIds)) return edge?.source === callerScope;
-  return ownedIds.has(edge?.source) || ownedIds.has(edge?.target);
-}
-
-function protectedNodeData(node: any): Record<string, unknown> {
-  const data = node?.data && typeof node.data === "object" ? { ...node.data } : {};
-  // Layout recalculation can legitimately move the whole chain after a scoped
-  // party updates its own billing edge; ownership fields must remain stable.
-  delete data.chainPosition;
-  return data;
-}
-
 const SERVER_MASKED_NODE_FIELDS = [
   "hourlyRate",
   "dailyRate",
@@ -320,92 +253,69 @@ function restoreServerMaskedFields(existingGraph: any, nextGraph: any, callerSco
   };
 }
 
-function assertScopedEdgeUpdates(existingProject: any, body: any, callerScope: string) {
-  const currentNodes = Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [];
-  const nextNodes = Array.isArray(body.graph?.nodes) ? body.graph.nodes : [];
-  const currentEdges = Array.isArray(existingProject.graph?.edges) ? existingProject.graph.edges : [];
-  const nextEdges = Array.isArray(body.graph?.edges) ? body.graph.edges : [];
-  const partyIds = idSet([...projectParties(existingProject.parties).map((party: any) => party?.id)]);
-  const ownedIds = new Set([...ownedNodeIds(currentNodes, callerScope), ...ownedNodeIds(nextNodes, callerScope)]);
-  const currentBySignature = new Map(currentEdges.map((edge: any) => [edgeSignature(edge), edge]));
-  const nextBySignature = new Map(nextEdges.map((edge: any) => [edgeSignature(edge), edge]));
+function personNodeIdsOfParty(graph: any, partyId: string): string[] {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  return nodes
+    .filter((node: any) => node?.type === "person" && nodeOwnerId(node) === partyId && typeof node?.id === "string")
+    .map((node: any) => node.id);
+}
 
-  for (const [signature, edge] of currentBySignature) {
-    if (!nextBySignature.has(signature) && !edgeCanChange(edge, callerScope, ownedIds, partyIds)) {
-      throw new Error("You cannot change another organization's graph connections");
-    }
+async function partyActivity(projectId: string, partyId: string, graph: any) {
+  const personIds = personNodeIdsOfParty(graph, partyId);
+  const { data: members } = await db()
+    .from("wg_project_members")
+    .select("user_id, accepted_at, scope, graph_node_id")
+    .eq("project_id", projectId);
+  const partyMembers = (members || []).filter((row: any) => (
+    row.scope === partyId || (row.graph_node_id && personIds.includes(row.graph_node_id))
+  ));
+  const userIds = partyMembers.map((row: any) => row.user_id).filter(Boolean);
+  let timesheetWeeks = 0;
+  if (userIds.length > 0) {
+    // Count only weeks with recorded work; empty draft weeks are created just
+    // by opening the Timesheets tab and are not activity.
+    const { data: weeks } = await db()
+      .from("wg_timesheet_weeks")
+      .select("status, data")
+      .eq("project_id", projectId)
+      .in("user_id", userIds);
+    timesheetWeeks = (weeks || []).filter((row: any) => isTimesheetWeekWithWork(row)).length;
   }
+  const { count: invoiceCount } = await db()
+    .from("wg_invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .or(`from_party_id.eq.${partyId},to_party_id.eq.${partyId}`);
+  return {
+    acceptedMembers: partyMembers.filter((row: any) => row.accepted_at).length,
+    timesheetWeeks,
+    invoices: invoiceCount || 0,
+  };
+}
 
-  for (const [signature, edge] of nextBySignature) {
-    if (!currentBySignature.has(signature) && !edgeCanChange(edge, callerScope, ownedIds, partyIds)) {
-      throw new Error("You cannot change another organization's graph connections");
+// After a removal: pending (never accepted) memberships and invitations of
+// that party go, and its org mapping stops granting access.
+async function cleanupRemovedParties(projectId: string, partyIds: string[], previousGraph: any) {
+  for (const partyId of partyIds) {
+    const personIds = personNodeIdsOfParty(previousGraph, partyId);
+    const { data: pending } = await db()
+      .from("wg_project_members")
+      .select("id, invitation_id, scope, graph_node_id")
+      .eq("project_id", projectId)
+      .is("accepted_at", null);
+    for (const row of (pending || []).filter((entry: any) => entry.scope === partyId || personIds.includes(entry.graph_node_id))) {
+      if (row.invitation_id) await db().from("wg_project_invitations").delete().eq("id", row.invitation_id);
+      await db().from("wg_project_members").delete().eq("id", row.id);
     }
+    await db()
+      .from("wg_project_organizations")
+      .update({ status: "removed" })
+      .eq("project_id", projectId)
+      .eq("graph_node_id", partyId);
   }
 }
 
-function assertScopedSupplyChainUpdate(existingProject: any, body: any, callerScope: string | null) {
-  if (body.graph === undefined && body.parties === undefined) return;
-  if (!callerScope) throw new Error("Map your active membership to an organization before editing the supply chain");
-  if (!body.graph || !Array.isArray(body.graph.nodes) || !Array.isArray(body.graph.edges) || !Array.isArray(body.parties)) {
-    throw new Error("Supply-chain updates require a complete graph and party snapshot");
-  }
-
-  const currentById = new Map(projectParties(existingProject.parties).map((party: any) => [party?.id, party]));
-  const nextById = new Map(body.parties.map((party: any) => [party?.id, party]));
-  if (!currentById.has(callerScope)) throw new Error("Your organization is not part of this project supply chain");
-  if (currentById.size !== nextById.size || [...currentById.keys()].some((id) => !nextById.has(id))) {
-    throw new Error("Organizations are archived through a governed project workflow, not removed from another party's editor");
-  }
-  if ([...nextById.keys()].some((id) => !currentById.has(id))) {
-    throw new Error("Adding an organization requires a governed project-structure workflow");
-  }
-
-  for (const [partyId, currentParty] of currentById) {
-    const nextParty = nextById.get(partyId);
-    if (partyId === callerScope) {
-      if (nextParty?.partyType !== currentParty?.partyType) {
-        throw new Error("An organization type cannot be changed after the project is active");
-      }
-      continue;
-    }
-    if (
-      nextParty?.name !== currentParty?.name ||
-      nextParty?.partyType !== currentParty?.partyType ||
-      !sameStringList(nextParty?.billsTo, currentParty?.billsTo)
-    ) {
-      throw new Error("You can only change your own organization and its billing connection");
-    }
-  }
-
-  const nextNodeById = new Map(body.graph.nodes.map((node: any) => [node?.id, node]));
-  const currentNodeIds = new Set((Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : []).map((node: any) => node?.id));
-  for (const node of (Array.isArray(existingProject.graph?.nodes) ? existingProject.graph.nodes : [])) {
-    const nextNode = nextNodeById.get(node?.id);
-    if (node?.type === "party") {
-      if (node?.id === callerScope) continue;
-      if (!nextNode || stableJson(protectedNodeData(nextNode)) !== stableJson(protectedNodeData(node))) {
-        throw new Error("You cannot edit another organization's party node");
-      }
-      continue;
-    }
-    if (node?.data?.partyId === callerScope || node?.data?.orgId === callerScope) continue;
-    if (!nextNode || stableJson(nextNode.data || {}) !== stableJson(node.data || {})) {
-      throw new Error("You cannot edit people or records owned by another organization");
-    }
-  }
-
-  for (const node of body.graph.nodes) {
-    if (currentNodeIds.has(node?.id)) continue;
-    if (node?.type === "party") throw new Error("Adding an organization requires a governed project-structure workflow");
-    if (nodeOwnerId(node) !== callerScope) {
-      throw new Error("You can only add people or records owned by your organization");
-    }
-  }
-
-  assertScopedEdgeUpdates(existingProject, body, callerScope);
-}
-
-function scopedUpdateErrorStatus(message: string): number {
+function scopedUpdateErrorStatus(message: string): 400 | 403 | 409 | 500 {
   if (message.includes("require a complete graph and party snapshot")) return 400;
   if (message.includes("governed project")) return 409;
   if (message.includes("Map your active membership") || message.includes("not part of this project supply chain")) return 409;
@@ -657,7 +567,23 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     if (body.graph !== undefined) {
       body.graph = restoreServerMaskedFields(projectRow.graph, body.graph, scopedPartyId);
     }
-    assertScopedSupplyChainUpdate(projectRow, body, scopedPartyId);
+    // Adding/removing organizations: project owner, or an Editor of the
+    // creator organization. Removal is refused while the party has history.
+    const creatorPartyId = resolveCreatorPartyId(projectRow);
+    const allowStructure = role === "Owner" || (role === "Editor" && !!scopedPartyId && scopedPartyId === creatorPartyId);
+    const structure = supplyChainStructureDiff(projectRow, body);
+    if (allowStructure && structure.removed.length > 0) {
+      for (const partyId of structure.removed) {
+        const reasons = partyRemovalBlockers(await partyActivity(projectId, partyId, projectRow.graph));
+        if (reasons.length > 0) {
+          const party = projectParties(projectRow.parties).find((entry: any) => entry?.id === partyId);
+          return c.json({
+            error: `${party?.name || partyId} cannot be removed: it has ${reasons.join(", ")}. Keep it on the project; archiving is not built yet.`,
+          }, 409);
+        }
+      }
+    }
+    assertScopedSupplyChainUpdate(projectRow, body, scopedPartyId, { allowStructure });
     const updateData: any = {};
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;
@@ -680,6 +606,9 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
       .single();
 
     if (ue) throw ue;
+    if (allowStructure && structure.removed.length > 0) {
+      await cleanupRemovedParties(projectId, structure.removed, projectRow.graph);
+    }
     return c.json({ project: rowToProject(updated) });
   } catch (err: any) {
     const message = err?.message || String(err);
@@ -743,7 +672,19 @@ projectsRouter.get("/make-server-f8b491be/api/projects/:projectId/members", asyn
       .eq("project_id", projectId);
 
     if (me) throw me;
-    return c.json({ members: (rows || []).map(rowToMember) });
+    // This route runs with the service role, so it must apply the roster
+    // scoping itself. Before, every member (client approver, subcontractor,
+    // workers) received the whole roster with every email and role.
+    // Managers keep the full list; everyone else sees their own row plus the
+    // people of their own party scope, without other people's emails.
+    if (canManageMembers(role)) {
+      return c.json({ members: (rows || []).map(rowToMember) });
+    }
+    const callerScope = await getCallerScope(projectId, user.id);
+    const visible = (rows || [])
+      .filter((row: any) => row.user_id === user.id || (callerScope && row.scope === callerScope))
+      .map((row: any) => (row.user_id === user.id ? row : { ...row, user_email: null }));
+    return c.json({ members: visible.map(rowToMember) });
   } catch (err: any) {
     return c.json({ error: `Failed to list members: ${err.message}` }, 500);
   }
@@ -777,6 +718,17 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       return c.json({ error: "Your project role cannot invite members with that role" }, 403);
     }
 
+    // A non-owner manager can only add people to their own organization.
+    const requestedScope = typeof body.scope === "string" && body.scope ? body.scope : null;
+    if (callerRole !== "Owner" && requestedScope) {
+      const callerScope = await getCallerScope(projectId, user.id);
+      if (callerScope && requestedScope !== callerScope) {
+        return c.json({ error: "You can only invite people into your own organization" }, 403);
+      }
+    }
+    const graphNodeId = typeof body.graphNodeId === "string" && body.graphNodeId ? body.graphNodeId : null;
+    const canApprove = body.canApprove === true;
+
     if (body.userId) {
       const newMember = {
         id: generateId("mem"),
@@ -786,10 +738,11 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
         user_email: normalizeEmail(body.userEmail || body.email),
         role: inviteeRole,
         scope: body.scope || null,
+        graph_node_id: graphNodeId,
         invited_by: user.id,
         invited_at: now,
         accepted_at: now,
-        can_approve: false,
+        can_approve: canApprove,
         can_view_rates: false,
         can_edit_timesheets: false,
         visible_to_chain: true,
@@ -802,6 +755,24 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
     const email = normalizeEmail(body.userEmail || body.email);
     if (!email || email === user.email) return c.json({ error: "A valid invite email is required" }, 400);
 
+    // A person added in the project wizard already has a placeholder member row
+    // (graph node + company scope, no invitation). Inviting them upgrades that
+    // row instead of adding a second one; inviting someone who already has a
+    // pending invitation returns it unchanged.
+    const { data: openRows } = await db()
+      .from("wg_project_members")
+      .select("*")
+      .eq("project_id", projectId)
+      .is("accepted_at", null);
+    const sameEmail = (row: any) => normalizeEmail(row.user_email) === email;
+    const alreadyInvited = (openRows || []).find((row: any) => row.invitation_id && sameEmail(row));
+    if (alreadyInvited) {
+      return c.json({ member: rowToMember(alreadyInvited), alreadyInvited: true }, 200);
+    }
+    const placeholder = (openRows || []).find((row: any) => !row.invitation_id && (
+      sameEmail(row) || (graphNodeId && row.graph_node_id === graphNodeId)
+    ));
+
     const invitationId = generateId("inv");
     const invitation = {
       id: invitationId,
@@ -809,7 +780,7 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       project_name: projectRow.name,
       email,
       role: inviteeRole,
-      scope: body.scope || null,
+      scope: body.scope || placeholder?.scope || null,
       invited_by: user.id,
       invited_by_name: user.name,
       invited_at: now,
@@ -824,11 +795,12 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       user_email: email,
       role: inviteeRole,
       scope: body.scope || null,
+      graph_node_id: graphNodeId,
       invited_by: user.id,
       invited_at: now,
       accepted_at: null,
       invitation_id: invitationId,
-      can_approve: false,
+      can_approve: canApprove,
       can_view_rates: false,
       can_edit_timesheets: false,
       visible_to_chain: true,
@@ -836,6 +808,29 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
 
     const { error: invErr } = await db().from("wg_project_invitations").insert(invitation);
     if (invErr) throw invErr;
+
+    if (placeholder) {
+      const upgraded = {
+        invitation_id: invitationId,
+        user_email: email,
+        user_name: body.userName || body.name || placeholder.user_name || email,
+        role: inviteeRole,
+        scope: body.scope || placeholder.scope || null,
+        graph_node_id: graphNodeId || placeholder.graph_node_id || null,
+        can_approve: canApprove || placeholder.can_approve === true,
+        invited_by: user.id,
+        invited_at: now,
+      };
+      const { data: updated, error: upErr } = await db()
+        .from("wg_project_members")
+        .update(upgraded)
+        .eq("id", placeholder.id)
+        .select("*")
+        .single();
+      if (upErr) throw upErr;
+      return c.json({ member: rowToMember(updated), invitation: rowToInvitation(invitation) }, 201);
+    }
+
     const { error: memErr } = await db().from("wg_project_members").insert(pendingMember);
     if (memErr) throw memErr;
 

@@ -22,8 +22,6 @@ import {
   Clock,
   AlertCircle,
   CheckCircle2,
-  FileCheck,
-  Receipt,
   UserCheck,
   X,
   MoreHorizontal,
@@ -55,7 +53,6 @@ import {
   formatMonthKey,
   parseMonthKey,
   type MonthOption,
-  type MonthlySnapshot,
   type EdgeFlowSummary,
 } from './graph-data-flows';
 import { NodeDetailDrawer } from './NodeDetailDrawer';
@@ -65,12 +62,14 @@ import type {
   CompiledProjectConfig,
 } from '../../types/workgraph';
 import type { PartyEntry } from '../../utils/graph/auto-generate';
-import { getProject, updateProject } from '../../utils/api/projects-api';
+import { addProjectMember, getProject, updateProject } from '../../utils/api/projects-api';
 import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { assignPartyApprover } from '../../utils/api/organizations-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
+import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
+import { computeGraphMonthTimeStats, type GraphMonthTimeStats } from '../../utils/graph/month-time-stats';
 
 // ============================================================================
 // Layout Engine - Hierarchical Sugiyama-style
@@ -852,41 +851,26 @@ function MonthNavigator({
 // Month Summary Bar
 // ============================================================================
 
-function MonthSummaryBar({ snapshot }: { snapshot: MonthlySnapshot }) {
-  const stats = snapshot.stats;
-  const activeCount = snapshot.activePeople.filter(p => p.status === 'active').length;
-  const onboardingCount = snapshot.activePeople.filter(p => p.status === 'onboarding').length;
+export { computeGraphMonthTimeStats, type GraphMonthTimeStats } from '../../utils/graph/month-time-stats';
 
+function MonthSummaryBar({ stats }: { stats: GraphMonthTimeStats }) {
   return (
     <div className="flex items-center gap-5 px-5 py-2 bg-muted/30 border-b border-border text-[11px]">
       <div className="flex items-center gap-1.5 text-muted-foreground">
         <UserCheck className="h-3 w-3" />
-        <span><span className="font-semibold text-foreground">{activeCount}</span> active</span>
-        {onboardingCount > 0 && (
-          <span className="text-amber-500">+{onboardingCount} onboarding</span>
-        )}
+        <span><span className="font-semibold text-foreground">{stats.peopleWithHours}</span> {stats.peopleWithHours === 1 ? 'person' : 'people'} logged time</span>
       </div>
       <div className="flex items-center gap-1.5 text-muted-foreground">
         <Clock className="h-3 w-3" />
-        <span><span className="font-semibold text-foreground">{stats.totalHoursSubmitted.toLocaleString()}</span>h submitted</span>
-        <span>/ <span className="font-semibold text-foreground">{stats.totalHoursApproved.toLocaleString()}</span>h approved</span>
+        <span><span className="font-semibold text-foreground">{stats.hoursSubmitted.toLocaleString()}</span>h submitted</span>
+        <span>/ <span className="font-semibold text-foreground">{stats.hoursApproved.toLocaleString()}</span>h approved</span>
       </div>
-      {stats.pendingApprovals > 0 && (
+      {stats.pendingWeeks > 0 && (
         <div className="flex items-center gap-1.5 text-amber-600">
           <AlertCircle className="h-3 w-3" />
-          <span className="font-medium">{stats.pendingApprovals} pending</span>
+          <span className="font-medium">{stats.pendingWeeks} {stats.pendingWeeks === 1 ? 'week' : 'weeks'} pending</span>
         </div>
       )}
-      {stats.totalAmountInvoiced > 0 && (
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Receipt className="h-3 w-3" />
-          <span><span className="font-semibold text-foreground">${stats.totalAmountInvoiced.toLocaleString()}</span> invoiced</span>
-        </div>
-      )}
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <FileCheck className="h-3 w-3" />
-        <span>{stats.activeNDAs} NDAs</span>
-      </div>
     </div>
   );
 }
@@ -1469,6 +1453,8 @@ interface WorkGraphBuilderProps {
   asOf?: string;
   canEditGraph?: boolean;
   editablePartyIds?: string[];
+  /** Owner (or creator-org Editor): may add/remove organizations in Edit Supply Chain. */
+  canManageStructure?: boolean;
   /** Project Owner/Editor: the "Full project view" viewer shows the whole server-scoped graph. */
   allowFullProjectView?: boolean;
   currentViewer?: ViewerIdentity | null;
@@ -1482,6 +1468,7 @@ export function WorkGraphBuilder({
   initialConfig,
   canEditGraph = true,
   editablePartyIds = [],
+  canManageStructure = false,
   allowFullProjectView = false,
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
@@ -2091,6 +2078,14 @@ export function WorkGraphBuilder({
     approvals: filteredEdges.filter(e => e.data?.edgeType === 'approves').length,
   }), [filteredNodes, filteredEdges]);
 
+  const timesheetStore = useTimesheetStore();
+  const graphMonthTimeStats = useMemo(() => {
+    const visiblePersonIds = new Set(filteredNodes.filter((n) => n.type === 'person').map((n) => n.id));
+    const graphPersonIds = new Set(allNodes.filter((n) => n.type === 'person').map((n) => n.id));
+    return computeGraphMonthTimeStats(timesheetStore.getAllWeeksForMonth(selectedMonth), selectedMonth, visiblePersonIds, graphPersonIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timesheetStore.version, selectedMonth, filteredNodes, allNodes]);
+
   const editableParties = useMemo(() => buildEditableParties(allNodes, allEdges), [allNodes, allEdges]);
 
   const handleEditSupplyChainSave = useCallback(async ({
@@ -2146,11 +2141,86 @@ export function WorkGraphBuilder({
     setAllEdges(mergedEdges);
     await rememberServerGraph();
     await graphPersistence.saveVersion(mergedNodes as any, mergedEdges as any, 'Supply chain updated');
+
+    // People added here get a project membership + invitation, like people
+    // added in the project wizard. Before, they existed only as graph nodes:
+    // no Team row, no invite, no way to log in to the project.
+    const previousIds = new Set(allNodes.map((node) => node.id));
+    const newPeople = (mergedNodes as BaseNode[]).filter((node) => (
+      node.type === 'person'
+      && !previousIds.has(node.id)
+      && typeof node.data?.email === 'string'
+      && /.+@.+\..+/.test(node.data.email)
+    ));
+    const inviteResults = await Promise.allSettled(newPeople.map((node) => addProjectMember(projectId, {
+      userName: String(node.data?.name || node.data?.email),
+      userEmail: String(node.data?.email).trim().toLowerCase(),
+      role: 'Contributor',
+      scope: String(node.data?.partyId || node.data?.orgId || '') || null,
+      graphNodeId: node.id,
+      canApprove: node.data?.canApprove === true,
+    }, accessToken)));
+    const invited = inviteResults.filter((result) => result.status === 'fulfilled').length;
+    const failedInvites = newPeople.filter((_, index) => inviteResults[index].status === 'rejected');
+    if (invited > 0) toast.success(`Invited ${invited} new ${invited === 1 ? 'person' : 'people'} to the project team.`);
+    if (failedInvites.length > 0) {
+      toast.error(`Could not invite ${failedInvites.map((node) => node.data?.name || node.data?.email).join(', ')}. Add them from the Team tab.`);
+    }
     toast.success('Supply chain updated', {
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
+    // The server removed (or added) memberships with the companies; tell the
+    // workspace to reload its Team list so the count is not stale.
+    window.dispatchEvent(new CustomEvent('workgraph-project-updated', { detail: { projectId } }));
     setIsEditSupplyChainOpen(false);
-  }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph]);
+  }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph, allNodes]);
+
+  // Toolbar Save: write the canvas to wg_projects.graph through the same
+  // PUT /api/projects/:id path as Edit Supply Chain (stale check, server-side
+  // scope validation, full parties snapshot). Before, it only called
+  // graphPersistence.saveVersion, which is a no-op for non-UUID project ids
+  // (every real project) and posted to a graph-versions stub otherwise.
+  const [isToolbarSaving, setIsToolbarSaving] = useState(false);
+  const handleToolbarSave = useCallback(async () => {
+    if (!canEditGraph) {
+      toast.error('Only project managers can save the graph');
+      return;
+    }
+    setIsToolbarSaving(true);
+    try {
+      let mergedNodes = allNodes;
+      try {
+        const { graph: latest, changed } = await fetchServerGraphState();
+        if (changed) {
+          setAllNodes(latest.nodes as BaseNode[]);
+          setAllEdges(latest.edges as BaseEdge[]);
+          serverGraphFingerprintRef.current = graphFingerprint(latest);
+          toast.error('Graph not saved', { description: STALE_GRAPH_MESSAGE });
+          return;
+        }
+        mergedNodes = preserveServerGraphNodes(latest.nodes as BaseNode[], allNodes);
+      } catch {
+        toast.error('Could not check the latest graph, so nothing was saved. Try again.');
+        return;
+      }
+      const parties = buildEditableParties(mergedNodes, allEdges).map((party) => ({
+        id: party.id,
+        name: party.name,
+        partyType: party.partyType,
+        billsTo: [...party.billsTo],
+        peopleCount: party.people.length,
+      }));
+      await updateProject(projectId, { graph: { nodes: mergedNodes, edges: allEdges }, parties }, accessToken);
+      setAllNodes(mergedNodes);
+      await rememberServerGraph();
+      await graphPersistence.saveVersion(mergedNodes as any, allEdges as any, 'Manual save');
+      toast.success('Graph saved', { description: `Saved ${mergedNodes.length} nodes and ${allEdges.length} connections.` });
+    } catch (error) {
+      toast.error('Graph not saved', { description: error instanceof Error ? error.message : 'Unknown error' });
+    } finally {
+      setIsToolbarSaving(false);
+    }
+  }, [canEditGraph, allNodes, allEdges, projectId, accessToken, fetchServerGraphState, rememberServerGraph, graphPersistence]);
 
   return (
     <>
@@ -2217,11 +2287,12 @@ export function WorkGraphBuilder({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => graphPersistence.saveVersion(allNodes as any, allEdges as any, 'Manual save')}
-                disabled={graphPersistence.isSaving}
+                onClick={() => void handleToolbarSave()}
+                disabled={graphPersistence.isSaving || isToolbarSaving}
+                data-testid="graph-toolbar-save"
                 className="h-8 gap-1.5 text-xs"
               >
-                {graphPersistence.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {graphPersistence.isSaving || isToolbarSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save
               </Button>
             </>
@@ -2254,7 +2325,7 @@ export function WorkGraphBuilder({
       </div>
 
       {/* Month summary */}
-      {currentSnapshot && <MonthSummaryBar snapshot={currentSnapshot} />}
+      <MonthSummaryBar stats={graphMonthTimeStats} />
 
       {/* Hidden nodes banner */}
       <HiddenBanner hiddenNodes={scopedView.hiddenNodeCount} hiddenEdges={scopedView.hiddenEdgeCount} />
@@ -2306,6 +2377,7 @@ export function WorkGraphBuilder({
                 onNavigate={handleNavigate}
                 onUpdateNodeData={canEditGraph ? handleUpdateNodeData : undefined}
                 onAddPartyApprover={canEditGraph ? handleAddPartyApprover : undefined}
+                ownPartyIds={editablePartyIds}
               />
             </DrawerErrorBoundary>
           </div>
@@ -2322,6 +2394,7 @@ export function WorkGraphBuilder({
           initialParties={editableParties}
           initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
           editablePartyIds={editablePartyIds}
+          canManageStructure={canManageStructure}
         />
       ) : null}
     </>

@@ -450,9 +450,14 @@ invitationsRouter.post("/", async (c) => {
     let invitation: any;
     if (existingRows && existingRows.length > 0) {
       const existingId = existingRows[0].id;
+      // Re-inviting refreshes the existing invitation but keeps its id: the
+      // pending member row created with it (wizard invites, Team invites)
+      // references it via wg_project_members.invitation_id, so changing the
+      // primary key failed with a foreign-key error (500).
+      const { id: _freshToken, ...refreshedInvitation } = invitationData;
       const { data, error } = await db()
         .from("wg_project_invitations")
-        .update(invitationData)
+        .update(refreshedInvitation)
         .eq("id", existingId)
         .select("*")
         .single();
@@ -630,9 +635,18 @@ invitationsRouter.post("/:token/accept", async (c) => {
       const { data, error: memberLookupError } = await query;
       if (memberLookupError) throw memberLookupError;
       if (data) {
+        // A wizard placeholder already sits in the party the owner drew it in
+        // (e.g. a subcontractor's worker). A plain invitation carries the
+        // INVITER's scope; overwriting the placeholder's scope moved the
+        // subcontractor's worker into the agency's scope, so they read the
+        // agency roster. Keep the placeholder's party unless the invitation
+        // explicitly targets a party.
+        const keepPlaceholderScope = !invitation.party_graph_node_id
+          && typeof data.scope === "string" && data.scope.trim()
+          && typeof data.graph_node_id === "string" && data.graph_node_id.trim();
         const { data: updatedMember, error: updateError } = await db()
           .from("wg_project_members")
-          .update(memberBase)
+          .update(keepPlaceholderScope ? { ...memberBase, scope: data.scope } : memberBase)
           .eq("id", data.id)
           .select("*")
           .single();
