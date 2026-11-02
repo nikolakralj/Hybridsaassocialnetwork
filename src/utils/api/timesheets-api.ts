@@ -103,9 +103,18 @@ export async function saveTimesheetWeek(
         throw new Error(timesheetLockMessage(existing.status));
       }
 
-      const { error } = await supabase
-        .from('wg_timesheet_weeks')
-        .upsert(row, { onConflict: 'id' });
+      // Update-or-insert instead of upsert: ON CONFLICT DO UPDATE needs SELECT
+      // on every column it writes (Postgres reads EXCLUDED.*), and migration
+      // 037 withholds SELECT on `data` from authenticated users. A plain
+      // UPDATE/INSERT needs only the write grant plus SELECT on `id`.
+      const { error } = existing
+        ? await supabase
+          .from('wg_timesheet_weeks')
+          .update({ data: row.data, updated_at: row.updated_at, ...(row.project_id ? { project_id: row.project_id } : {}) })
+          .eq('id', rowId)
+        : await supabase
+          .from('wg_timesheet_weeks')
+          .insert(row);
 
       if (!error) return { weekStart, ...row };
       if (isTimesheetLockError(error)) {

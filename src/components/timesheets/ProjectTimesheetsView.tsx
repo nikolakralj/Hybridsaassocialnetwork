@@ -256,10 +256,18 @@ export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped 
     if (!serverScoped || !projectId) return;
     let cancelled = false;
     (async () => {
-      const { data } = await (timesheetSupabase as any)
-        .from('approval_records')
+      // Migration 037 withholds the raw snapshot column; its view returns the
+      // caller's redacted copy. Older databases only have the table.
+      let { data, error } = await (timesheetSupabase as any)
+        .from('wg_approval_records_visible')
         .select('subject_snapshot')
         .eq('project_id', projectId);
+      if (error) {
+        ({ data } = await (timesheetSupabase as any)
+          .from('approval_records')
+          .select('subject_snapshot')
+          .eq('project_id', projectId));
+      }
       if (cancelled || !Array.isArray(data)) return;
       data.forEach((row: any) => {
         const snap = row?.subject_snapshot || {};
