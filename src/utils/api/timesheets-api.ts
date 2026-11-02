@@ -102,7 +102,7 @@ export async function saveTimesheetWeek(
       // 037 withholds SELECT on `data` from authenticated users. A plain
       // UPDATE/INSERT needs only the write grant plus SELECT on `id`.
       const { error } = existing
-        ? await supabase
+        ? await (supabase as any)
           .from('wg_timesheet_weeks')
           .update({ data: row.data, updated_at: row.updated_at, ...(row.project_id ? { project_id: row.project_id } : {}) })
           .eq('id', rowId)
