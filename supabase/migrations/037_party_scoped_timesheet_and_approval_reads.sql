@@ -290,12 +290,57 @@ GRANT SELECT (
 ) ON public.wg_timesheet_weeks TO authenticated;
 
 REVOKE SELECT ON public.approval_records FROM anon, authenticated;
+REVOKE SELECT (approver_user_id, approver_name, approver_node_id)
+  ON public.approval_records FROM anon, authenticated;
 GRANT SELECT (
   id, project_id, subject_type, subject_id,
-  approver_user_id, approver_name, approver_node_id,
   approval_layer, status, notes, submitted_at, decided_at,
   graph_version_id, created_at, updated_at, submitter_user_id
 ) ON public.approval_records TO authenticated;
+
+-- The submitter may read later layers, but not the party or person beyond
+-- one hop. Those three columns stay off the base table and come back here
+-- only when the approver's party is inside the caller's sight.
+CREATE OR REPLACE FUNCTION public.wg_approval_approver_for_caller(p_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path TO public
+AS $$
+DECLARE
+  v_row public.approval_records%ROWTYPE;
+  v_party text;
+  v_visible text[];
+BEGIN
+  SELECT * INTO v_row FROM public.approval_records WHERE id = p_id;
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+  v_visible := public.wg_caller_visible_party_ids(v_row.project_id);
+  v_party := CASE WHEN v_row.approver_node_id = ANY(v_visible) THEN v_row.approver_node_id END;
+  IF v_party IS NULL THEN
+    SELECT COALESCE(n->'data'->>'partyId', n->'data'->>'orgId') INTO v_party
+    FROM public.wg_projects p
+    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.graph->'nodes', '[]'::jsonb)) n
+    WHERE p.id = v_row.project_id
+      AND n->>'type' = 'person'
+      AND (
+        n->>'id' = v_row.approver_node_id
+        OR n->'data'->>'userId' = v_row.approver_user_id
+      )
+    LIMIT 1;
+  END IF;
+  IF v_party IS NULL OR NOT (v_party = ANY(v_visible)) THEN
+    RETURN jsonb_build_object('approver_user_id', NULL, 'approver_name', NULL, 'approver_node_id', NULL);
+  END IF;
+  RETURN jsonb_build_object(
+    'approver_user_id', v_row.approver_user_id,
+    'approver_name', v_row.approver_name,
+    'approver_node_id', v_row.approver_node_id
+  );
+END;
+$$;
 
 CREATE OR REPLACE VIEW public.wg_timesheet_weeks_visible
 WITH (security_invoker = true) AS
@@ -317,24 +362,27 @@ FROM public.wg_timesheet_weeks;
 CREATE OR REPLACE VIEW public.wg_approval_records_visible
 WITH (security_invoker = true) AS
 SELECT
-  id,
-  project_id,
-  subject_type,
-  subject_id,
-  approver_user_id,
-  approver_name,
-  approver_node_id,
-  approval_layer,
-  status,
-  notes,
-  submitted_at,
-  decided_at,
-  graph_version_id,
-  created_at,
-  updated_at,
-  submitter_user_id,
-  public.wg_redacted_approval_snapshot(id) AS subject_snapshot
-FROM public.approval_records;
+  a.id,
+  a.project_id,
+  a.subject_type,
+  a.subject_id,
+  redacted.fields->>'approver_user_id' AS approver_user_id,
+  redacted.fields->>'approver_name' AS approver_name,
+  redacted.fields->>'approver_node_id' AS approver_node_id,
+  a.approval_layer,
+  a.status,
+  a.notes,
+  a.submitted_at,
+  a.decided_at,
+  a.graph_version_id,
+  a.created_at,
+  a.updated_at,
+  a.submitter_user_id,
+  public.wg_redacted_approval_snapshot(a.id) AS subject_snapshot
+FROM public.approval_records a
+CROSS JOIN LATERAL (
+  SELECT public.wg_approval_approver_for_caller(a.id) AS fields
+) redacted;
 
 GRANT SELECT ON public.wg_timesheet_weeks_visible TO authenticated;
 GRANT SELECT ON public.wg_approval_records_visible TO authenticated;
@@ -351,6 +399,8 @@ GRANT EXECUTE ON FUNCTION public.wg_user_can_read_approval_record(text) TO authe
 REVOKE EXECUTE ON FUNCTION public.wg_redact_timesheet_data(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.wg_timesheet_data_for_caller(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wg_redacted_approval_snapshot(text) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.wg_approval_approver_for_caller(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.wg_approval_approver_for_caller(text) TO authenticated;
 
 COMMENT ON VIEW public.wg_timesheet_weeks_visible IS
   'Timesheet weeks the caller may see. data is full for the worker and their party operators, and hours-only for an assigned approver from another party.';

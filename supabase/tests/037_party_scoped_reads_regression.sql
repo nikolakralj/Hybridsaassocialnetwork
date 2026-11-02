@@ -189,6 +189,21 @@ BEGIN
     RAISE EXCEPTION 'week % after Nikola approved', decision->>'weekStatus';
   END IF;
 
+  -- The new layer names the client party. Rodman can read the row, not that party.
+  PERFORM public.wg_test_037_act_as('03700000-0000-4000-8000-0000000000b1');
+  SELECT COALESCE(string_agg(
+    COALESCE(approver_node_id, '') || ' ' || COALESCE(approver_name, '') || ' ' || COALESCE(approver_user_id, ''),
+    ' '
+  ), '') INTO blob
+  FROM public.wg_approval_records_visible
+  WHERE project_id = 'proj_reg_037';
+  IF blob NOT LIKE '%party_agency%' THEN
+    RAISE EXCEPTION 'Rodman lost the agency approver inside his hop: %', blob;
+  END IF;
+  IF blob LIKE '%party_client%' OR blob LIKE '%party_end%' OR blob LIKE '%03700000-0000-4000-8000-0000000000c1%' THEN
+    RAISE EXCEPTION 'Rodman saw an approver outside his hop: %', blob;
+  END IF;
+
   -- James sees the week that is now his, not Martin's, and not the contractor party id.
   PERFORM public.wg_test_037_act_as('03700000-0000-4000-8000-0000000000c1');
   SELECT count(*) INTO n FROM public.wg_timesheet_weeks_visible WHERE project_id = 'proj_reg_037';
