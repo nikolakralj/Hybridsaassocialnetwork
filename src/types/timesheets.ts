@@ -239,7 +239,7 @@ export function validateTimesheetWeek(
       if (date.getTime() > today.getTime()) {
         errors.push({
           code: 'FUTURE_DATE_HOURS',
-          message: `${day.day} is in the future and cannot be submitted.`,
+          message: `${day.day} ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} is in the future. Hours can be submitted once the day has passed.`,
           severity: 'error',
           day: day.day,
         });
