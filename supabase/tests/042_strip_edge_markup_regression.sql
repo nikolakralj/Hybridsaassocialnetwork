@@ -40,7 +40,7 @@ INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
     ),
     'edges', jsonb_build_array(
       jsonb_build_object('id', 'e_buy', 'source', 'party_contractor', 'target', 'party_agency', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 17.25, 'hourlyRate', 40)),
-      jsonb_build_object('id', 'e_sell', 'source', 'party_agency', 'target', 'party_client', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 22)),
+      jsonb_build_object('id', 'e_sell', 'source', 'party_agency', 'target', 'party_client', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 22, 'buyRate', 18)),
       jsonb_build_object('id', 'e_fund', 'source', 'party_client', 'target', 'party_agency', 'type', 'funds', 'data', jsonb_build_object('edgeType', 'funds', 'amount', 500))
     )
   ),
@@ -87,6 +87,7 @@ DECLARE
   scoped jsonb;
   sell_markup text;
   buy_markup text;
+  sell_buy_rate text;
 BEGIN
   PERFORM public.wg_test_042_act_as('04200000-0000-4000-8000-0000000000a1');
   scoped := public.wg_get_scoped_graph('proj_reg_042');
@@ -116,17 +117,26 @@ BEGIN
   ) IS DISTINCT FROM '40' THEN
     RAISE EXCEPTION 'agency finance lost the bill rate on the edge they buy';
   END IF;
+  IF (
+    SELECT e->'data'->>'buyRate' FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell'
+  ) IS DISTINCT FROM '18' THEN
+    RAISE EXCEPTION 'agency finance lost their own buyRate on the edge they sell';
+  END IF;
 
   PERFORM public.wg_test_042_act_as('04200000-0000-4000-8000-0000000000c1');
   scoped := public.wg_get_scoped_graph('proj_reg_042');
   SELECT e->'data'->>'markup' INTO sell_markup FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell';
+  SELECT e->'data'->>'buyRate' INTO sell_buy_rate FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell';
   IF sell_markup IS NOT NULL THEN
     RAISE EXCEPTION 'James saw the agency markup (%)', sell_markup;
+  END IF;
+  IF sell_buy_rate IS NOT NULL THEN
+    RAISE EXCEPTION 'James, the buyer, saw the agency buyRate (cost basis) on the edge he is billed on (%)', sell_buy_rate;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell') THEN
     RAISE EXCEPTION 'James could not see the edge he is billed on';
   END IF;
-  IF scoped::text LIKE '%17.25%' OR scoped::text LIKE '%22%' THEN
+  IF scoped::text LIKE '%17.25%' OR scoped::text LIKE '%22%' OR scoped::text LIKE '%buyRate%' THEN
     RAISE EXCEPTION 'James saw a markup figure: %', scoped->'edges';
   END IF;
 
@@ -137,7 +147,7 @@ BEGIN
   END IF;
 
   INSERT INTO wg_regression_042_results VALUES
-    ('markup_only_for_seller_finance', 'Agency finance keeps markup 22 on the edge they sell and does not see 17.25. Nikola as project owner, James, and Rodman do not see billing markup. A funding amount stays.');
+    ('markup_only_for_seller_finance', 'Agency finance keeps markup 22 and buyRate 18 on the edge they sell, keeps hourlyRate 40 and does not see markup 17.25 on the edge they buy. Nikola as project owner, James, and Rodman do not see billing markup. James (the buyer) does not see the agency''s buyRate either. A funding amount stays.');
 END $$;
 
 RESET ROLE;

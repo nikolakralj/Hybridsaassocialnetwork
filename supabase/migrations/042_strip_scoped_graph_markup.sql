@@ -99,7 +99,7 @@ BEGIN
       -- Margins are the seller's. Bill rates are shared by both signatories' finance.
       v_keys := CASE
         WHEN v_source_finance THEN ARRAY[]::text[]
-        WHEN v_target_finance THEN ARRAY['markup', 'margin', 'marginPercent', 'markupPercent', 'cost']
+        WHEN v_target_finance THEN ARRAY['markup', 'margin', 'marginPercent', 'markupPercent', 'cost', 'buyRate']
         ELSE ARRAY[
           'markup', 'margin', 'marginPercent', 'markupPercent', 'cost',
           'sellRate', 'buyRate', 'hourlyRate', 'dailyRate', 'fixedAmount',

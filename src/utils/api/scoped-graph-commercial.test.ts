@@ -9,7 +9,7 @@ describe('stripCommercialEdgeFields', () => {
       target: 'party_client',
       type: 'billsTo',
       markup: 22,
-      data: { edgeType: 'billsTo', markup: 22, label: 'Agency bills client' },
+      data: { edgeType: 'billsTo', markup: 22, buyRate: 18, rate: 50, label: 'Agency bills client' },
     },
     {
       id: 'bought',
@@ -37,7 +37,7 @@ describe('stripCommercialEdgeFields', () => {
       },
       edges,
     });
-    expect(stripped.edges[0].data).toMatchObject({ markup: 22, label: 'Agency bills client' });
+    expect(stripped.edges[0].data).toMatchObject({ markup: 22, buyRate: 18, rate: 50, label: 'Agency bills client' });
     expect(stripped.edges[1].data).toEqual({
       edgeType: 'billsTo',
       hourlyRate: 12.5,
@@ -59,5 +59,19 @@ describe('stripCommercialEdgeFields', () => {
     expect(stripped.edges[1].data?.hourlyRate).toBeUndefined();
     expect(stripped.edges[0].data?.edgeType).toBe('billsTo');
     expect(stripped.edges[2].data).toMatchObject({ amount: 500, label: 'Client funds agency' });
+  });
+
+  it('keeps the agreed rate for buyer finance but hides the seller buyRate and markup', () => {
+    const stripped = stripCommercialEdgeFields({
+      meta: {
+        viewerPartyIds: ['party_client'],
+        viewerOrgRole: 'org_finance',
+        viewerFinancePartyIds: ['party_client'],
+      },
+      edges,
+    });
+    expect(stripped.edges[0].data).toMatchObject({ rate: 50, label: 'Agency bills client' });
+    expect(stripped.edges[0].data?.markup).toBeUndefined();
+    expect(stripped.edges[0].data?.buyRate).toBeUndefined();
   });
 });

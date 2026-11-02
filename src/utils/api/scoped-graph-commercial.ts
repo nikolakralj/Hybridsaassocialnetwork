@@ -24,8 +24,8 @@ export interface CommercialEdge {
 }
 
 const BILLING_EDGE_TYPES = new Set(['billsTo', 'subcontracts', 'bills_to']);
-const SELLER_PRIVATE_KEYS = ['markup', 'margin', 'marginPercent', 'markupPercent', 'cost'] as const;
-const SHARED_TERM_KEYS = ['sellRate', 'buyRate', 'hourlyRate', 'dailyRate', 'fixedAmount', 'rate', 'amount', 'fee'] as const;
+const SELLER_PRIVATE_KEYS = ['markup', 'margin', 'marginPercent', 'markupPercent', 'cost', 'buyRate'] as const;
+const SHARED_TERM_KEYS = ['sellRate', 'hourlyRate', 'dailyRate', 'fixedAmount', 'rate', 'amount', 'fee'] as const;
 
 function edgeKind(edge: CommercialEdge): string {
   const dataType = edge.data && typeof edge.data.edgeType === 'string' ? edge.data.edgeType : '';
