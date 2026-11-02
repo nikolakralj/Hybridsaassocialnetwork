@@ -110,7 +110,12 @@ export async function listMyBillingOrganizations(): Promise<OrganizationBillingP
   const rpc = (supabase.rpc as unknown as (fn: string) => Promise<{ data: unknown; error: { message?: string } | null }>);
   // A project owner's own company may not have an organization row yet
   // (it used to be created only by "Set up employee"); create it first.
-  await rpc.call(supabase, 'wg_ensure_my_owner_organizations').catch(() => undefined);
+  // (The builder is PromiseLike only: no .catch(), so use try/catch.)
+  try {
+    await rpc.call(supabase, 'wg_ensure_my_owner_organizations');
+  } catch {
+    // Listing still works for organizations that already exist.
+  }
   const { data, error } = await rpc.call(supabase, 'wg_list_my_billing_organizations');
   if (error) throw new Error(error.message || 'Could not load company billing details.');
   return ((data as Array<Record<string, string | null>>) || []).map((row) => ({
