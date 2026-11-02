@@ -1491,6 +1491,8 @@ interface WorkGraphBuilderProps {
   asOf?: string;
   canEditGraph?: boolean;
   editablePartyIds?: string[];
+  /** Owner (or creator-org Editor): may add/remove organizations in Edit Supply Chain. */
+  canManageStructure?: boolean;
   /** Project Owner/Editor: the "Full project view" viewer shows the whole server-scoped graph. */
   allowFullProjectView?: boolean;
   currentViewer?: ViewerIdentity | null;
@@ -1504,6 +1506,7 @@ export function WorkGraphBuilder({
   initialConfig,
   canEditGraph = true,
   editablePartyIds = [],
+  canManageStructure = false,
   allowFullProjectView = false,
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
@@ -2376,6 +2379,7 @@ export function WorkGraphBuilder({
           initialParties={editableParties}
           initialProjectName={propProjectName || sessionStorage.getItem('currentProjectName') || ''}
           editablePartyIds={editablePartyIds}
+          canManageStructure={canManageStructure}
         />
       ) : null}
     </>

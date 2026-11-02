@@ -367,6 +367,12 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
+  // Adding/removing organizations mirrors the server rule: project owner, or
+  // an Editor of the creator (owner) organization.
+  const canManageStructure = canEditGraph && (
+    currentProjectRole === "Owner" ||
+    (currentProjectRole === "Editor" && !!ownerPartyId && currentMembership?.scope === ownerPartyId)
+  );
   const visibleTeamCount = dedupeTeamMembers(teamMembers).length;
   const teamButtonLabel = visibleTeamCount > 0 ? `Team (${visibleTeamCount})` : "Team";
   const allowedViewerIds = useMemo(
@@ -952,6 +958,7 @@ export function ProjectWorkspace({
                   asOf={asOf}
                   canEditGraph={canEditGraph}
                   editablePartyIds={editablePartyIds}
+                  canManageStructure={canManageStructure}
                   allowFullProjectView={canManageProject}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
