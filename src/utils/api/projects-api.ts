@@ -4,7 +4,7 @@
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
-import { mergeDirectoryProject } from './project-directory-cache';
+import { mergeDirectoryProject, omitCachedGraph, projectReadFromCache } from './project-directory-cache';
 import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
 const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at,require_purchase_order';
@@ -101,7 +101,7 @@ function readLocalProjects(): LocalProjectRecord[] {
 
 function readLocalProjectList() {
   return readLocalProjects()
-    .map((record) => record.project)
+    .map((record) => projectReadFromCache(record.project))
     .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .filter(Boolean);
 }
@@ -145,7 +145,7 @@ function writeLocalProjects(records: LocalProjectRecord[]) {
 
 function localListProjects() {
   return readLocalProjects()
-    .map((record) => record.project)
+    .map((record) => projectReadFromCache(record.project))
     .map((project) => withProjectSource(project, resolveStoredProjectSource(project, 'local')))
     .sort(sortProjects);
 }
@@ -153,7 +153,9 @@ function localListProjects() {
 function localGetProject(projectId: string) {
   const record = readLocalProjects().find((r) => r.project?.id === projectId);
   if (!record) throw new Error('Project not found');
-  return { project: record.project, members: record.members || [] };
+  // The project API is down. Return directory metadata only, never a cached
+  // unscoped graph that would bypass wg_get_scoped_graph.
+  return { project: projectReadFromCache(record.project), members: record.members || [] };
 }
 
 function buildLocalProjectStub(projectId: string) {
@@ -356,8 +358,8 @@ function mapSupabaseProjectRow(row: any) {
     updatedAt: row.updated_at,
     storageSource: 'cloud' as const,
   };
-  if (row.graph != null) mapped.graph = row.graph;
-  if (row.parties != null) mapped.parties = row.parties;
+  // Directory rows never carry graph or parties into the cache, even if a
+  // payload still has them. Those fields are read only via wg_get_scoped_graph.
   return mapped;
 }
 
@@ -700,7 +702,7 @@ export async function createProject(
     if (data?.project?.id) {
       const records = readLocalProjects().filter((r) => r.project?.id !== data.project.id);
       records.push({
-        project: { ...data.project, storageSource: 'cloud' as const },
+        project: omitCachedGraph({ ...data.project, storageSource: 'cloud' as const }),
         members: data.members || [],
       });
       writeLocalProjects(records);
