@@ -84,9 +84,9 @@ A worker with no rate on a hop is left out of that hop's invoice and reported by
 | 044 | `044_link_rates.sql`: table, helper, RLS | 018, 020, 024 |
 | 045 | `045_scoped_graph_approver_counterparty.sql`: renames the current `wg_get_scoped_graph` to `wg_get_scoped_graph_pre045` and wraps it; adds org_approver one-hop counterparties | 025, 031 |
 | 046 | `046_invoice_party_commercial_read.sql`: invoice SELECT for buyer/seller decision-makers | 044 |
+| 047 | `047_invoice_hop_pricing_once_per_seller.sql`: replaces 041's invoice trigger function. It adds per-hop pricing from wg_link_rates (the legacy per-person rate applies only on the final hop), "already billed" per seller, a seller-must-be-on-the-worker's-chain check, and worker names on lines. Party decision-makers may invoice from their own party. It refuses to apply without 041 and 044 | 041, 044 |
 | 048 | `048_invoice_buyer_sees_issued_only.sql`: `issued_at` + trigger; buyer-side invoice read only after issue | 046 |
 | 049 | `049_repair_member_scope_from_graph.sql`: one-off data repair of member scopes that differ from their graph person's company (live: 1 row, test user Will) | — |
-| 047 | `047_invoice_hop_pricing_once_per_seller.sql`: replaces 041's invoice trigger function. It adds per-hop pricing from wg_link_rates (the legacy per-person rate applies only on the final hop), "already billed" per seller, a seller-must-be-on-the-worker's-chain check, and worker names on lines. Party decision-makers may invoice from their own party. It refuses to apply without 041 and 044 | 041, 044 |
 
 Verification: a local PostgreSQL 18 (embedded-postgres) with Supabase auth stubs, all repo migrations plus 044–047 applied, and a seeded Vis-shaped project. SQL assertions run per user (`request.jwt.claim.sub` + `SET ROLE authenticated`). Front-end logic gets vitest tests. Live checks use the 5 vis accounts for everything that needs no new migration or deploy.
 
