@@ -68,7 +68,7 @@ interface ProjectConfigurationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   project?: ProjectConfiguration; // For editing existing project
-  onSave: (project: ProjectConfiguration) => void;
+  onSave: (project: ProjectConfiguration) => void | Promise<void>;
 }
 
 export function ProjectConfigurationDrawer({

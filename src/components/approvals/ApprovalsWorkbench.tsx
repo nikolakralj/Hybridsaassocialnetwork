@@ -112,7 +112,7 @@ interface ApprovalsWorkbenchProps {
 type WorkbenchStatus = "all" | "pending" | "approved" | "rejected";
 type SortOrder = "newest" | "oldest" | "priority";
 type NameDirEntry = { name?: string; type?: string; orgId?: string };
-type ApprovalDirParty = { id: string; name?: string };
+type ApprovalDirParty = { id: string; name?: string; people?: Array<{ id: string }> };
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",

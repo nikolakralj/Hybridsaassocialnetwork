@@ -8,7 +8,6 @@ import {
   Save,
   Loader2,
   Search,
-  Shield,
   Eye,
   EyeOff,
   ZoomIn,
