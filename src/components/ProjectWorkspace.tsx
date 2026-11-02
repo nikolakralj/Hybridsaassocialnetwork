@@ -858,7 +858,7 @@ export function ProjectWorkspace({
 
             {/* Tab Content */}
             <TabsContent value="overview" className="space-y-6">
-              <OverviewModule projectName={projectName} />
+              <OverviewModule projectName={projectName} teamSize={teamMembers.length} />
             </TabsContent>
 
             <TabsContent value="project-graph" className="space-y-6">
@@ -871,6 +871,7 @@ export function ProjectWorkspace({
                   asOf={asOf}
                   canEditGraph={canEditGraph}
                   editablePartyIds={editablePartyIds}
+                  allowFullProjectView={canManageProject}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
                     setWorkspaceViewer(viewer);
@@ -1005,7 +1006,7 @@ export function ProjectWorkspace({
 
 // Module Components (placeholders for now)
 
-function OverviewModule({ projectName }: { projectName: string }) {
+function OverviewModule({ projectName, teamSize }: { projectName: string; teamSize: number }) {
   const store = useTimesheetStore();
 
   // Derive real stats from timesheet store
@@ -1030,7 +1031,7 @@ function OverviewModule({ projectName }: { projectName: string }) {
         <p className="text-sm text-muted-foreground mb-2">Hours This Month</p>
         <p className="text-3xl font-semibold mb-1">{totalHours}h</p>
         <p className="text-sm text-muted-foreground">
-          {approvedHours}h approved · {uniquePeople} {uniquePeople === 1 ? 'person' : 'people'}
+          {approvedHours}h approved · {uniquePeople} {uniquePeople === 1 ? 'person' : 'people'} logged time
         </p>
       </Card>
 
@@ -1072,7 +1073,7 @@ function OverviewModule({ projectName }: { projectName: string }) {
           </div>
           <div>
             <p className="text-muted-foreground">Team Size</p>
-            <p className="font-semibold text-lg">{uniquePeople}</p>
+            <p className="font-semibold text-lg">{teamSize}</p>
           </div>
         </div>
       </Card>

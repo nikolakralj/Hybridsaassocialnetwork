@@ -1465,6 +1465,8 @@ interface WorkGraphBuilderProps {
   asOf?: string;
   canEditGraph?: boolean;
   editablePartyIds?: string[];
+  /** Project Owner/Editor: the "Full project view" viewer shows the whole server-scoped graph. */
+  allowFullProjectView?: boolean;
   currentViewer?: ViewerIdentity | null;
   onViewerChange?: (viewer: ViewerIdentity) => void;
 }
@@ -1476,6 +1478,7 @@ export function WorkGraphBuilder({
   initialConfig,
   canEditGraph = true,
   editablePartyIds = [],
+  allowFullProjectView = false,
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
 }: WorkGraphBuilderProps) {
@@ -1959,8 +1962,8 @@ export function WorkGraphBuilder({
 
   // Compute scoped view
   const scopedView = useMemo(
-    () => computeScopedView(currentViewer, allNodes, allEdges),
-    [currentViewer, allNodes, allEdges]
+    () => computeScopedView(currentViewer, allNodes, allEdges, 3, ALLOW_GRAPH_ADMIN_VIEW || allowFullProjectView),
+    [currentViewer, allNodes, allEdges, allowFullProjectView]
   );
 
   // Filter inactive people for selected month

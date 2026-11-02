@@ -281,12 +281,17 @@ export function computeScopedView(
   viewer: ViewerIdentity,
   allNodes: BaseNode[],
   allEdges: BaseEdge[],
-  maxHops: number = 3
+  maxHops: number = 3,
+  // Full view of the (already server-scoped) graph for project managers.
+  // ProjectWorkspace only offers the "Full project view" viewer to Owners and
+  // Editors; without this the admin viewer matched no node and the graph
+  // rendered "0 people | 0 orgs" for a manager.
+  allowFullView: boolean = ALLOW_GRAPH_ADMIN_VIEW
 ): ScopedGraphView {
   // Admin sees everything
   // hopDistance is set to 99 for admin view so that isSelf (hopDistance===0)
   // does NOT trigger the "YOU" badge on every org node — admin has no single "home" org.
-  if (viewer.type === 'admin' && ALLOW_GRAPH_ADMIN_VIEW) {
+  if (viewer.type === 'admin' && allowFullView) {
     return {
       viewer,
       nodes: allNodes.map(n => ({
