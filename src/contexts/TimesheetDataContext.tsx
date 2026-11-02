@@ -968,7 +968,9 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         const approvalSnapshot: ApprovalSubjectSnapshot = {
           kind: 'timesheet',
           title: `${submitterName} · ${normalizedWeek.weekLabel}`,
-          summary: `${submitterOrg || 'Unknown organization'} · ${normalizedWeek.weekLabel} · ${sumWeekHours(normalizedWeek)}h`,
+          // Never bake "Unknown organization" into the stored record; the
+          // approvals view resolves the org from the project graph instead.
+          summary: [submitterOrg, normalizedWeek.weekLabel, `${sumWeekHours(normalizedWeek)}h`].filter(Boolean).join(' · '),
           submitterId: personId,
           submitterName,
           submitterOrg,

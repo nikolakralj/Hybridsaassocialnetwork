@@ -136,7 +136,10 @@ function resolveSubmitterOrgName(
   if (!projectId || !submitterId) return undefined;
   const nameDir = nameDirectory[projectId] || {};
   const approvalDir = approvalDirectory[projectId] || [];
-  const orgId = nameDir[submitterId]?.orgId;
+  const orgId = nameDir[submitterId]?.orgId
+    // Person nodes added by "Set up employee" are linked by partyId only, so the
+    // name directory may have no orgId for them; the party's people list does.
+    || approvalDir.find((party) => party.people?.some((person) => person.id === submitterId))?.id;
   if (!orgId) return undefined;
   return approvalDir.find((party) => party.id === orgId)?.name || nameDir[orgId]?.name || orgId;
 }
