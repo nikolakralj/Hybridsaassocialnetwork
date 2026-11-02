@@ -15,12 +15,17 @@ import { ProjectConfigurationDrawer } from './ProjectConfigurationDrawer';
 import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
 import { ProjectInviteMemberDialog } from './ProjectInviteMemberDialog';
 import { ProjectInvitationsPanel } from './ProjectInvitationsPanel';
+// The token routes (invitations-api) are the ones that link a party-approver
+// invitation to its graph person; the legacy /api/invitations/:id/accept route
+// only marks the member accepted, so the approval chain never reached them.
+import {
+  acceptProjectInvitationToken,
+  declineProjectInvitationToken,
+} from '../../utils/api/project-invitations';
 import { useAuth } from '../../contexts/AuthContext';
 import { getInvitableRolesForRole } from '../../utils/collaboration/permissions';
 import {
   addProjectMember,
-  acceptProjectInvitation,
-  declineProjectInvitation,
   listProjectInvitations,
   listProjects,
   deleteProject as deleteProjectApi,
@@ -249,7 +254,7 @@ export function ProjectsListView() {
 
   const handleAcceptInvitation = async (invitationId: string) => {
     try {
-      const result = await acceptProjectInvitation(invitationId, accessToken);
+      const result = await acceptProjectInvitationToken(invitationId, accessToken);
       toast.success('Invitation accepted', {
         description: result.project?.name
           ? `${result.project.name} is now in your projects list.`
@@ -263,7 +268,7 @@ export function ProjectsListView() {
 
   const handleDeclineInvitation = async (invitationId: string) => {
     try {
-      await declineProjectInvitation(invitationId, accessToken);
+      await declineProjectInvitationToken(invitationId, accessToken);
       toast.success('Invitation declined');
       await loadProjects();
     } catch (error: any) {
