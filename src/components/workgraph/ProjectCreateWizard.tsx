@@ -305,7 +305,13 @@ export function ProjectCreateWizard({
           userId: person.id && person.id.match(/^[0-9a-f-]{36}$/) ? person.id : undefined,
           userName: person.name,
           userEmail: person.email,
-          role: (person.canApprove ? 'Editor' : 'Contributor') as ProjectRole,
+          // Approvers on the creator's own organization co-manage the project.
+          // Approvers of OTHER organizations (client, subcontractor) only
+          // approve: making them Editor gave them project-manager rights
+          // (full topology, graph edits, rate inserts via can_manage_project).
+          role: (person.canApprove
+            ? (party.isCreator ? 'Editor' : 'Commenter')
+            : 'Contributor') as ProjectRole,
           scope: party.id,
           graphNodeId: person.id,
         }))
