@@ -1,7 +1,59 @@
--- Transactional live-schema regression for migrations 029/030.
--- The final ROLLBACK guarantees that no fixture data survives.
+-- Transactional regression for migrations 029/030.
+-- The fixture is created inside this transaction. ROLLBACK drops it.
+-- It does not read a project that already exists in the database.
 
 BEGIN;
+
+INSERT INTO auth.users (
+  instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+  confirmation_token, email_change, email_change_token_new, recovery_token
+) VALUES
+  ((SELECT id FROM auth.instances LIMIT 1), 'a0300000-0000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'owner-030@example.test', '', NOW(),
+   '{"provider":"email","providers":["email"]}'::jsonb, '{"name":"Owner"}'::jsonb, NOW(), NOW(), '', '', '', ''),
+  ((SELECT id FROM auth.instances LIMIT 1), 'a0300000-0000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'member-030@example.test', '', NOW(),
+   '{"provider":"email","providers":["email"]}'::jsonb, '{"name":"Member"}'::jsonb, NOW(), NOW(), '', '', '', '');
+
+INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
+  'proj_reg_030', 'Synthetic 030 project', 'a0300000-0000-4000-8000-00000000000a',
+  jsonb_build_object(
+    'nodes', jsonb_build_array(
+      jsonb_build_object('id', 'party_030_seller', 'type', 'party', 'data', jsonb_build_object('name', 'Seller', 'partyType', 'agency')),
+      jsonb_build_object('id', 'party_030_buyer', 'type', 'party', 'data', jsonb_build_object('name', 'Buyer', 'partyType', 'client')),
+      jsonb_build_object('id', 'person_030', 'type', 'person', 'data', jsonb_build_object(
+        'name', 'Member', 'email', 'member-030@example.test', 'partyId', 'party_030_seller',
+        'userId', 'a0300000-0000-4000-8000-00000000000b'
+      )),
+      jsonb_build_object('id', 'person_030_owner', 'type', 'person', 'data', jsonb_build_object(
+        'name', 'Owner', 'email', 'owner-030@example.test', 'partyId', 'party_030_seller',
+        'userId', 'a0300000-0000-4000-8000-00000000000a'
+      ))
+    ),
+    'edges', jsonb_build_array(
+      jsonb_build_object('id', 'e_030', 'source', 'party_030_seller', 'target', 'party_030_buyer', 'type', 'billsTo')
+    )
+  ),
+  '[]'::jsonb
+);
+
+INSERT INTO public.wg_organizations (id, name, owner_user_id, created_by)
+VALUES ('org_030', 'Seller', 'a0300000-0000-4000-8000-00000000000a', 'a0300000-0000-4000-8000-00000000000a');
+
+INSERT INTO public.wg_project_organizations (
+  id, project_id, organization_id, graph_node_id, party_role, status, accepted_at
+) VALUES (
+  'porg_030', 'proj_reg_030', 'org_030', 'party_030_seller', 'agency', 'active', NOW()
+);
+
+INSERT INTO public.wg_project_members (
+  id, project_id, user_id, user_name, user_email, role, scope, graph_node_id, invited_by, accepted_at
+) VALUES
+  ('mem_030_owner', 'proj_reg_030', 'a0300000-0000-4000-8000-00000000000a',
+   'Owner', 'owner-030@example.test', 'Owner', 'party_030_seller', 'person_030_owner',
+   'a0300000-0000-4000-8000-00000000000a', NOW()),
+  ('mem_030_member', 'proj_reg_030', 'a0300000-0000-4000-8000-00000000000b',
+   'Member', 'member-030@example.test', 'Contributor', 'party_030_seller', 'person_030',
+   'a0300000-0000-4000-8000-00000000000a', NOW());
 
 CREATE TEMP TABLE wg_regression_fixture ON COMMIT DROP AS
 SELECT
@@ -43,13 +95,7 @@ LEFT JOIN public.wg_project_organizations AS owner_project_org
   ON owner_project_org.project_id = project.id
  AND owner_project_org.graph_node_id = owner_identity.scope
  AND owner_project_org.status <> 'removed'
-WHERE EXISTS (
-  SELECT 1
-  FROM jsonb_array_elements(COALESCE(project.graph->'nodes', '[]'::jsonb)) AS party
-  WHERE party->>'type' = 'party'
-)
-ORDER BY project.created_at
-LIMIT 1;
+WHERE project.id = 'proj_reg_030';
 
 DO $$
 DECLARE
@@ -137,7 +183,7 @@ BEGIN
     status, created_by
   ) VALUES (
     'inv_regression_030', fixture.project_id, 'REGRESSION-030',
-    fixture.party_graph_node_id, fixture.party_graph_node_id,
+    'party_030_seller', 'party_030_buyer',
     CURRENT_DATE, CURRENT_DATE + 14, '[]'::jsonb, 0, 0, 0,
     'draft', fixture.owner_id
   );
