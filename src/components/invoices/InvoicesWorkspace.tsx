@@ -66,6 +66,9 @@ export type InvoiceDraft = {
   /** All timesheet keys covered by this invoice (consolidated invoices span several weeks/people). */
   timesheetIds?: string[];
   lineItems?: InvoiceLineItem[];
+  /** Graph party ids of seller/buyer. Invoice ACL (wg_invoices RLS) is keyed on these. */
+  fromPartyId?: string | null;
+  toPartyId?: string | null;
   fromPartyName?: string | null;
   toPartyName?: string | null;
   fromAddress?: string | null;
@@ -663,6 +666,8 @@ export function buildConsolidatedDraft(
     rate: 0, // multi-line invoice: pricing lives on the per-week lines
     amount: totalAmount,
     currency,
+    fromPartyId: group.sellerId || perWeek[0].fromPartyId || null,
+    toPartyId: group.buyerId || perWeek[0].toPartyId || null,
     fromPartyName: group.sellerName || perWeek[0].fromPartyName,
     toPartyName: group.buyerName || perWeek[0].toPartyName || clientName,
     timesheetKey: perWeek[0].timesheetKey || makeTimesheetKey(perWeek[0].personId, perWeek[0].weekStart),
@@ -712,8 +717,12 @@ function toInvoicePayload(invoice: InvoiceDraft) {
     status: apiStatus,
     notes: invoice.notes,
     lineItemTemplateDescription: invoice.lineItemTemplateDescription,
-    fromPartyId: partyIds.fromPartyId,
-    toPartyId: partyIds.toPartyId,
+    // Each invoice keeps its own seller/buyer parties (e.g. Sub -> Agency).
+    // Falling back to the project-wide agency -> client pair for every invoice
+    // stored a subcontractor's invoice as addressed to the end client, which
+    // is what wg_invoices RLS uses to decide who may read it.
+    fromPartyId: invoice.fromPartyId || partyIds.fromPartyId,
+    toPartyId: invoice.toPartyId || partyIds.toPartyId,
     fromPartyName: invoice.fromPartyName || partyIds.fromPartyName || invoice.projectName,
     toPartyName: invoice.toPartyName || partyIds.toPartyName || invoice.clientName,
     fromAddress: invoice.fromAddress ?? undefined,
@@ -785,6 +794,8 @@ function normalizePersistedInvoice(
     syncState,
     timesheetKey,
     lineItems: Array.isArray(invoice.lineItems) ? invoice.lineItems : [],
+    fromPartyId: invoice.fromPartyId || null,
+    toPartyId: invoice.toPartyId || null,
     fromPartyName: invoice.fromPartyName ?? null,
     toPartyName: invoice.toPartyName ?? null,
     fromAddress: invoice.fromAddress ?? null,
