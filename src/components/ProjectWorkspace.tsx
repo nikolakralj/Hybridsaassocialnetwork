@@ -976,6 +976,7 @@ export function ProjectWorkspace({
                     name: effectiveViewer.name,
                     orgId: effectiveViewer.orgId,
                   } : undefined}
+                  serverScoped={!canManageProject}
                 />
               </Suspense>
             </TabsContent>
