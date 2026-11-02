@@ -455,7 +455,7 @@ const MOCK_MESSAGES: MessagePreview[] = [
 // Mock Data - Insights (dynamically generated from real data)
 // ============================================================================
 
-function generateInsights(workStats: WorkStats): Insight[] {
+export function generateInsights(workStats: WorkStats): Insight[] {
   const insights: Insight[] = [];
 
   const approvedHours = workStats.hours.approved || 0;
