@@ -6,7 +6,7 @@ import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info'
 import { createClient } from '../supabase/client';
 import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
-const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at';
+const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at,require_purchase_order';
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const LOCAL_PROJECTS_KEY = 'wg-local-projects-v1';
@@ -338,7 +338,7 @@ interface SupabaseProjectInput {
 }
 
 function mapSupabaseProjectRow(row: any) {
-  return {
+  const mapped: Record<string, any> = {
     id: row.id,
     name: row.name,
     description: row.description || '',
@@ -351,12 +351,15 @@ function mapSupabaseProjectRow(row: any) {
     status: row.status,
     supplyChainStatus: row.supply_chain_status,
     ownerId: row.owner_id,
-    parties: row.parties || null,
-    graph: row.graph || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     storageSource: 'cloud' as const,
   };
+  // Directory reads omit graph and parties. Only keep them when a payload
+  // actually contains them, so a metadata refresh does not wipe a cached graph.
+  if (row.graph != null) mapped.graph = row.graph;
+  if (row.parties != null) mapped.parties = row.parties;
+  return mapped;
 }
 
 function cacheCloudProjectList(projects: Record<string, any>[]) {
@@ -450,8 +453,8 @@ async function supabaseListProjects(accessToken?: string | null) {
   const projectIds = new Set<string>();
 
   const { data: ownedProjects, error: ownedError } = await supabase
-    .from('wg_projects')
-    .select(PROJECT_METADATA_COLUMNS)
+    .from('wg_projects_directory')
+    .select('*')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false });
 
@@ -481,8 +484,8 @@ async function supabaseListProjects(accessToken?: string | null) {
   if (ids.length === 0) return [];
 
   const { data: projects, error: projectsError } = await supabase
-    .from('wg_projects')
-    .select(PROJECT_METADATA_COLUMNS)
+    .from('wg_projects_directory')
+    .select('*')
     .in('id', ids)
     .order('updated_at', { ascending: false });
 
@@ -736,7 +739,7 @@ async function supabaseUpdateProject(projectId: string, updates: Record<string, 
     .from('wg_projects')
     .update(dbUpdates)
     .eq('id', projectId)
-    .select()
+    .select(PROJECT_METADATA_COLUMNS)
     .single();
   if (error) throw new Error(`Failed to update project in DB: ${error.message}`);
   const mapped = mapSupabaseProjectRow(data);
