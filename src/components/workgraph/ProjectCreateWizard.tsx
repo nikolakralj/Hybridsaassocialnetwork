@@ -396,6 +396,20 @@ export function ProjectCreateWizard({
     'review': true,
   };
 
+  // Tell the user why Next is disabled instead of a silent grey button.
+  const nextBlockedReason: string | null = (() => {
+    if (canProceed[step]) return null;
+    if (step === 'basic') {
+      const missing = [!name.trim() ? 'a project name' : null, !startDate ? 'a start date' : null].filter(Boolean);
+      return missing.length ? `Add ${missing.join(' and ')} to continue.` : null;
+    }
+    if (step === 'supply-chain') {
+      if (parties.length < 1) return 'Add at least one party to continue.';
+      return 'Give every party a name to continue.';
+    }
+    return null;
+  })();
+
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
@@ -471,8 +485,13 @@ export function ProjectCreateWizard({
               </Button>
             )}
             <div className="flex-1" />
+            {currentStepIndex < steps.length - 1 && nextBlockedReason ? (
+              <p className="m-0 self-center text-xs text-amber-700 dark:text-amber-400" role="status">
+                {nextBlockedReason}
+              </p>
+            ) : null}
             {currentStepIndex < steps.length - 1 ? (
-              <Button size="sm" className="px-4" onClick={handleNext} disabled={!canProceed[step]}>
+              <Button size="sm" className="px-4" onClick={handleNext} disabled={!canProceed[step]} title={nextBlockedReason || undefined}>
                 Next <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : (
