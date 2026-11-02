@@ -450,9 +450,14 @@ invitationsRouter.post("/", async (c) => {
     let invitation: any;
     if (existingRows && existingRows.length > 0) {
       const existingId = existingRows[0].id;
+      // Re-inviting refreshes the existing invitation but keeps its id: the
+      // pending member row created with it (wizard invites, Team invites)
+      // references it via wg_project_members.invitation_id, so changing the
+      // primary key failed with a foreign-key error (500).
+      const { id: _freshToken, ...refreshedInvitation } = invitationData;
       const { data, error } = await db()
         .from("wg_project_invitations")
-        .update(invitationData)
+        .update(refreshedInvitation)
         .eq("id", existingId)
         .select("*")
         .single();
