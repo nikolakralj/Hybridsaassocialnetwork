@@ -127,6 +127,18 @@ function collectWorkers(
     });
   };
 
+  // When "Set up employee" links a real account it adds a new person node; the
+  // wizard's placeholder node for the same email stays behind with no hours.
+  // Hide that placeholder so it doesn't show up as a second, never-ready worker.
+  const isUuidLike = (value: unknown) =>
+    typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const linkedEmails = new Set(
+    nodes
+      .filter((node) => node.type === 'person' && (isUuidLike(node.data?.userId) || isUuidLike(node.id)))
+      .map((node) => String(node.data?.email || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+
   nodes.forEach((node) => {
     if (node.type !== 'person') return;
     const orgId = personToOrg.get(node.id) || node.data?.partyId || node.data?.orgId;
@@ -134,6 +146,9 @@ function collectWorkers(
     const onClientParty = orgId ? partyType.get(orgId) === 'client' : false;
     const hasTimesheets = timesheetIds.has(node.id) || [...(aliasesByGraphId.get(node.id) || [])].some((alias) => timesheetIds.has(alias));
     if (!hasTimesheets && (approverOnly || onClientParty)) return;
+    const email = String(node.data?.email || '').trim().toLowerCase();
+    const isLinked = isUuidLike(node.data?.userId) || isUuidLike(node.id);
+    if (!hasTimesheets && !isLinked && email && linkedEmails.has(email)) return;
     addWorker(node.id, usablePersonName(nameDirectory[node.id]?.name || node.data?.name), orgId);
   });
 
