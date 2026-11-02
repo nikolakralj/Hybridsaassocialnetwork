@@ -663,7 +663,27 @@ export async function createProject(
       const records = readLocalProjects().filter((r) => r.project?.id !== localId);
       records.push({ project: createdProject, members: [] });
       writeLocalProjects(records);
-      return { project: createdProject, members: [] };
+
+      // People entered in the wizard get a real invitation, like people added
+      // later (Team > Invite, Edit Supply Chain). The server upgrades the
+      // placeholder row written above instead of adding a second one.
+      const ownerEmail = (project.ownerEmail || '').trim().toLowerCase();
+      const toInvite = (project.members || []).filter((m) => {
+        const email = (m.userEmail || '').trim().toLowerCase();
+        return !m.userId && /.+@.+\..+/.test(email) && email !== ownerEmail;
+      });
+      const inviteResults = await Promise.allSettled(toInvite.map((m) => addProjectMember(localId, {
+        userName: m.userName,
+        userEmail: m.userEmail,
+        role: m.role,
+        scope: m.scope ?? null,
+        graphNodeId: m.graphNodeId ?? null,
+        canApprove: m.canApprove === true,
+      }, accessToken)));
+      const inviteFailures = toInvite
+        .filter((_, index) => inviteResults[index].status === 'rejected')
+        .map((m) => m.userName || m.userEmail || '');
+      return { project: createdProject, members: [], invited: toInvite.length - inviteFailures.length, inviteFailures };
     } catch (dbError: any) {
       // Surface the real DB error instead of silently creating a local-only project.
       // The user needs to know *why* the cloud write failed (RLS? schema? auth?) so
