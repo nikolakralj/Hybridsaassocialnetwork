@@ -825,7 +825,7 @@ function formatMonthKeyForInvoice(invoice: Pick<InvoiceDraft, 'weekStart' | 'dat
 export function InvoicesWorkspace({
   projectId,
   projectName,
-  canGenerateInvoices = false,
+  canGenerateInvoices: mayGenerateInvoices = false,
   billingPartyIds,
 }: {
   projectId: string;
@@ -851,6 +851,43 @@ export function InvoicesWorkspace({
   const [billingTemplates, setBillingTemplates] = useState<InvoiceTemplate[]>([]);
   const [selectedBillingTemplateId, setSelectedBillingTemplateId] = useState<string>('none');
   const [isTemplateBusy, setIsTemplateBusy] = useState(false);
+
+  // A company that sells to nobody on this project (the end client) cannot
+  // issue invoices here, even if it may approve: it only receives them. The
+  // database refuses such invoices too (wg_create_invoice / 047).
+  // null = still loading, 'unknown' = graph could not be read.
+  const [sellingPartyIds, setSellingPartyIds] = useState<Set<string> | 'unknown' | null>(null);
+  const billingPartyKey = billingPartyIds ? billingPartyIds.join('|') : '';
+  useEffect(() => {
+    let cancelled = false;
+    if (!mayGenerateInvoices || !billingPartyIds) {
+      setSellingPartyIds('unknown');
+      return;
+    }
+    setSellingPartyIds(null);
+    refreshBillingDirectories(projectId)
+      .then((directories) => {
+        if (cancelled) return;
+        const parties = directories.approvalDirectory as ChainParty[];
+        const known = new Set(parties.map((party) => party.id));
+        setSellingPartyIds(new Set(parties
+          .filter((party) => (party.billsTo || []).some((buyerId) => buyerId !== party.id && known.has(buyerId)))
+          .map((party) => party.id)));
+      })
+      .catch(() => {
+        if (!cancelled) setSellingPartyIds('unknown');
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, mayGenerateInvoices, billingPartyKey]);
+  const canGenerateInvoices = mayGenerateInvoices && (
+    !billingPartyIds
+    || sellingPartyIds === 'unknown'
+    || (sellingPartyIds !== null && billingPartyIds.some((partyId) => sellingPartyIds.has(partyId)))
+  );
+  // Buyer-only viewers (approvers of a company that issues nothing here) get
+  // the read-only list of invoices addressed to them.
+  const isBuyerOnly = mayGenerateInvoices && !!billingPartyIds && sellingPartyIds instanceof Set && !canGenerateInvoices;
 
   const currentProjectName = projectName || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectName') : null) || 'Project';
   const defaultClientName = useMemo(() => readClientName(projectId), [projectId]);
@@ -931,6 +968,11 @@ export function InvoicesWorkspace({
 
   const monthInvoices = useMemo(() => {
     return storedInvoices
+      // A draft is the seller's working copy. The buyer only ever sees issued
+      // invoices (RLS 048 enforces this; the UI does not rely on it).
+      .filter((invoice) => invoice.status !== 'draft'
+        || !billingPartyIds
+        || billingPartyIds.includes(invoice.fromPartyId))
       .map((invoice) => normalizePersistedInvoice(invoice, projectId, currentProjectName, defaultClientName, personNameLookup, weekLookup))
       .filter((invoice) => formatMonthKeyForInvoice(invoice) === monthKey)
       .sort((a, b) => {
@@ -938,7 +980,7 @@ export function InvoicesWorkspace({
         const bDate = new Date(b.weekStart || b.date || 0).getTime();
         return bDate - aDate;
       });
-  }, [currentProjectName, defaultClientName, monthKey, personNameLookup, projectId, storedInvoices, weekLookup]);
+  }, [billingPartyIds, currentProjectName, defaultClientName, monthKey, personNameLookup, projectId, storedInvoices, weekLookup]);
 
   const visibleInvoices = useMemo(() => {
     return monthInvoices
@@ -1063,12 +1105,21 @@ export function InvoicesWorkspace({
         `${item.sellerName || item.sellerId} → ${item.buyerName || item.buyerId} (${billingNameLookup[item.workerId]?.name || item.workerId})`
       ));
       toast.error(
-        `No rate on ${Array.from(new Set(described)).join(', ')}. Set the link rate on the Project Graph; those invoices were not created.`,
+        `No rate on ${Array.from(new Set(described)).join(', ')}. Those weeks were left out of the invoices; set the link rate on the Project Graph and generate again to bill them.`,
+        { duration: 9000 },
+      );
+    }
+    if (plan.ambiguous.length > 0) {
+      const described = plan.ambiguous.map((item) => (
+        `${billingNameLookup[item.workerId]?.name || item.workerId} (${item.partyName || item.partyId} bills more than one company)`
+      ));
+      toast.error(
+        `Cannot tell who buys ${Array.from(new Set(described)).join(', ')}, so those weeks were left out. Picking the buyer needs a per-worker link rate, which cannot be set in the app yet.`,
         { duration: 9000 },
       );
     }
     if (plan.groups.length === 0 && rateGate.weeks.length === 0) {
-      if (plan.missing.length === 0 && rateGate.missingRateNames.length === 0) {
+      if (plan.missing.length === 0 && plan.ambiguous.length === 0 && rateGate.missingRateNames.length === 0) {
         toast.info('All approved weeks already have invoices.');
       }
       return;
@@ -1241,7 +1292,15 @@ export function InvoicesWorkspace({
     }
   }, [accessToken, refreshInvoices, selectedInvoiceId]);
 
-  if (!canGenerateInvoices) {
+  if (!canGenerateInvoices && !isBuyerOnly) {
+    if (mayGenerateInvoices && sellingPartyIds === null) {
+      return (
+        <div className="p-8 text-center text-slate-500">
+          <Loader2 className="mx-auto mb-3 h-5 w-5 animate-spin text-slate-400" />
+          Loading invoices...
+        </div>
+      );
+    }
     return (
       <Card className="border-slate-200 bg-slate-50/70">
         <CardHeader>
@@ -1296,7 +1355,7 @@ export function InvoicesWorkspace({
           <Badge variant="outline" className={detailSyncBadge.className}>
             {detailSyncBadge.label}
           </Badge>
-          {(selectedInvoice.apiStatus || selectedInvoice.status) === 'draft' ? (
+          {canGenerateInvoices && (selectedInvoice.apiStatus || selectedInvoice.status) === 'draft' ? (
             <>
               <Button
                 variant="outline"
@@ -1322,14 +1381,14 @@ export function InvoicesWorkspace({
         <InvoiceDetailPrintView
           invoice={selectedInvoice}
           onBack={() => setSelectedInvoiceId(null)}
-          onSave={selectedInvoice.syncState !== 'local'
+          onSave={canGenerateInvoices && selectedInvoice.syncState !== 'local'
             ? (patch) => handleSaveInvoice(selectedInvoice.id, patch)
             : undefined}
           templates={availableBillingTemplates}
-          onApplyTemplate={selectedInvoice.syncState !== 'local'
+          onApplyTemplate={canGenerateInvoices && selectedInvoice.syncState !== 'local'
             ? (templateId) => handleApplyInvoiceTemplate(selectedInvoice, templateId)
             : undefined}
-          onSaveTemplate={selectedInvoice.syncState !== 'local'
+          onSaveTemplate={canGenerateInvoices && selectedInvoice.syncState !== 'local'
             ? (templateName) => handleSaveInvoiceTemplate(selectedInvoice, templateName)
             : undefined}
           templateBusy={isTemplateBusy}
@@ -1347,8 +1406,9 @@ export function InvoicesWorkspace({
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Invoices</h2>
           <p className="text-sm text-slate-500">
-            Generate seller-side invoice drafts for {selectedMonthLabel} from approved timesheets.
-            {!canGenerateInvoices ? ' Employees submit time; finance/admin handles invoicing.' : ''}
+            {isBuyerOnly
+              ? `Invoices issued to your company for ${selectedMonthLabel}. Your company receives invoices on this project; it does not issue any here.`
+              : `Generate seller-side invoice drafts for ${selectedMonthLabel} from approved timesheets.`}
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1389,6 +1449,7 @@ export function InvoicesWorkspace({
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
+          {canGenerateInvoices && (<>
           <Select value={selectedBillingTemplateId} onValueChange={setSelectedBillingTemplateId} disabled={isTemplateBusy}>
             <SelectTrigger className="w-[220px] bg-white shadow-sm">
               <SelectValue placeholder="Invoice template" />
@@ -1421,16 +1482,19 @@ export function InvoicesWorkspace({
             {isSavingInvoices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Generate for {selectedMonthLabel}
           </Button>
+          </>)}
         </div>
       </div>
 
-      <InvoiceImportPanel
-        projectId={projectId}
-        defaultVendor={currentProjectName}
-        defaultClient={defaultClientName}
-        projectTemplate={projectTemplate}
-        onTemplateSaved={handleImportedTemplateSaved}
-      />
+      {canGenerateInvoices && (
+        <InvoiceImportPanel
+          projectId={projectId}
+          defaultVendor={currentProjectName}
+          defaultClient={defaultClientName}
+          projectTemplate={projectTemplate}
+          onTemplateSaved={handleImportedTemplateSaved}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card className="border-slate-200/60 shadow-sm">
@@ -1498,7 +1562,9 @@ export function InvoicesWorkspace({
           ) : visibleInvoices.length === 0 ? (
             <div className="p-8 text-center">
               <p className="text-slate-500">
-                No invoice records for {selectedMonthLabel}. Click <strong>Generate for {selectedMonthLabel}</strong> to create invoices from approved timesheets in this month.
+                {isBuyerOnly
+                  ? <>No invoices have been issued to your company for {selectedMonthLabel}.</>
+                  : <>No invoice records for {selectedMonthLabel}. Click <strong>Generate for {selectedMonthLabel}</strong> to create invoices from approved timesheets in this month.</>}
               </p>
             </div>
           ) : (
@@ -1507,7 +1573,7 @@ export function InvoicesWorkspace({
                 const badgeInfo = statusBadgeInfo(invoice.apiStatus || invoice.status);
                 const rowSyncBadge = syncBadgeInfo(invoice.syncState);
                 const invoiceStatus = invoice.apiStatus ?? apiStatusFromUiStatus(invoice.status);
-                const canDeleteDraft = invoiceStatus === 'draft';
+                const canDeleteDraft = canGenerateInvoices && invoiceStatus === 'draft';
                 return (
                   <div
                     key={invoice.id}
