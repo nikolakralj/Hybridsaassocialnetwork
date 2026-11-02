@@ -27,7 +27,7 @@ import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawe
 import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
 import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
-import { withWorkspaceSearch } from "../utils/workspace-link";
+import { withWorkspaceSearch, workspaceTab } from "../utils/workspace-link";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
@@ -148,20 +148,23 @@ export function ProjectWorkspace({
     if (!projectId) return;
     // The query-selected project replaces whatever the session stored, before
     // timesheets and other listeners reread currentProjectId.
+    const previousId = sessionStorage.getItem('currentProjectId');
     sessionStorage.setItem('currentProjectId', projectId);
+    if (previousId && previousId !== projectId) {
+      sessionStorage.removeItem('currentProjectName');
+    }
     window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
       detail: { projectId },
     }));
   }, [projectId]);
   
-  // Load project name from API if not provided
+  // The stored name belongs to the previous project until this one loads.
   useEffect(() => {
-    if (propProjectName) return;
-    const stored = sessionStorage.getItem('currentProjectName');
-    if (stored) { setProjectName(stored); return; }
-    if (projectId) {
-      setProjectName(`Project ${projectId.slice(0, 8)}`);
+    if (propProjectName) {
+      setProjectName(propProjectName);
+      return;
     }
+    setProjectName(projectId ? `Project ${projectId.slice(0, 8)}` : 'Project');
   }, [projectId, propProjectName]);
 
   // Get hash params for deep linking (works in Figma Make iframe)
@@ -291,7 +294,7 @@ export function ProjectWorkspace({
   ]);
 
   const [activeTab, setActiveTab] = useState<ModuleId>(
-    (searchParams.get('tab') as ModuleId) || "overview",
+    workspaceTab(searchParams.get('tab')) as ModuleId,
   );
 
   useEffect(() => {
@@ -307,10 +310,13 @@ export function ProjectWorkspace({
   };
 
   useEffect(() => {
-    const tab = searchParams.get('tab');
-    if (!tab) return;
-    setActiveTab((current) => (current === tab ? current : tab as ModuleId));
-  }, [searchParams]);
+    const requested = searchParams.get('tab');
+    const tab = workspaceTab(requested) as ModuleId;
+    setActiveTab((current) => (current === tab ? current : tab));
+    if (requested && requested !== tab) {
+      setSearchParams((prev) => withWorkspaceSearch(prev, { tab }), { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -442,6 +448,11 @@ export function ProjectWorkspace({
       try {
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
+          const loadedName = data?.project?.name;
+          if (loadedName) {
+            setProjectName(loadedName);
+            sessionStorage.setItem('currentProjectName', loadedName);
+          }
           setProjectOwnerId(data?.project?.ownerId || null);
           const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];

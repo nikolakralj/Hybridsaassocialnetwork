@@ -21,6 +21,13 @@ describe('dashboard earnings', () => {
     expect(formatKnownMoney(100, 'EUR')).toBe('100.00 EUR');
   });
 
+  it('does not label a rate that has no currency as EUR', () => {
+    expect(moneyFromHours(8, [
+      { baseHourlyRate: 10, currency: '' },
+      { baseHourlyRate: 20, currency: 'EUR' },
+    ])).toEqual({ amount: 0, currency: '', known: false });
+  });
+
   it('does not mix two currencies into one total', () => {
     expect(moneyFromHours(8, [
       { baseHourlyRate: 10, currency: 'EUR' },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectWorkspacePath, withWorkspaceSearch } from './workspace-link';
+import { projectWorkspacePath, withWorkspaceSearch, workspaceTab } from './workspace-link';
 
 describe('projectWorkspacePath', () => {
   it('opens the timesheet tab for a real project id', () => {
@@ -19,5 +19,11 @@ describe('projectWorkspacePath', () => {
       'projectId=proj_1776&tab=approvals',
     );
     expect(withWorkspaceSearch(current, { tab: 'overview' }).toString()).toBe('projectId=proj_1776');
+  });
+
+  it('rejects a tab name that is not a workspace module', () => {
+    expect(workspaceTab('timesheets')).toBe('timesheets');
+    expect(workspaceTab('not-a-module')).toBe('overview');
+    expect(workspaceTab(null)).toBe('overview');
   });
 });
