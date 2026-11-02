@@ -136,7 +136,8 @@ export function DashboardPage() {
     ],
   };
 
-  const currentItems = defaultItems[persona] || defaultItems.freelancer;
+  const currentItems = (defaultItems[persona] || defaultItems.freelancer)
+    .filter((item) => SHOW_SOCIAL_FEATURES || item.id !== 'company-profile');
 
   const completedCount = currentItems.filter(item => item.autoDone || !!completedItems[item.id]).length;
   const percentComplete = currentItems.length > 0 ? (completedCount / currentItems.length) * 100 : 0;
