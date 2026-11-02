@@ -108,11 +108,10 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets", async (c) => {
     const month = c.req.query("month");
     const projectId = c.req.query("project_id") || c.req.query("projectId");
 
-    // Runs as the caller: the worker sees their own weeks, the project owner
-    // sees the project, an assigned approver sees the weeks they approve, and
-    // verified admins of the worker's party see that party's weeks.
+    // Runs as the caller. wg_timesheet_weeks_visible (037) applies party RLS
+    // and strips another party's day notes. The raw data column is not granted.
     let query = userDb(c)
-      .from("wg_timesheet_weeks")
+      .from("wg_timesheet_weeks_visible")
       .select("*")
       .order("week_start", { ascending: false });
 
@@ -168,8 +167,8 @@ timesheetsRouter.get("/make-server-f8b491be/api/timesheets/:weekStart", async (c
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const weekStart = c.req.param("weekStart");
-    const { data, error } = await db()
-      .from("wg_timesheet_weeks")
+    const { data, error } = await userDb(c)
+      .from("wg_timesheet_weeks_visible")
       .select("*")
       .eq("user_id", user.id)
       .eq("week_start", weekStart)
