@@ -345,7 +345,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     viewerType === 'freelancer' ||
     (viewerEntry && viewerEntry.type !== 'party' && viewerEntry.orgId)
   );
-  const isAdmin = ALLOW_GRAPH_ADMIN_VIEW && viewerType === 'admin';
+  // The workspace only offers the '__admin__' ("All parties") viewer to project
+  // managers. Without this, a manager's default view filtered every week down
+  // to a person with id '__admin__' and showed "No timesheet data" while the
+  // Overview counted the hours.
+  const isAdmin = viewerType === 'admin' && (ALLOW_GRAPH_ADMIN_VIEW || viewerOverride?.id === '__admin__');
   // Org/party viewer: an org, agency, or client party node (not a person)
   const isOrgViewer = !isPersonViewer && !isAdmin && (
     viewerType === 'company' ||
@@ -554,7 +558,9 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     if (week && (week.status === 'approved' || week.status === 'draft')) return false;
     if (!viewerId) return false;
     if (personId === viewerId || personId === user?.id) return false;
-    if (isAdmin) return true;
+    // A manager's read-only "All parties" view must not offer Approve on weeks
+    // that wait on someone else; only the dev-only admin persona may.
+    if (isAdmin && ALLOW_GRAPH_ADMIN_VIEW) return true;
     if (week?.status === 'submitted') {
       const pendingApproval = pendingApprovalAssignees[buildTimesheetSubjectId(personId, week.weekStart)];
       const pendingTargets = [
