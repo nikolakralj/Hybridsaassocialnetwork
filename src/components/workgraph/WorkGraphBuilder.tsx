@@ -2175,6 +2175,53 @@ export function WorkGraphBuilder({
     setIsEditSupplyChainOpen(false);
   }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph, allNodes]);
 
+  // Toolbar Save: write the canvas to wg_projects.graph through the same
+  // PUT /api/projects/:id path as Edit Supply Chain (stale check, server-side
+  // scope validation, full parties snapshot). Before, it only called
+  // graphPersistence.saveVersion, which is a no-op for non-UUID project ids
+  // (every real project) and posted to a graph-versions stub otherwise.
+  const [isToolbarSaving, setIsToolbarSaving] = useState(false);
+  const handleToolbarSave = useCallback(async () => {
+    if (!canEditGraph) {
+      toast.error('Only project managers can save the graph');
+      return;
+    }
+    setIsToolbarSaving(true);
+    try {
+      let mergedNodes = allNodes;
+      try {
+        const { graph: latest, changed } = await fetchServerGraphState();
+        if (changed) {
+          setAllNodes(latest.nodes as BaseNode[]);
+          setAllEdges(latest.edges as BaseEdge[]);
+          serverGraphFingerprintRef.current = graphFingerprint(latest);
+          toast.error('Graph not saved', { description: STALE_GRAPH_MESSAGE });
+          return;
+        }
+        mergedNodes = preserveServerGraphNodes(latest.nodes as BaseNode[], allNodes);
+      } catch {
+        toast.error('Could not check the latest graph, so nothing was saved. Try again.');
+        return;
+      }
+      const parties = buildEditableParties(mergedNodes, allEdges).map((party) => ({
+        id: party.id,
+        name: party.name,
+        partyType: party.partyType,
+        billsTo: [...party.billsTo],
+        peopleCount: party.people.length,
+      }));
+      await updateProject(projectId, { graph: { nodes: mergedNodes, edges: allEdges }, parties }, accessToken);
+      setAllNodes(mergedNodes);
+      await rememberServerGraph();
+      await graphPersistence.saveVersion(mergedNodes as any, allEdges as any, 'Manual save');
+      toast.success('Graph saved', { description: `Saved ${mergedNodes.length} nodes and ${allEdges.length} connections.` });
+    } catch (error) {
+      toast.error('Graph not saved', { description: error instanceof Error ? error.message : 'Unknown error' });
+    } finally {
+      setIsToolbarSaving(false);
+    }
+  }, [canEditGraph, allNodes, allEdges, projectId, accessToken, fetchServerGraphState, rememberServerGraph, graphPersistence]);
+
   return (
     <>
       <div className="h-[calc(100vh-16rem)] flex flex-col bg-background rounded-xl border border-border overflow-hidden">
@@ -2240,11 +2287,12 @@ export function WorkGraphBuilder({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => graphPersistence.saveVersion(allNodes as any, allEdges as any, 'Manual save')}
-                disabled={graphPersistence.isSaving}
+                onClick={() => void handleToolbarSave()}
+                disabled={graphPersistence.isSaving || isToolbarSaving}
+                data-testid="graph-toolbar-save"
                 className="h-8 gap-1.5 text-xs"
               >
-                {graphPersistence.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {graphPersistence.isSaving || isToolbarSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save
               </Button>
             </>
