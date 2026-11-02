@@ -37,7 +37,7 @@ import {
 } from '../ui/dialog';
 import { EnhancedDayEntryModal } from './EnhancedDayEntryModal';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
-import { sumWeekHours } from '../../types/timesheets';
+import { computeDayHours, storedDayIsoDate, sumWeekHours, sumWeekHoursInMonth } from '../../types/timesheets';
 import type { StoredWeek, StoredDay, WeekStatus, DayTask, TimeEntry, TimeCategory } from '../../contexts/TimesheetDataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe, monthKeyFromDate, toMonthStart } from '../../contexts/MonthContext';
@@ -450,8 +450,9 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   }, [submittedWeekRefs, submittedWeekSignature, pendingApprovalVersion]);
 
   // Stats
-  const totalHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHours(w), 0), 0);
-  const approvedHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.filter(w => w.status === 'approved').reduce((a, w) => a + sumWeekHours(w), 0), 0);
+  // Month totals count only this month's days (a Nov 30 - Dec 4 week adds its Nov days only).
+  const totalHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHoursInMonth(w, monthKey), 0), 0);
+  const approvedHours = flatPersonWeeks.reduce((s, [, ws]) => s + ws.filter(w => w.status === 'approved').reduce((a, w) => a + sumWeekHoursInMonth(w, monthKey), 0), 0);
   const submittedCount = flatPersonWeeks.reduce((s, [, ws]) => s + ws.filter(w => w.status === 'submitted').length, 0);
 
   const viewInGraph = () => {
@@ -714,7 +715,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
           {isMultiPersonViewer ? (
             orgGroups.map(({ org, people }) => {
               const orgExpanded = expandedOrgs.has(org.id);
-              const orgTotal = people.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHours(w), 0), 0);
+              const orgTotal = people.reduce((s, [, ws]) => s + ws.reduce((a, w) => a + sumWeekHoursInMonth(w, monthKey), 0), 0);
               const orgSubmitted = people.reduce((s, [, ws]) => s + ws.filter(w => w.status === 'submitted').length, 0);
               return (
                 <div key={org.id} className="border rounded-xl overflow-hidden">
@@ -741,7 +742,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
                           onDragStart={(ws, di, d) => handleDragStart(pid, ws, di, d)}
                           onDragOver={handleDragOver} onDragLeave={handleDragLeave}
                           onDrop={(e, ws, di) => handleDrop(e, pid, ws, di)} onDragEnd={handleDragEnd}
-                          dragSource={dragSource} dragOverDay={dragOverDay} />
+                          dragSource={dragSource} dragOverDay={dragOverDay} monthKey={monthKey} />
                       ))}
                     </div>
                   )}
@@ -761,7 +762,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
                   onDragStart={(ws, di, d) => handleDragStart(pid, ws, di, d)}
                   onDragOver={handleDragOver} onDragLeave={handleDragLeave}
                   onDrop={(e, ws, di) => handleDrop(e, pid, ws, di)} onDragEnd={handleDragEnd}
-                  dragSource={dragSource} dragOverDay={dragOverDay} />
+                  dragSource={dragSource} dragOverDay={dragOverDay} monthKey={monthKey} />
               </div>
             ))
           )}
@@ -893,8 +894,10 @@ interface PickerProject { id: string; name: string; }
 
 function PersonSection({
   personId, weeks, viewerId, isAdmin, store, projectId, accessToken, canApprovePerson, onClickWeek, onClickDay, canEditDay, onViewInGraph,
-  onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, dragSource, dragOverDay,
+  onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, dragSource, dragOverDay, monthKey = '',
 }: {
+  /** "yyyy-MM": month totals only count days inside this month. */
+  monthKey?: string;
   personId: string;
   weeks: StoredWeek[];
   viewerId?: string;
@@ -920,8 +923,8 @@ function PersonSection({
   const isOwn = viewerId === personId;
   const approvableWeeks = weeks.filter((week) => week.status === 'submitted' && canApprovePerson(personId, week));
   const hasPendingApprovalActions = approvableWeeks.length > 0;
-  const total = weeks.reduce((s, w) => s + sumWeekHours(w), 0);
-  const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHours(w), 0);
+  const total = weeks.reduce((s, w) => s + sumWeekHoursInMonth(w, monthKey), 0);
+  const approved = weeks.filter(w => w.status === 'approved').reduce((s, w) => s + sumWeekHoursInMonth(w, monthKey), 0);
   const notifStore = useNotificationStore();
   const [submittingMonth, setSubmittingMonth] = useState(false);
   const [approvingMonth, setApprovingMonth] = useState(false);
@@ -937,8 +940,19 @@ function PersonSection({
     notifStore.onTimesheetStatusChange(personId, w.weekStart, w.weekLabel, newStatus, sumWeekHours(w), meta);
   }, [store, notifStore, personId]);
 
-  // Submit all draft/rejected weeks that have hours logged
-  const submitableWeeks = weeks.filter(w => (w.status === 'draft' || w.status === 'rejected') && sumWeekHours(w) > 0);
+  // Submit all draft/rejected weeks that have hours logged. Hours on a day that
+  // hasn't happened yet can't be submitted (validation blocks it), so those
+  // weeks wait as drafts and we say so instead of failing on click.
+  const todayLocalIso = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+  const hasFutureHours = (w: StoredWeek) => (w.days || []).some((day, index) => (
+    computeDayHours(day) > 0 && storedDayIsoDate(w.weekStart, day, index) > todayLocalIso
+  ));
+  const openWeeksWithHours = weeks.filter(w => (w.status === 'draft' || w.status === 'rejected') && sumWeekHours(w) > 0);
+  const submitableWeeks = openWeeksWithHours.filter(w => !hasFutureHours(w));
+  const futureDraftWeeks = openWeeksWithHours.filter(hasFutureHours);
 
   /** Actually submit weeks, setting currentProjectId in sessionStorage to the chosen project. */
   const doSubmitWithProject = useCallback(async (chosenProjectId: string) => {
@@ -1082,6 +1096,14 @@ function PersonSection({
             <Send className="h-2.5 w-2.5" />
             {pickerLoading ? 'Loading…' : `Submit ${submitableWeeks.length > 1 ? `month (${submitableWeeks.length} weeks)` : 'week'}`}
           </button>
+        )}
+        {isOwn && futureDraftWeeks.length > 0 && (
+          <span
+            className="text-[10px] text-muted-foreground"
+            title="Hours can only be submitted for days that have already passed (including today)."
+          >
+            {futureDraftWeeks.length} week{futureDraftWeeks.length > 1 ? 's' : ''} with future days stay{futureDraftWeeks.length > 1 ? '' : 's'} draft until those days pass
+          </span>
         )}
         {hasPendingApprovalActions && (
           <button

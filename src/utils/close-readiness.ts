@@ -84,6 +84,8 @@ export interface CloseReadinessRow {
   orgName?: string;
   monthKey: string;
   loggedHours: number;
+  /** Hours in approved weeks (this month's days only). Only these are billable. */
+  approvedHours: number;
   missingWeekLabels: string[];
   /** Named approvers still waiting on a submitted week. */
   pendingApproverNames: string[];
@@ -236,6 +238,9 @@ function buildRow(
   });
 
   const loggedHours = roundHours([...weeksByStart.values()].reduce((sum, week) => sum + (Number.isFinite(week.hours) ? week.hours : 0), 0));
+  const approvedHours = roundHours([...weeksByStart.values()]
+    .filter((week) => week.status === 'approved')
+    .reduce((sum, week) => sum + (Number.isFinite(week.hours) ? week.hours : 0), 0));
   const missingWeekLabels: string[] = [];
   const pendingNames = new Set<string>();
   const rejectionNotes: string[] = [];
@@ -296,6 +301,7 @@ function buildRow(
     orgName: worker.orgName,
     monthKey: input.monthKey,
     loggedHours,
+    approvedHours,
     missingWeekLabels,
     pendingApproverNames: [...pendingNames],
     notSubmittedWeekCount,

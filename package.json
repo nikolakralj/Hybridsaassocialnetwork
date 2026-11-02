@@ -60,9 +60,12 @@
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
     "@types/node": "^20.10.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",
     "tailwindcss": "4.1.12",
+    "typescript": "~5.6",
     "vite": "6.3.5",
     "vitest": "^3.2.7"
   },
@@ -74,6 +77,7 @@
     "test": "vitest run",
     "edge:serve": "npx supabase functions serve --workdir . --env-file .env --no-verify-jwt",
     "edge:deploy": "npx supabase functions deploy server --workdir .",
-    "edge:list": "npx supabase functions list --workdir ."
+    "edge:list": "npx supabase functions list --workdir .",
+    "typecheck": "tsc --noEmit -p ."
   }
 }

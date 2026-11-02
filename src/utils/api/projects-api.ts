@@ -787,6 +787,8 @@ async function supabaseDeleteProject(projectId: string, accessToken?: string | n
   return true;
 }
 
+class ServerRejectedUpdateError extends Error {}
+
 export async function updateProject(
   projectId: string,
   updates: Record<string, any>,
@@ -825,6 +827,12 @@ export async function updateProject(
     });
     const data = await res.json();
     if (!res.ok) {
+      // A signed-in user's cloud project that the server refused (permission or
+      // validation) must not be "saved" into the local cache instead: the UI
+      // would report success for a change that never reached the database.
+      if (accessToken && res.status >= 400 && res.status < 500 && res.status !== 404 && res.status !== 429) {
+        throw new ServerRejectedUpdateError(data.error || 'Failed to update project');
+      }
       if (hasLocalProject(projectId)) {
         return localUpdateProject(projectId, updates);
       }
@@ -835,6 +843,7 @@ export async function updateProject(
     }
     return data.project;
   } catch (error) {
+    if (error instanceof ServerRejectedUpdateError) throw error;
     if (hasLocalProject(projectId)) {
       return localUpdateProject(projectId, updates);
     }

@@ -18,6 +18,8 @@ export interface WorkStats {
     total: number;
     billable: number;
     non_billable: number;
+    /** Hours in approved weeks (no money estimate: rates are private). */
+    approved?: number;
     period: 'week' | 'month';
   };
   pending_approvals: {
@@ -28,6 +30,10 @@ export interface WorkStats {
   active_contracts: {
     count: number;
     expiring_soon: number; // within 30 days
+  };
+  /** Real invoice rows visible to the user (no estimated amounts). */
+  invoices?: {
+    count: number;
   };
 }
 

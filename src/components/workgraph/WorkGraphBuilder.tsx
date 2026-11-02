@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   Building2,
   Users,
@@ -7,7 +8,6 @@ import {
   Save,
   Loader2,
   Search,
-  Shield,
   Eye,
   EyeOff,
   ZoomIn,
@@ -15,6 +15,7 @@ import {
   Maximize2,
   List,
   Network,
+  ChevronDown,
   ChevronRight,
   ChevronLeft,
   Lock,
@@ -35,6 +36,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { toast } from 'sonner';
 import { TEMPLATES } from './templates';
 import { useGraphPersistence } from '../hooks/useGraphPersistence';
+import { preserveServerGraphNodes } from '../../utils/graph/preserve-node-data';
 import { ProjectCreateWizard } from './ProjectCreateWizard';
 import {
   computeScopedView,
@@ -702,7 +704,8 @@ export function ViewerSelector({
   }, []);
 
   const iconMap: Record<string, React.ReactNode> = {
-    admin: <Shield className="h-3.5 w-3.5 text-red-500" />,
+    // Neutral icon: the manager's whole-project view is normal, not an alert.
+    admin: <Network className="h-3.5 w-3.5 text-muted-foreground" />,
     company: <Building2 className="h-3.5 w-3.5 text-blue-500" />,
     agency: <Users className="h-3.5 w-3.5 text-violet-500" />,
     client: <Building2 className="h-3.5 w-3.5 text-amber-500" />,
@@ -715,7 +718,7 @@ export function ViewerSelector({
   };
 
   const getLabel = (v: ViewerIdentity) => {
-    if (v.type === 'admin') return 'Admin';
+    if (v.type === 'admin') return ALLOW_GRAPH_ADMIN_VIEW ? 'Admin' : 'Manager view: every party';
     if (v.type === 'freelancer') return 'Freelancer';
     if (v.orgId) return 'Employee';
     return v.type;
@@ -752,13 +755,14 @@ export function ViewerSelector({
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted/50 transition-colors text-sm"
         aria-label={`Viewing as ${current.name}`}
       >
-        <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Viewing as</span>
         <span className="flex items-center gap-1.5">
           {getIcon(current)}
           <span className="text-xs font-semibold text-foreground max-w-[140px] truncate">
             {current.name}
           </span>
         </span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </button>
 
       {open && (
@@ -1465,6 +1469,8 @@ interface WorkGraphBuilderProps {
   asOf?: string;
   canEditGraph?: boolean;
   editablePartyIds?: string[];
+  /** Project Owner/Editor: the "Full project view" viewer shows the whole server-scoped graph. */
+  allowFullProjectView?: boolean;
   currentViewer?: ViewerIdentity | null;
   onViewerChange?: (viewer: ViewerIdentity) => void;
 }
@@ -1476,6 +1482,7 @@ export function WorkGraphBuilder({
   initialConfig,
   canEditGraph = true,
   editablePartyIds = [],
+  allowFullProjectView = false,
   currentViewer: controlledViewer,
   onViewerChange: externalViewerChange,
 }: WorkGraphBuilderProps) {
@@ -1501,6 +1508,34 @@ export function WorkGraphBuilder({
   });
   const [graphLoaded, setGraphLoaded] = useState(!!initialConfig || isDemoProject);
 
+  // Stale-save guard: the graph is saved as a whole snapshot from this tab, so a
+  // server-side change made meanwhile (e.g. an invited approver being linked,
+  // or another tab's edit) would be silently overwritten. Remember what the
+  // server had when we loaded/saved, and re-check before every full save.
+  const serverGraphFingerprintRef = useRef<string | null>(null);
+  const graphFingerprint = (graph: { nodes: unknown[]; edges: unknown[] }) =>
+    JSON.stringify({ nodes: graph.nodes, edges: graph.edges });
+  const fetchServerGraphState = useCallback(async () => {
+    const latest = await fetchScopedGraph(projectId);
+    return {
+      graph: latest,
+      changed:
+        serverGraphFingerprintRef.current !== null &&
+        graphFingerprint(latest) !== serverGraphFingerprintRef.current,
+    };
+  }, [projectId]);
+  const rememberServerGraph = useCallback(async () => {
+    try {
+      const latest = await fetchScopedGraph(projectId);
+      serverGraphFingerprintRef.current = graphFingerprint(latest);
+      return latest;
+    } catch {
+      serverGraphFingerprintRef.current = null;
+      return null;
+    }
+  }, [projectId]);
+  const STALE_GRAPH_MESSAGE = 'This project changed since you opened it (for example an approver was linked). Your edit was not saved; the latest version is now shown. Make the edit again.';
+
   // Try to load project graph from KV on mount
   useEffect(() => {
     if (graphLoaded || initialConfig) return;
@@ -1522,6 +1557,7 @@ export function WorkGraphBuilder({
           setProjectStartDate(fetchedStartDate);
           sessionStorage.setItem('currentProjectStartDate', fetchedStartDate);
         }
+        serverGraphFingerprintRef.current = graphFingerprint(scopedGraph);
         if (scopedGraph.nodes.length > 0) {
           setAllNodes(scopedGraph.nodes as BaseNode[]);
           setAllEdges(scopedGraph.edges as BaseEdge[]);
@@ -1577,7 +1613,7 @@ export function WorkGraphBuilder({
     return {
       nodeId: user.id,
       type: authType,
-      name: (user.user_metadata?.name as string) || (user.email as string) || 'Me',
+      name: userDisplayName(user, 'Me'),
       orgId: user.user_metadata?.orgId as string | undefined,
     };
   }, [user]);
@@ -1888,6 +1924,19 @@ export function WorkGraphBuilder({
       toast.info('Graph already up to date');
       return;
     }
+    try {
+      const { graph: latest, changed } = await fetchServerGraphState();
+      if (changed) {
+        setAllNodes(latest.nodes as BaseNode[]);
+        setAllEdges(latest.edges as BaseEdge[]);
+        serverGraphFingerprintRef.current = graphFingerprint(latest);
+        toast.error('Graph not migrated', { description: STALE_GRAPH_MESSAGE });
+        return;
+      }
+    } catch {
+      toast.error('Could not check the latest graph. Try again.');
+      return;
+    }
 
     setAllNodes(migrated.nodes);
     setAllEdges(migrated.edges);
@@ -1899,6 +1948,7 @@ export function WorkGraphBuilder({
           edges: migrated.edges,
         },
       }, accessToken);
+      await rememberServerGraph();
       toast.success('Graph migrated', {
         description: `Added ${migrated.summary.personPartyLinksAdded} person-org links and ${migrated.summary.employsEdgesAdded} membership edges.`,
       });
@@ -1908,35 +1958,53 @@ export function WorkGraphBuilder({
         description: 'Could not persist migration to server yet. Use Save after reconnecting.',
       });
     }
-  }, [allNodes, allEdges, projectId, accessToken, canEditGraph]);
+  }, [allNodes, allEdges, projectId, accessToken, canEditGraph, fetchServerGraphState, rememberServerGraph]);
 
   // A4: persist node-data edits (e.g. billing rates) straight to wg_projects.graph —
   // the source resolveProjectRates() reads at invoice generation time.
   const handleUpdateNodeData = useCallback(async (nodeId: string, patch: Record<string, any>) => {
-    const nextNodes = allNodes.map((n) =>
+    // Apply the patch to the server's latest graph, not this tab's copy, so a
+    // change made meanwhile (approver link, another tab) is kept.
+    let baseNodes = allNodes;
+    let baseEdges = allEdges;
+    try {
+      const { graph: latest } = await fetchServerGraphState();
+      if (latest.nodes.length > 0) {
+        baseNodes = latest.nodes as BaseNode[];
+        baseEdges = latest.edges as BaseEdge[];
+      }
+    } catch {
+      toast.error('Could not load the latest graph, so nothing was saved. Try again.');
+      return;
+    }
+    const nextNodes = baseNodes.map((n) =>
       n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n
     );
     setAllNodes(nextNodes);
+    setAllEdges(baseEdges);
     // C3a reconcile: the scoped-graph Edge Function (migration 028) requires a
     // COMPLETE graph + parties snapshot for any supply-chain update, and rejects
     // a partial {graph}-only payload. Send the full snapshot so node-data edits
     // (e.g. rates) survive once the server-side scope validation is deployed.
-    const parties = buildEditableParties(nextNodes, allEdges).map((party) => ({
+    const parties = buildEditableParties(nextNodes, baseEdges).map((party) => ({
       id: party.id,
       name: party.name,
       partyType: party.partyType,
       billsTo: [...party.billsTo],
       peopleCount: party.people.length,
     }));
-    await updateProject(projectId, { graph: { nodes: nextNodes, edges: allEdges }, parties }, accessToken);
+    await updateProject(projectId, { graph: { nodes: nextNodes, edges: baseEdges }, parties }, accessToken);
+    await rememberServerGraph();
     toast.success('Saved to project');
-  }, [allNodes, allEdges, projectId, accessToken]);
+  }, [allNodes, allEdges, projectId, accessToken, fetchServerGraphState, rememberServerGraph]);
 
   // C3b: add an approver agent to a party. The RPC is server-authorized (owner
   // or that org's verified admin) and mutates wg_projects.graph directly; we
   // append the returned node locally so the canvas updates immediately.
   const handleAddPartyApprover = useCallback(async (partyGraphNodeId: string, email: string, displayName: string) => {
     const result = await assignPartyApprover({ projectId, partyGraphNodeId, email, displayName });
+    // The RPC changed the graph on the server; that is now the baseline.
+    void rememberServerGraph();
     setAllNodes((prev) => [
       ...prev,
       {
@@ -1955,12 +2023,12 @@ export function WorkGraphBuilder({
         },
       } as BaseNode,
     ]);
-  }, [projectId]);
+  }, [projectId, rememberServerGraph]);
 
   // Compute scoped view
   const scopedView = useMemo(
-    () => computeScopedView(currentViewer, allNodes, allEdges),
-    [currentViewer, allNodes, allEdges]
+    () => computeScopedView(currentViewer, allNodes, allEdges, 3, ALLOW_GRAPH_ADMIN_VIEW || allowFullProjectView),
+    [currentViewer, allNodes, allEdges, allowFullProjectView]
   );
 
   // Filter inactive people for selected month
@@ -2040,8 +2108,25 @@ export function WorkGraphBuilder({
     }
     // The editor returns the full active snapshot. Merging preserved removed
     // parties as ghost nodes; version history already retains the old graph.
-    const mergedNodes = nodes;
+    let mergedNodes = nodes;
     const mergedEdges = edges;
+
+    try {
+      const { graph: latest, changed } = await fetchServerGraphState();
+      if (changed) {
+        setAllNodes(latest.nodes as BaseNode[]);
+        setAllEdges(latest.edges as BaseEdge[]);
+        serverGraphFingerprintRef.current = graphFingerprint(latest);
+        toast.error('Supply chain not saved', { description: STALE_GRAPH_MESSAGE });
+        return;
+      }
+      // Keep what the wizard doesn't know about (linked accounts, billing
+      // fields, emails hidden from this viewer) on the nodes it regenerated.
+      mergedNodes = preserveServerGraphNodes(latest.nodes as BaseNode[], nodes);
+    } catch {
+      toast.error('Could not check the latest graph, so nothing was saved. Try again.');
+      return;
+    }
 
     await updateProject(projectId, {
       graph: {
@@ -2059,12 +2144,13 @@ export function WorkGraphBuilder({
 
     setAllNodes(mergedNodes);
     setAllEdges(mergedEdges);
+    await rememberServerGraph();
     await graphPersistence.saveVersion(mergedNodes as any, mergedEdges as any, 'Supply chain updated');
     toast.success('Supply chain updated', {
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
     setIsEditSupplyChainOpen(false);
-  }, [projectId, accessToken, graphPersistence, canEditGraph]);
+  }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph]);
 
   return (
     <>

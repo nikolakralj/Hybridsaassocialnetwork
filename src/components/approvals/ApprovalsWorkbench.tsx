@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   AlertTriangle,
   CheckCircle,
@@ -111,7 +112,7 @@ interface ApprovalsWorkbenchProps {
 type WorkbenchStatus = "all" | "pending" | "approved" | "rejected";
 type SortOrder = "newest" | "oldest" | "priority";
 type NameDirEntry = { name?: string; type?: string; orgId?: string };
-type ApprovalDirParty = { id: string; name?: string };
+type ApprovalDirParty = { id: string; name?: string; people?: Array<{ id: string }> };
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -135,7 +136,10 @@ function resolveSubmitterOrgName(
   if (!projectId || !submitterId) return undefined;
   const nameDir = nameDirectory[projectId] || {};
   const approvalDir = approvalDirectory[projectId] || [];
-  const orgId = nameDir[submitterId]?.orgId;
+  const orgId = nameDir[submitterId]?.orgId
+    // Person nodes added by "Set up employee" are linked by partyId only, so the
+    // name directory may have no orgId for them; the party's people list does.
+    || approvalDir.find((party) => party.people?.some((person) => person.id === submitterId))?.id;
   if (!orgId) return undefined;
   return approvalDir.find((party) => party.id === orgId)?.name || nameDir[orgId]?.name || orgId;
 }
@@ -200,6 +204,13 @@ export function ApprovalsWorkbench({
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
   const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
+  // loadApprovals awaits the queue; the graph directories often finish loading
+  // meanwhile. Read them through refs so the rows use the latest directories
+  // instead of the empty ones captured when the load started.
+  const nameDirectoryRef = useRef(nameDirectory);
+  const approvalDirectoryRef = useRef(approvalDirectory);
+  nameDirectoryRef.current = nameDirectory;
+  approvalDirectoryRef.current = approvalDirectory;
   const [items, setItems] = useState<UIApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -339,6 +350,8 @@ export function ApprovalsWorkbench({
       };
 
       const data = await getApprovalQueue(filters);
+      const latestNameDirectory = nameDirectoryRef.current;
+      const latestApprovalDirectory = approvalDirectoryRef.current;
 
       const transformedItems = (data || []).map((item) => {
         const subjectSnapshot = item.subjectSnapshot || null;
@@ -372,13 +385,13 @@ export function ApprovalsWorkbench({
           subjectType: item.subjectType,
           subjectSnapshot,
           timesheetData: item.timesheetData,
-        }, nameDirectory);
+        }, latestNameDirectory);
         const submitterOrgName = subjectSnapshot?.submitterOrg
           || resolveSubmitterOrgName(
             item.projectId,
             submitterId,
-            nameDirectory,
-            approvalDirectory,
+            latestNameDirectory,
+            latestApprovalDirectory,
           );
         const totalHours = snapshotHours ?? item.timesheetData?.totalHours ?? 0;
 
@@ -1127,13 +1140,13 @@ export function ApprovalsWorkbench({
                   <div className="flex items-center gap-2">
                     <div className="h-7 w-7 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
                       <span className="text-[11px] font-bold text-emerald-700">
-                        {(viewerName || user?.user_metadata?.full_name || user?.email || "?").slice(0, 1).toUpperCase()}
+                        {(viewerName?.trim() || userDisplayName(user, "?")).slice(0, 1).toUpperCase()}
                       </span>
                     </div>
                     <div>
                       <p className="m-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">Approving as</p>
                       <p className="m-0 text-sm font-medium text-foreground leading-tight">
-                        {viewerName || user?.user_metadata?.full_name || user?.email || "You"}
+                        {viewerName?.trim() || userDisplayName(user, "You")}
                       </p>
                     </div>
                   </div>

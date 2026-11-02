@@ -18,7 +18,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContext } from '../../contexts/MonthContext';
 import { getMondaysForMonth, useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import type { StoredWeek } from '../../types/timesheets';
-import { sumWeekHours } from '../../types/timesheets';
+import { sumWeekHoursInMonth } from '../../types/timesheets';
 import type { ProjectMember } from '../../types/collaboration';
 import type { BaseEdge, BaseNode } from '../../types/workgraph';
 import { buildPersonToOrgMap } from '../workgraph/graph-visibility';
@@ -127,6 +127,18 @@ function collectWorkers(
     });
   };
 
+  // When "Set up employee" links a real account it adds a new person node; the
+  // wizard's placeholder node for the same email stays behind with no hours.
+  // Hide that placeholder so it doesn't show up as a second, never-ready worker.
+  const isUuidLike = (value: unknown) =>
+    typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const linkedEmails = new Set(
+    nodes
+      .filter((node) => node.type === 'person' && (isUuidLike(node.data?.userId) || isUuidLike(node.id)))
+      .map((node) => String(node.data?.email || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+
   nodes.forEach((node) => {
     if (node.type !== 'person') return;
     const orgId = personToOrg.get(node.id) || node.data?.partyId || node.data?.orgId;
@@ -134,6 +146,9 @@ function collectWorkers(
     const onClientParty = orgId ? partyType.get(orgId) === 'client' : false;
     const hasTimesheets = timesheetIds.has(node.id) || [...(aliasesByGraphId.get(node.id) || [])].some((alias) => timesheetIds.has(alias));
     if (!hasTimesheets && (approverOnly || onClientParty)) return;
+    const email = String(node.data?.email || '').trim().toLowerCase();
+    const isLinked = isUuidLike(node.data?.userId) || isUuidLike(node.id);
+    if (!hasTimesheets && !isLinked && email && linkedEmails.has(email)) return;
     addWorker(node.id, usablePersonName(nameDirectory[node.id]?.name || node.data?.name), orgId);
   });
 
@@ -411,7 +426,8 @@ export function CloseReadinessGate({
       weekStart: week.weekStart,
       weekLabel: week.weekLabel,
       status: week.status,
-      hours: sumWeekHours(week),
+      // Only this month's days: a Nov 30 - Dec 4 week contributes Nov 30 only.
+      hours: sumWeekHoursInMonth(week, monthKey),
       rejectionNote: week.rejectionNote,
     })),
     approvals,
@@ -621,7 +637,10 @@ export function CloseReadinessGate({
                   <TableCell>
                     <div className="font-medium text-slate-900">{row.workerName}</div>
                     {row.orgName ? <div className="text-xs text-muted-foreground">{row.orgName}</div> : null}
-                    <div className="text-xs text-muted-foreground">{row.loggedHours}h logged</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.approvedHours}h approved
+                      {row.loggedHours !== row.approvedHours ? ` · ${row.loggedHours}h logged` : ''}
+                    </div>
                   </TableCell>
                   <TableCell className="whitespace-normal">
                     {row.missingWeekLabels.length === 0 ? (

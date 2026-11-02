@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Plus, Search, Filter, MoreVertical, Trash2, Eye, Users, Calendar, Loader2, ArrowRight } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -15,12 +16,17 @@ import { ProjectConfigurationDrawer } from './ProjectConfigurationDrawer';
 import { ProjectCreateWizard } from '../workgraph/ProjectCreateWizard';
 import { ProjectInviteMemberDialog } from './ProjectInviteMemberDialog';
 import { ProjectInvitationsPanel } from './ProjectInvitationsPanel';
+// The token routes (invitations-api) are the ones that link a party-approver
+// invitation to its graph person; the legacy /api/invitations/:id/accept route
+// only marks the member accepted, so the approval chain never reached them.
+import {
+  acceptProjectInvitationToken,
+  declineProjectInvitationToken,
+} from '../../utils/api/project-invitations';
 import { useAuth } from '../../contexts/AuthContext';
 import { getInvitableRolesForRole } from '../../utils/collaboration/permissions';
 import {
   addProjectMember,
-  acceptProjectInvitation,
-  declineProjectInvitation,
   listProjectInvitations,
   listProjects,
   deleteProject as deleteProjectApi,
@@ -66,6 +72,7 @@ export function ProjectsListView() {
   const navigate = useNavigate();
   const { user, accessToken, loading: authLoading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'draft' | 'archived'>('all');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -76,18 +83,29 @@ export function ProjectsListView() {
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
   const [projectRoles, setProjectRoles] = useState<Record<string, ProjectRole | null>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // After a reload the list can load twice (auth restoring, then token ready).
+  // Only the newest request may update state, otherwise a slower stale
+  // response could overwrite it or leave the page without content.
+  const loadRequestRef = useRef(0);
 
   const loadProjects = async () => {
+    const requestId = ++loadRequestRef.current;
+    const isStale = () => requestId !== loadRequestRef.current;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [userProjects, pendingInvitations] = await Promise.all([
         listProjects(accessToken),
         listProjectInvitations(accessToken).catch(() => []),
       ]);
+      if (isStale()) return;
 
-      setProjects(userProjects);
+      setProjects(Array.isArray(userProjects) ? userProjects : []);
       setInvitations(pendingInvitations);
-      
+      // Show the list now; member counts and roles fill in afterwards.
+      setIsLoading(false);
+
       // Load member counts in parallel
       const memberCounts: Record<string, number> = {};
       const roleByProject: Record<string, ProjectRole | null> = {};
@@ -112,19 +130,21 @@ export function ProjectsListView() {
           }
         })
       );
+      if (isStale()) return;
       setProjectMembers(memberCounts);
       setProjectRoles(roleByProject);
     } catch (error) {
+      if (isStale()) return;
       console.error('Error loading projects:', error);
-      // Don't toast on initial load if there's just no data
+      setLoadError(error instanceof Error ? error.message : 'Projects could not be loaded');
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     if (authLoading) return;
-    loadProjects();
+    void loadProjects();
   }, [accessToken, authLoading]);
 
   const handleCreateProject = () => {
@@ -236,7 +256,7 @@ export function ProjectsListView() {
 
   const handleAcceptInvitation = async (invitationId: string) => {
     try {
-      const result = await acceptProjectInvitation(invitationId, accessToken);
+      const result = await acceptProjectInvitationToken(invitationId, accessToken);
       toast.success('Invitation accepted', {
         description: result.project?.name
           ? `${result.project.name} is now in your projects list.`
@@ -250,7 +270,7 @@ export function ProjectsListView() {
 
   const handleDeclineInvitation = async (invitationId: string) => {
     try {
-      await declineProjectInvitation(invitationId, accessToken);
+      await declineProjectInvitationToken(invitationId, accessToken);
       toast.success('Invitation declined');
       await loadProjects();
     } catch (error: any) {
@@ -267,10 +287,16 @@ export function ProjectsListView() {
     await loadProjects();
   };
 
-  const filteredProjects = projects.filter(project =>
-    project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    project.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredProjects = projects.filter(project => {
+    if (statusFilter !== 'all' && (project.status || 'active') !== statusFilter) return false;
+    if (!normalizedQuery) return true;
+    return Boolean(
+      project.name?.toLowerCase().includes(normalizedQuery) ||
+      project.description?.toLowerCase().includes(normalizedQuery)
+    );
+  });
+  const statusFilterLabel = { all: 'All statuses', active: 'Active', draft: 'Draft', archived: 'Archived' }[statusFilter];
 
   const getSourceBadge = (project: ProjectListItem) => {
     if (project.storageSource === 'cloud') {
@@ -350,16 +376,39 @@ export function ProjectsListView() {
             className="pl-10 bg-background border-border/60 h-9 text-sm"
           />
         </div>
-        <Button variant="outline" size="sm" className="h-9 gap-2 text-sm" onClick={() => toast.info('Filter options coming soon')}>
-          <Filter className="h-4 w-4" />
-          Filter
-        </Button>
+        <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
+          <SelectTrigger className="h-9 w-[160px] gap-2 text-sm" aria-label="Filter projects by status">
+            <Filter className="h-4 w-4" />
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Content */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <div className="flex flex-col items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          Loading projects...
+        </div>
+      ) : loadError ? (
+        <div className="text-center py-16 rounded-2xl border border-destructive/30 bg-destructive/5">
+          <p className="text-foreground font-medium mb-1">Projects could not be loaded</p>
+          <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
+          <Button variant="outline" size="sm" onClick={() => void loadProjects()}>
+            Try again
+          </Button>
+        </div>
+      ) : projects.length > 0 && filteredProjects.length === 0 ? (
+        <div className="text-center py-16 text-sm text-muted-foreground">
+          {normalizedQuery
+            ? `No ${statusFilter === 'all' ? '' : `${statusFilterLabel.toLowerCase()} `}projects match "${searchQuery.trim()}".`
+            : `No ${statusFilterLabel.toLowerCase()} projects.`}
         </div>
       ) : filteredProjects.length === 0 ? (
         <div className="text-center py-24 rounded-2xl border-2 border-dashed border-border/60 bg-muted/20">

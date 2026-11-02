@@ -177,6 +177,29 @@ export function sumWeekHours(week: StoredWeek): number {
   return (week.days || []).reduce((sum, day) => sum + computeDayHours(day), 0);
 }
 
+const DAY_OFFSETS: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+
+/** ISO date (yyyy-MM-dd) of a stored day, from the week's Monday and the day name/index. */
+export function storedDayIsoDate(weekStart: string, day: StoredDay, index: number): string {
+  const offset = DAY_OFFSETS[(day.day || '').slice(0, 3)] ?? index;
+  const [y, m, d] = weekStart.split('-').map(Number);
+  const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Hours of a week that fall inside one calendar month ("yyyy-MM").
+ * A week like Nov 30 - Dec 4 belongs to both months; month totals must only
+ * count the days of that month.
+ */
+export function sumWeekHoursInMonth(week: StoredWeek, monthKey: string): number {
+  if (!monthKey) return sumWeekHours(week);
+  return (week.days || []).reduce((sum, day, index) => (
+    storedDayIsoDate(week.weekStart, day, index).startsWith(monthKey) ? sum + computeDayHours(day) : sum
+  ), 0);
+}
+
 export function sumWeekBillableHours(week: StoredWeek): number {
   return (week.days || []).reduce((sum, day) => {
     const normalized = normalizeStoredDay(day);
@@ -239,7 +262,7 @@ export function validateTimesheetWeek(
       if (date.getTime() > today.getTime()) {
         errors.push({
           code: 'FUTURE_DATE_HOURS',
-          message: `${day.day} is in the future and cannot be submitted.`,
+          message: `${day.day} ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} is in the future. Hours can be submitted once the day has passed.`,
           severity: 'error',
           day: day.day,
         });

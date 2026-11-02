@@ -231,6 +231,7 @@ export function InvoiceDetailPrintView({
     taxId,
     iban,
     extra,
+    expectIban,
   }: {
     label: string;
     name: string;
@@ -238,18 +239,37 @@ export function InvoiceDetailPrintView({
     taxId?: string | null;
     iban?: string | null;
     extra?: React.ReactNode;
-  }) => (
-    <div className="space-y-2">
-      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">{label}</h3>
-      <p className="font-semibold text-slate-900 text-lg">{name || '—'}</p>
-      <div className="text-slate-600 text-sm leading-relaxed space-y-1">
-        {address?.trim() ? <p className="whitespace-pre-line">{address.trim()}</p> : null}
-        {taxId?.trim() ? <p><span className="text-slate-400">Tax ID / OIB:</span> {taxId.trim()}</p> : null}
-        {iban?.trim() ? <p><span className="text-slate-400">IBAN:</span> {iban.trim()}</p> : null}
-        {extra}
+    /** Show "not set" placeholders (screen only, never printed) for IBAN too. */
+    expectIban?: boolean;
+  }) => {
+    // Missing details show as screen-only placeholders on drafts so it's clear
+    // what still has to be filled in; they never appear on the printed/PDF invoice.
+    const missing = (text: string) => (canEdit ? (
+      <p className="italic text-amber-700/80 print:hidden">{text}</p>
+    ) : null);
+    return (
+      <div className="space-y-2">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">{label}</h3>
+        <p className="font-semibold text-slate-900 text-lg">{name || '—'}</p>
+        <div className="text-slate-600 text-sm leading-relaxed space-y-1">
+          {address?.trim() ? <p className="whitespace-pre-line">{address.trim()}</p> : missing('Address not set')}
+          {taxId?.trim() ? <p><span className="text-slate-400">Tax ID / VAT (OIB):</span> {taxId.trim()}</p> : missing('Tax ID / VAT (OIB) not set')}
+          {iban?.trim() ? <p><span className="text-slate-400">IBAN:</span> {iban.trim()}</p> : expectIban ? missing('IBAN not set') : null}
+          {extra}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const missingSellerDetails = [
+    !invoice.fromAddress?.trim() && 'address',
+    !invoice.fromTaxId?.trim() && 'tax ID / VAT',
+    !invoice.fromIban?.trim() && 'IBAN',
+  ].filter(Boolean) as string[];
+  const missingBuyerDetails = [
+    !invoice.toAddress?.trim() && 'address',
+    !invoice.toTaxId?.trim() && 'tax ID / VAT',
+  ].filter(Boolean) as string[];
 
   const fieldLabel = 'text-[11px] font-medium uppercase tracking-wide text-slate-400';
 
@@ -314,9 +334,16 @@ export function InvoiceDetailPrintView({
                 </Button>
               )}
               {invoice.status === 'draft' && (
-                <Button variant="default" className="bg-indigo-600 hover:bg-indigo-700">
+                // No send pipeline exists yet (no email/e-invoice delivery), so
+                // don't offer a button that silently does nothing.
+                <Button
+                  variant="default"
+                  className="bg-indigo-600 hover:bg-indigo-700"
+                  disabled
+                  title="Sending invoices from WorkGraph isn't available yet. Export the PDF and send it yourself."
+                >
                   <Send className="w-4 h-4 mr-2" />
-                  Send to Client
+                  Send to Client (soon)
                 </Button>
               )}
               <Button variant="outline" onClick={() => window.print()}>
@@ -335,7 +362,21 @@ export function InvoiceDetailPrintView({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto bg-white border border-slate-200/60 shadow-md rounded-xl p-12 print:shadow-none print:border-none print:p-0">
+        {canEdit && !editing && (missingSellerDetails.length > 0 || missingBuyerDetails.length > 0) ? (
+          <div className="max-w-4xl mx-auto mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 print:hidden">
+            {missingSellerDetails.length > 0 ? (
+              <p className="m-0">Your details missing: {missingSellerDetails.join(', ')}.</p>
+            ) : null}
+            {missingBuyerDetails.length > 0 ? (
+              <p className="m-0">Client details missing: {missingBuyerDetails.join(', ')}.</p>
+            ) : null}
+            <p className="m-0 mt-1 text-amber-700">
+              Click <span className="font-medium">Edit</span> to fill them in on this invoice, then{' '}
+              <span className="font-medium">Save template</span> to reuse your details on future invoices.
+            </p>
+          </div>
+        ) : null}
+        <div className="invoice-print-root max-w-4xl mx-auto bg-white border border-slate-200/60 shadow-md rounded-xl p-12 print:shadow-none print:border-none print:p-0">
           <div className="flex justify-between items-start mb-12">
             <div>
               <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 uppercase">INVOICE</h1>
@@ -384,7 +425,7 @@ export function InvoiceDetailPrintView({
                     <Textarea value={form.fromAddress} onChange={(e) => setField('fromAddress', e.target.value)} className="mt-1 min-h-16" placeholder={'Street 1\n10000 Zagreb, Croatia'} />
                   </div>
                   <div>
-                    <p className={fieldLabel}>Tax ID / OIB</p>
+                    <p className={fieldLabel}>Tax ID / VAT (OIB)</p>
                     <Input value={form.fromTaxId} onChange={(e) => setField('fromTaxId', e.target.value)} className="mt-1 h-9" />
                   </div>
                   <div>
@@ -403,7 +444,7 @@ export function InvoiceDetailPrintView({
                     <Textarea value={form.toAddress} onChange={(e) => setField('toAddress', e.target.value)} className="mt-1 min-h-16" />
                   </div>
                   <div>
-                    <p className={fieldLabel}>Tax ID / OIB</p>
+                    <p className={fieldLabel}>Tax ID / VAT (OIB)</p>
                     <Input value={form.toTaxId} onChange={(e) => setField('toTaxId', e.target.value)} className="mt-1 h-9" />
                   </div>
                 </div>
@@ -416,6 +457,7 @@ export function InvoiceDetailPrintView({
                   address={invoice.fromAddress}
                   taxId={invoice.fromTaxId}
                   iban={invoice.fromIban}
+                  expectIban
                 />
                 <PartyBlock
                   label="Bill To"

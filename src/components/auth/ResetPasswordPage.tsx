@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  MIN_PASSWORD_LENGTH,
   PASSWORD_RESET_SENT_MESSAGE,
   validateNewPassword,
 } from '../../utils/auth/password-recovery';
@@ -107,7 +108,7 @@ export function ResetPasswordPage() {
                 <Input
                   id="new-password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Min 6 characters"
+                  placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete="new-password"

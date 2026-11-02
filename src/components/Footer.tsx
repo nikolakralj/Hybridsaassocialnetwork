@@ -4,12 +4,12 @@ export function Footer() {
   return (
     <footer className="border-t border-border/30 py-12 md:py-16">
       <div className="max-w-7xl mx-auto px-6">
-        <div className="grid md:grid-cols-4 gap-8 mb-8">
+        <div className="grid md:grid-cols-2 gap-8 mb-8">
           {/* Column 1: Brand */}
           <div>
             <h3 className="mb-4 font-semibold">WorkGraph</h3>
             <p className="text-sm text-muted-foreground m-0 leading-relaxed">
-              The social work network.
+              Timesheets, approvals, and invoices across every company in the chain.
             </p>
           </div>
 
@@ -22,42 +22,14 @@ export function Footer() {
                   Pricing
                 </a>
               </li>
-            </ul>
-          </div>
-
-          {/* Column 3: Resources */}
-          <div>
-            <h4 className="font-medium m-0 mb-4">Resources</h4>
-            <ul className="space-y-3 m-0 p-0 list-none">
               <li>
-                <a href="#docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Documentation
-                </a>
-              </li>
-              <li>
-                <a href="#support" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Support
+                <a href="#faq" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  FAQ
                 </a>
               </li>
             </ul>
           </div>
 
-          {/* Column 4: Legal */}
-          <div>
-            <h4 className="font-medium m-0 mb-4">Legal</h4>
-            <ul className="space-y-3 m-0 p-0 list-none">
-              <li>
-                <a href="#privacy" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Privacy
-                </a>
-              </li>
-              <li>
-                <a href="#terms" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-                  Terms
-                </a>
-              </li>
-            </ul>
-          </div>
         </div>
 
         {/* Bottom bar - cleaner */}
@@ -65,11 +37,6 @@ export function Footer() {
           <p className="text-xs text-muted-foreground m-0">
             © {currentYear} WorkGraph. All rights reserved.
           </p>
-          <div className="flex items-center gap-6">
-            <a href="#status" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-              Status
-            </a>
-          </div>
         </div>
       </div>
     </footer>

@@ -5,7 +5,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  DollarSign,
   Clock,
   AlertCircle,
   FileText,
@@ -118,7 +117,7 @@ export function DashboardPage() {
       { id: 'agency-client', label: 'Add your first Client organization to the project graph', actionText: 'Add Client', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
       { id: 'agency-roles', label: 'Define billing contract roles on your project workspace', actionText: 'Define Roles', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
       { id: 'agency-invite', label: 'Invite your first Contractor to log hours', actionText: 'Invite Team', route: '/app/projects', autoDone: work_stats.active_contracts.count > 1 },
-      { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: work_stats.earnings.current_period > 0 },
+      { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: (work_stats.invoices?.count || 0) > 0 },
     ],
     company: [
       { id: 'company-profile', label: 'Set up your company profile and details', actionText: 'Profile Setup', route: '/app/company-profile', autoDone: !!user?.headline || !!user?.bio },
@@ -158,7 +157,7 @@ export function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground m-0">
-            {firstName ? `Welcome back, ${firstName}` : 'Dashboard'}
+            {firstName ? `Welcome, ${firstName}` : 'Dashboard'}
           </h1>
           <p className="text-muted-foreground text-sm mt-0.5">
             Here's your overview for this month.
@@ -270,11 +269,10 @@ export function DashboardPage() {
       {/* Top Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
-          title="Earnings"
-          value={`$${work_stats.earnings.current_period.toLocaleString()}`}
-          subtitle={`vs $${work_stats.earnings.previous_period.toLocaleString()} last month`}
-          trend={work_stats.earnings.trend}
-          icon={<DollarSign className="w-4 h-4" />}
+          title="Approved Hours"
+          value={`${work_stats.hours.approved ?? 0}h`}
+          subtitle={(work_stats.hours.approved ?? 0) > 0 ? 'Approved this month' : 'Nothing approved yet'}
+          icon={<CheckCircle className="w-4 h-4" />}
           color="text-emerald-600"
           bgColor="bg-emerald-50"
           onClick={() => handleNavigate('/app/approvals')}
@@ -292,7 +290,7 @@ export function DashboardPage() {
         <StatCard
           title="Pending Approvals"
           value={work_stats.pending_approvals.count}
-          subtitle={`Worth $${work_stats.pending_approvals.total_value.toLocaleString()}`}
+          subtitle={work_stats.pending_approvals.count > 0 ? 'Timesheets waiting for review' : 'Nothing waiting'}
           icon={<AlertCircle className="w-4 h-4" />}
           color="text-amber-600"
           bgColor="bg-amber-50"
