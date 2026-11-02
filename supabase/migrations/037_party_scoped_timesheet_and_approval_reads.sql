@@ -343,7 +343,11 @@ REVOKE EXECUTE ON FUNCTION public.wg_caller_operates_party(text, text) FROM PUBL
 REVOKE EXECUTE ON FUNCTION public.wg_worker_party(text, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.wg_caller_own_party_ids(text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.wg_caller_visible_party_ids(text) FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.wg_user_can_read_approval_record(text) FROM PUBLIC, anon, authenticated;
+-- The SELECT policy calls this function as the signed-in role. That role must
+-- be allowed to execute it. It only returns a boolean, and it is SECURITY
+-- DEFINER, so the helpers it uses can stay revoked.
+REVOKE EXECUTE ON FUNCTION public.wg_user_can_read_approval_record(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.wg_user_can_read_approval_record(text) TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.wg_redact_timesheet_data(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.wg_timesheet_data_for_caller(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wg_redacted_approval_snapshot(text) TO authenticated;
