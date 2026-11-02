@@ -52,6 +52,13 @@ function check(name,cond,detail){out.push(`${cond?'PASS':'FAIL'}  ${name}${detai
    const seen=await as(k,async()=> (await q('SELECT invoice_number n FROM wg_invoices ORDER BY 1')).rows.map(x=>x.n)).catch(e=>['ERR '+e.message]);
    check(`${k} sees invoices ${JSON.stringify(invExp[k])}`,JSON.stringify(seen)===JSON.stringify(invExp[k]),'saw '+JSON.stringify(seen));
  }
+ // Pass-through issue check (047): the same approved week on Sub->Agency AND Agency->Client.
+ out.push('\nISSUE CHECK (047, per-seller once):');
+ await q('SAVEPOINT wk');await q("SET LOCAL session_replication_role = replica");await q(`INSERT INTO wg_timesheet_weeks(id,project_id,user_id,week_start,status,data) VALUES('tw_will',$1,$2,'2026-11-02','approved','{}')`,[P,U.subworker]).then(async()=>{await q("SET LOCAL session_replication_role = origin");await q('RELEASE SAVEPOINT wk')}).catch(async e=>{out.push('week seed: '+e.message);await q('ROLLBACK TO SAVEPOINT wk')});
+ const issue=async(id,num,from,to)=>{await q('SAVEPOINT iss');try{await q(`INSERT INTO wg_invoices(id,project_id,invoice_number,from_party_id,to_party_id,status,created_by,total,due_date,timesheet_ids) VALUES($1,$2,$3,$4,$5,'issued',$6,480,current_date+30,$7)`,[id,P,num,from,to,U.owner,[WILL+':2026-11-02']]);await q('RELEASE SAVEPOINT iss');return 'ok'}catch(e){await q('ROLLBACK TO SAVEPOINT iss');return e.message}};
+ let m=await issue('i_s2','S2',SUB,AG); check('issue Sub->Agency with Will week',m==='ok',m);
+ m=await issue('i_a2','A2',AG,CL); check('issue Agency->Client with the SAME Will week (pass-through)',m==='ok',m);
+ m=await issue('i_s3','S3',SUB,AG); check('second Sub->Agency invoice for the same week is refused',/already billed/.test(m),m);
  // Scoped graph (045)
  out.push('\nSCOPED GRAPH (wg_get_scoped_graph, 045):');
  const gExp={sub:[AG,SUB],client:[AG,CL],subworker:null,agworker:[AG]};
