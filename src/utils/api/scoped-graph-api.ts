@@ -64,7 +64,7 @@ export async function fetchScopedGraph(projectId: string): Promise<ScopedGraph> 
   }
 
   const result = (data ?? {}) as Partial<ScopedGraph>;
-  return stripCommercialEdgeFields({
+  const graph: ScopedGraph = {
     nodes: Array.isArray(result.nodes) ? result.nodes : [],
     edges: Array.isArray(result.edges) ? result.edges : [],
     meta: {
@@ -78,5 +78,6 @@ export async function fetchScopedGraph(projectId: string): Promise<ScopedGraph> 
       hiddenNodeCount: 0,
       ...(result.meta ?? {}),
     },
-  });
+  };
+  return stripCommercialEdgeFields(graph);
 }
