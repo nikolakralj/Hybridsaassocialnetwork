@@ -62,7 +62,7 @@ import type {
   CompiledProjectConfig,
 } from '../../types/workgraph';
 import type { PartyEntry } from '../../utils/graph/auto-generate';
-import { getProject, updateProject } from '../../utils/api/projects-api';
+import { addProjectMember, getProject, updateProject } from '../../utils/api/projects-api';
 import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { assignPartyApprover } from '../../utils/api/organizations-api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -2175,11 +2175,36 @@ export function WorkGraphBuilder({
     setAllEdges(mergedEdges);
     await rememberServerGraph();
     await graphPersistence.saveVersion(mergedNodes as any, mergedEdges as any, 'Supply chain updated');
+
+    // People added here get a project membership + invitation, like people
+    // added in the project wizard. Before, they existed only as graph nodes:
+    // no Team row, no invite, no way to log in to the project.
+    const previousIds = new Set(allNodes.map((node) => node.id));
+    const newPeople = (mergedNodes as BaseNode[]).filter((node) => (
+      node.type === 'person'
+      && !previousIds.has(node.id)
+      && typeof node.data?.email === 'string'
+      && /.+@.+\..+/.test(node.data.email)
+    ));
+    const inviteResults = await Promise.allSettled(newPeople.map((node) => addProjectMember(projectId, {
+      userName: String(node.data?.name || node.data?.email),
+      userEmail: String(node.data?.email).trim().toLowerCase(),
+      role: 'Contributor',
+      scope: String(node.data?.partyId || node.data?.orgId || '') || null,
+      graphNodeId: node.id,
+      canApprove: node.data?.canApprove === true,
+    }, accessToken)));
+    const invited = inviteResults.filter((result) => result.status === 'fulfilled').length;
+    const failedInvites = newPeople.filter((_, index) => inviteResults[index].status === 'rejected');
+    if (invited > 0) toast.success(`Invited ${invited} new ${invited === 1 ? 'person' : 'people'} to the project team.`);
+    if (failedInvites.length > 0) {
+      toast.error(`Could not invite ${failedInvites.map((node) => node.data?.name || node.data?.email).join(', ')}. Add them from the Team tab.`);
+    }
     toast.success('Supply chain updated', {
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
     setIsEditSupplyChainOpen(false);
-  }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph]);
+  }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph, allNodes]);
 
   return (
     <>
