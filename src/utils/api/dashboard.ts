@@ -74,6 +74,9 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     const avgRate = activeContracts.length > 0
       ? activeContracts.reduce((sum: number, c: any) => sum + (c.baseHourlyRate || 0), 0) / activeContracts.length
       : 100;
+    const approvedHours = approvedWeeks.reduce((sum: number, w: any) => (
+      sum + (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0)
+    ), 0);
     const currentEarnings = approvedWeeks.reduce((sum: number, w: any) => {
       const weekHours = (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0);
       return sum + weekHours * avgRate;
@@ -91,6 +94,7 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
         total: totalHours || 0,
         billable: billableHours || 0,
         non_billable: 0,
+        approved: approvedHours || 0,
         period: 'month',
       },
       pending_approvals: {

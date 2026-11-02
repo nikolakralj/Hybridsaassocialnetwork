@@ -18,6 +18,8 @@ export interface WorkStats {
     total: number;
     billable: number;
     non_billable: number;
+    /** Hours in approved weeks (no money estimate: rates are private). */
+    approved?: number;
     period: 'week' | 'month';
   };
   pending_approvals: {
