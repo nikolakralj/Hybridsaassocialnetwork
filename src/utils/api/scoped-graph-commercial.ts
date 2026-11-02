@@ -18,6 +18,7 @@ export const COMMERCIAL_EDGE_KEYS = [
 
 export interface CommercialEdge {
   source?: string;
+  target?: string;
   type?: string;
   data?: Record<string, unknown> | null;
   [key: string]: unknown;
