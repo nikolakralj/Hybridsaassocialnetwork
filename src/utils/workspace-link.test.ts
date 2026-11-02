@@ -23,6 +23,7 @@ describe('projectWorkspacePath', () => {
 
   it('rejects a tab name that is not a workspace module', () => {
     expect(workspaceTab('timesheets')).toBe('timesheets');
+    expect(workspaceTab('graph-snapshot')).toBe('overview');
     expect(workspaceTab('not-a-module')).toBe('overview');
     expect(workspaceTab(null)).toBe('overview');
   });

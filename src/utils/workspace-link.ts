@@ -11,7 +11,6 @@ export const WORKSPACE_MODULE_IDS = [
   'analytics',
   'team',
   'messages',
-  'graph-snapshot',
 ] as const;
 
 /** Unknown query values stay off the tab strip and fall back to overview. */
