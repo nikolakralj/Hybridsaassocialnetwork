@@ -176,8 +176,10 @@ export function ProjectCreateWizard({
       setParties([
         {
           id: 'your-org',
-          name: user?.user_metadata?.org_name || 'Your Organization',
-          partyType: (user?.user_metadata?.org_type as PartyType) || 'agency',
+          // Prefill with the company given at sign-up; otherwise leave the
+          // name empty so the user types their real company (Next explains it).
+          name: user?.company?.trim() || '',
+          partyType: 'agency',
           billsTo: [],
           organizationId: user?.id,
           people: [{

@@ -21,6 +21,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [company, setCompany] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -36,6 +37,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
     setEmail('');
     setPassword('');
     setName('');
+    setCompany('');
     setLocalError('');
     setResetSent(false);
     clearError();
@@ -90,7 +92,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
     setLoading(true);
     try {
       if (mode === 'signup') {
-        await signUp(email, password, name);
+        await signUp(email, password, name, company);
       } else {
         await signIn(email, password);
       }
@@ -139,6 +141,21 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
                 value={name}
                 onChange={e => setName(e.target.value)}
                 autoComplete="name"
+              />
+            </div>
+          )}
+
+          {mode === 'signup' && (
+            <div className="space-y-2">
+              <Label htmlFor="auth-company">
+                Company <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                id="auth-company"
+                placeholder="Your company name"
+                value={company}
+                onChange={e => setCompany(e.target.value)}
+                autoComplete="organization"
               />
             </div>
           )}

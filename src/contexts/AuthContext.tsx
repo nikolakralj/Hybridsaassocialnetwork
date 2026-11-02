@@ -26,6 +26,8 @@ export interface UserProfile {
   id: string;
   email: string;
   name: string;
+  /** Optional company name given at sign-up (user_metadata.company). */
+  company?: string;
   headline?: string;
   bio?: string;
   avatar_url?: string;
@@ -48,7 +50,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  signUp: (email: string, password: string, name: string) => Promise<void>;
+  signUp: (email: string, password: string, name: string, company?: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
@@ -154,6 +156,7 @@ function buildProfile(user: any): UserProfile {
     id: user.id,
     email: user.email || '',
     name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+    company: (user.user_metadata?.company || user.user_metadata?.org_name || '').trim() || undefined,
     headline: user.user_metadata?.headline || '',
     bio: user.user_metadata?.bio || '',
     avatar_url: user.user_metadata?.avatar_url || '',
@@ -345,7 +348,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, name: string) => {
+  const signUp = useCallback(async (email: string, password: string, name: string, company?: string) => {
     setState(s => ({ ...s, loading: true, error: null }));
     try {
       const res = await fetch(
@@ -366,10 +369,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Sign in after signup
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      // Store the optional company on the user's own metadata. Not fatal: the
+      // account exists either way and the company can be typed in the wizard.
+      let sessionUser = data?.session?.user;
+      const trimmedCompany = company?.trim();
+      if (sessionUser && trimmedCompany) {
+        const { data: updated, error: companyError } = await supabase.auth.updateUser({
+          data: { company: trimmedCompany },
+        });
+        if (companyError) {
+          console.warn('Could not save company name at sign-up:', companyError.message);
+        } else if (updated?.user) {
+          sessionUser = updated.user;
+        }
+      }
       // Directly update state (don't rely solely on listener)
-      if (data?.session && mountedRef.current) {
+      if (data?.session && sessionUser && mountedRef.current) {
         clearRecoveryMarkers();
-        const profile = buildProfile(data.session.user);
+        const profile = buildProfile(sessionUser);
         setState({
           user: profile,
           accessToken: data.session.access_token,
