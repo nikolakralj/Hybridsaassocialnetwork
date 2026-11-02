@@ -313,6 +313,7 @@ export function ProjectWorkspace({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
+  const [projectStatus, setProjectStatus] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [selfMembership, setSelfMembership] = useState<ProjectMember | null>(null);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
@@ -441,6 +442,7 @@ export function ProjectWorkspace({
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
           setProjectOwnerId(data?.project?.ownerId || null);
+          setProjectStatus(typeof data?.project?.status === 'string' ? data.project.status : null);
           const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
           const creatorParty = graphNodes.find((node: any) => node?.type === 'party' && node?.data?.isCreator);
@@ -451,6 +453,7 @@ export function ProjectWorkspace({
       } catch {
         if (!cancelled) {
           setProjectOwnerId(null);
+          setProjectStatus(null);
           setOwnerPartyId(null);
           setProjectGraphViewers([]);
         }
@@ -672,7 +675,17 @@ export function ProjectWorkspace({
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <h1 className="m-0">{projectName}</h1>
-                <Badge variant="secondary">Active</Badge>
+                {projectStatus ? (
+                  <Badge variant={projectStatus === "active" ? "secondary" : "outline"}>
+                    {projectStatus === "draft"
+                      ? "Draft"
+                      : projectStatus === "archived"
+                        ? "Archived"
+                        : projectStatus === "active"
+                          ? "Active"
+                          : projectStatus}
+                  </Badge>
+                ) : null}
               </div>
               <p className="text-sm text-muted-foreground m-0">
                 Project workspace
