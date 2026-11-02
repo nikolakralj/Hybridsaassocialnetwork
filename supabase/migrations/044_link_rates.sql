@@ -116,36 +116,27 @@ CREATE POLICY wg_link_rates_select ON public.wg_link_rates
     OR (link_kind = 'employment' AND wg_user_is_link_subject(project_id, subject_graph_node_id, subject_user_id))
   );
 
+-- Writes: only the seller sets the price on its link (the employer sets the
+-- worker's pay). The buyer reads it but cannot change it, so a client cannot
+-- rewrite what the agency charges it (review finding on PR #20).
 DROP POLICY IF EXISTS wg_link_rates_insert ON public.wg_link_rates;
 CREATE POLICY wg_link_rates_insert ON public.wg_link_rates
   FOR INSERT TO authenticated
   WITH CHECK (
     created_by = auth.uid()
-    AND (
-      wg_user_is_party_commercial(project_id, seller_party_id)
-      OR (link_kind = 'supply' AND wg_user_is_party_commercial(project_id, buyer_party_id))
-    )
+    AND wg_user_is_party_commercial(project_id, seller_party_id)
   );
 
 DROP POLICY IF EXISTS wg_link_rates_update ON public.wg_link_rates;
 CREATE POLICY wg_link_rates_update ON public.wg_link_rates
   FOR UPDATE TO authenticated
-  USING (
-    wg_user_is_party_commercial(project_id, seller_party_id)
-    OR (link_kind = 'supply' AND wg_user_is_party_commercial(project_id, buyer_party_id))
-  )
-  WITH CHECK (
-    wg_user_is_party_commercial(project_id, seller_party_id)
-    OR (link_kind = 'supply' AND wg_user_is_party_commercial(project_id, buyer_party_id))
-  );
+  USING (wg_user_is_party_commercial(project_id, seller_party_id))
+  WITH CHECK (wg_user_is_party_commercial(project_id, seller_party_id));
 
 DROP POLICY IF EXISTS wg_link_rates_delete ON public.wg_link_rates;
 CREATE POLICY wg_link_rates_delete ON public.wg_link_rates
   FOR DELETE TO authenticated
-  USING (
-    wg_user_is_party_commercial(project_id, seller_party_id)
-    OR (link_kind = 'supply' AND wg_user_is_party_commercial(project_id, buyer_party_id))
-  );
+  USING (wg_user_is_party_commercial(project_id, seller_party_id));
 
 COMMENT ON TABLE public.wg_link_rates IS
   'Per-link rates. supply = seller party bills buyer party; employment = employer pays its worker. Readable only by decision-makers of a party on the link (and the worker for their own employment rate). Margins are never stored.';

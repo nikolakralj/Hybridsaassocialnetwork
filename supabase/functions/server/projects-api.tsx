@@ -7,6 +7,7 @@ import {
   assertScopedSupplyChainUpdate,
   nodeOwnerId,
   projectParties,
+  isTimesheetWeekWithWork,
   partyRemovalBlockers,
   supplyChainStructureDiff,
 } from "./supply-chain-guard.ts";
@@ -271,12 +272,14 @@ async function partyActivity(projectId: string, partyId: string, graph: any) {
   const userIds = partyMembers.map((row: any) => row.user_id).filter(Boolean);
   let timesheetWeeks = 0;
   if (userIds.length > 0) {
-    const { count } = await db()
+    // Count only weeks with recorded work; empty draft weeks are created just
+    // by opening the Timesheets tab and are not activity.
+    const { data: weeks } = await db()
       .from("wg_timesheet_weeks")
-      .select("id", { count: "exact", head: true })
+      .select("status, data")
       .eq("project_id", projectId)
       .in("user_id", userIds);
-    timesheetWeeks = count || 0;
+    timesheetWeeks = (weeks || []).filter((row: any) => isTimesheetWeekWithWork(row)).length;
   }
   const { count: invoiceCount } = await db()
     .from("wg_invoices")
@@ -312,7 +315,7 @@ async function cleanupRemovedParties(projectId: string, partyIds: string[], prev
   }
 }
 
-function scopedUpdateErrorStatus(message: string): number {
+function scopedUpdateErrorStatus(message: string): 400 | 403 | 409 | 500 {
   if (message.includes("require a complete graph and party snapshot")) return 400;
   if (message.includes("governed project")) return 409;
   if (message.includes("Map your active membership") || message.includes("not part of this project supply chain")) return 409;
@@ -609,7 +612,7 @@ projectsRouter.put("/make-server-f8b491be/api/projects/:projectId", async (c) =>
     return c.json({ project: rowToProject(updated) });
   } catch (err: any) {
     const message = err?.message || String(err);
-    return c.json({ error: `Failed to update project: ${message}` }, scopedUpdateErrorStatus(message) as any);
+    return c.json({ error: `Failed to update project: ${message}` }, scopedUpdateErrorStatus(message));
   }
 });
 

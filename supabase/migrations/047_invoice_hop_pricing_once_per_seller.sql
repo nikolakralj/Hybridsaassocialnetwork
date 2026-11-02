@@ -93,9 +93,9 @@ DECLARE
   v_unit numeric;
   v_require_po boolean;
   v_po_ok boolean;
-  v_node text;
+  v_nodes text[];
   v_final_hop boolean;
-  v_employer text;
+  v_employers text[];
 BEGIN
   IF NEW.status = 'cancelled' THEN
     RETURN NEW;
@@ -187,11 +187,19 @@ BEGIN
       -- legacy per-person bill rate (wg_contract_rates) prices only the final
       -- hop (the buyer bills nobody), as before 044.
       v_rate := NULL; v_rate_type := NULL; v_rate_currency := NULL;
-      SELECT m.graph_node_id INTO v_node
-      FROM wg_project_members m
-      WHERE m.project_id = NEW.project_id AND v_uid IS NOT NULL AND m.user_id = v_uid
-      ORDER BY m.accepted_at DESC NULLS LAST
-      LIMIT 1;
+      -- Every graph node of this worker on the project. A user can hold more
+      -- than one member row (re-invited, or under two scopes); all of them are
+      -- considered instead of an arbitrary "latest" row.
+      SELECT array_agg(DISTINCT x) INTO v_nodes
+      FROM (
+        SELECT v_person AS x
+        UNION
+        SELECT m.graph_node_id
+        FROM wg_project_members m
+        WHERE m.project_id = NEW.project_id AND v_uid IS NOT NULL AND m.user_id = v_uid
+          AND m.graph_node_id IS NOT NULL
+      ) ids
+      WHERE x IS NOT NULL;
       IF to_regclass('public.wg_link_rates') IS NOT NULL THEN
         SELECT lr.amount, lr.rate_type, lr.currency
           INTO v_rate, v_rate_type, v_rate_currency
@@ -205,7 +213,7 @@ BEGIN
           AND (lr.effective_to IS NULL OR lr.effective_to >= v_week)
           AND (
             (lr.subject_graph_node_id IS NULL AND lr.subject_user_id IS NULL)
-            OR lr.subject_graph_node_id IN (v_person, v_node)
+            OR lr.subject_graph_node_id = ANY(v_nodes)
             OR (v_uid IS NOT NULL AND lr.subject_user_id = v_uid)
           )
         ORDER BY (lr.subject_graph_node_id IS NULL AND lr.subject_user_id IS NULL),
@@ -217,21 +225,19 @@ BEGIN
       -- or a party the employer's chain bills through). 041 let any party
       -- that bills the buyer invoice any approved week of the project, e.g.
       -- the Sub billing the Agency for the Agency's own employee.
-      SELECT COALESCE(n->'data'->>'partyId', n->'data'->>'orgId')
-        INTO v_employer
+      SELECT array_agg(DISTINCT COALESCE(n->'data'->>'partyId', n->'data'->>'orgId'))
+        INTO v_employers
       FROM jsonb_array_elements(COALESCE(v_graph->'nodes', '[]'::jsonb)) n
-      WHERE n->>'type' = 'person' AND n->>'id' IN (v_person, COALESCE(v_node, v_person))
-      LIMIT 1;
-      IF v_employer IS NULL AND v_uid IS NOT NULL THEN
-        SELECT m.scope INTO v_employer
+      WHERE n->>'type' = 'person' AND n->>'id' = ANY(v_nodes)
+        AND COALESCE(n->'data'->>'partyId', n->'data'->>'orgId') IS NOT NULL;
+      IF v_employers IS NULL AND v_uid IS NOT NULL THEN
+        SELECT array_agg(DISTINCT m.scope) INTO v_employers
         FROM wg_project_members m
-        WHERE m.project_id = NEW.project_id AND m.user_id = v_uid AND m.scope IS NOT NULL
-        ORDER BY m.accepted_at DESC NULLS LAST
-        LIMIT 1;
+        WHERE m.project_id = NEW.project_id AND m.user_id = v_uid AND m.scope IS NOT NULL;
       END IF;
-      IF v_employer IS NOT NULL AND NOT EXISTS (
+      IF v_employers IS NOT NULL AND NOT EXISTS (
         WITH RECURSIVE chain(party_id, depth) AS (
-          SELECT v_employer, 0
+          SELECT unnest(v_employers), 0
           UNION
           SELECT e->>'target', chain.depth + 1
           FROM chain

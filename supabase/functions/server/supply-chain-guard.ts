@@ -205,6 +205,27 @@ export function assertScopedSupplyChainUpdate(
   }
 }
 
+function positiveNumber(value: unknown): boolean {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
+/**
+ * A timesheet week that records real work: anything past draft, or a draft
+ * with hours on any day. Opening the Timesheets tab creates empty draft weeks;
+ * those must not count as activity that blocks removing a company.
+ */
+export function isTimesheetWeekWithWork(row: { status?: string | null; data?: unknown }): boolean {
+  if (row?.status && row.status !== "draft") return true;
+  const data = row?.data && typeof row.data === "object" ? row.data as Record<string, unknown> : {};
+  const days = Array.isArray(data.days) ? data.days : [];
+  return days.some((day: any) => (
+    positiveNumber(day?.hours)
+    || positiveNumber(day?.totalHours)
+    || (Array.isArray(day?.entries) && day.entries.some((entry: any) => positiveNumber(entry?.hours)))
+  ));
+}
+
 /** Why a party cannot be removed; empty when removal is allowed. */
 export function partyRemovalBlockers(activity: {
   acceptedMembers: number;

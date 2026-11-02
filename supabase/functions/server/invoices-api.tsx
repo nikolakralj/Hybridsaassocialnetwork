@@ -242,8 +242,13 @@ async function getInvoiceAccess(invoice: any, userId: string) {
   const fromPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.from_party_id, userId);
   const toPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.to_party_id, userId);
 
+  // The buyer reads an invoice only once it was issued; a draft is the
+  // seller's working copy (same rule as wg_invoices RLS, migration 048).
+  const BUYER_VISIBLE_STATUSES = ["issued", "paid", "partially_paid", "overdue"];
+  const wasIssued = Boolean(invoice.issued_at) || BUYER_VISIBLE_STATUSES.includes(String(invoice.status));
+
   return {
-    canRead: fromPartyAccess.canRead || toPartyAccess.canRead,
+    canRead: fromPartyAccess.canRead || (wasIssued && toPartyAccess.canRead),
     canManage: fromPartyAccess.canManage,
   };
 }

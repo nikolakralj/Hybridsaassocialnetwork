@@ -48,20 +48,46 @@ export function employerOf(workerNodeId: string, parties: ChainParty[]): ChainPa
   return parties.find((party) => (party.people || []).some((person) => person.id === workerNodeId));
 }
 
-/** Hops from the worker's employer up the billsTo chain (first billsTo target per party, cycle-safe). */
-export function billingPathFor(workerNodeId: string, parties: ChainParty[]): ChainHop[] {
+/**
+ * Hops from the worker's employer up the billsTo chain (cycle-safe).
+ *
+ * A party that bills more than one company on the project (e.g. a sub shared
+ * by two agencies) is ambiguous: the worker's buyer is the one with a
+ * worker-specific supply rate from that party, when exactly one has it.
+ * Otherwise the walk stops there and `ambiguousAt` names the party, so the
+ * caller can ask for a per-worker rate instead of guessing a buyer.
+ */
+export function resolveBillingPath(
+  workerNodeId: string,
+  parties: ChainParty[],
+  linkRates: LinkRate[] = [],
+): { hops: ChainHop[]; ambiguousAt?: string } {
   const byId = new Map(parties.map((party) => [party.id, party]));
   const hops: ChainHop[] = [];
   const seen = new Set<string>();
   let current = employerOf(workerNodeId, parties);
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    const nextId = (current.billsTo || []).find((id) => byId.has(id) && id !== current!.id);
-    if (!nextId) break;
-    hops.push({ sellerId: current.id, buyerId: nextId });
+    const sellerId = current.id;
+    const targets = Array.from(new Set((current.billsTo || []).filter((id) => byId.has(id) && id !== sellerId)));
+    if (targets.length === 0) break;
+    let nextId: string | undefined = targets[0];
+    if (targets.length > 1) {
+      const pinned = targets.filter((buyerId) => linkRates.some((rate) => rate.kind === 'supply'
+        && rate.sellerPartyId === sellerId
+        && rate.buyerPartyId === buyerId
+        && rate.subjectNodeId === workerNodeId));
+      if (pinned.length !== 1) return { hops, ambiguousAt: sellerId };
+      nextId = pinned[0];
+    }
+    hops.push({ sellerId, buyerId: nextId });
     current = byId.get(nextId);
   }
-  return hops;
+  return { hops };
+}
+
+export function billingPathFor(workerNodeId: string, parties: ChainParty[], linkRates: LinkRate[] = []): ChainHop[] {
+  return resolveBillingPath(workerNodeId, parties, linkRates).hops;
 }
 
 /**
@@ -138,17 +164,25 @@ export function planChainInvoices<W>(input: PlanChainInvoicesInput<W>): {
   missing: MissingHopRate[];
   /** weeks whose worker has no employer/billsTo path at all */
   unrouted: W[];
+  /** workers whose chain reaches a party billing several companies, with no per-worker rate to pick one */
+  ambiguous: Array<{ workerId: string; partyId: string; partyName?: string }>;
 } {
   const nameOf = new Map(input.parties.map((party) => [party.id, party.name]));
   const groups = new Map<string, ChainInvoiceGroup<W>>();
   const missing = new Map<string, MissingHopRate>();
   const unrouted: W[] = [];
+  const ambiguous = new Map<string, { workerId: string; partyId: string; partyName?: string }>();
 
   for (const week of input.weeks) {
     const workerId = input.workerIdOf(week);
-    const path = billingPathFor(workerId, input.parties);
+    const { hops: path, ambiguousAt } = resolveBillingPath(workerId, input.parties, input.linkRates);
+    if (ambiguousAt) {
+      // Hops before the ambiguous party are still billed; from there on the
+      // buyer is unknown, so nothing is guessed.
+      ambiguous.set(`${workerId}>${ambiguousAt}`, { workerId, partyId: ambiguousAt, partyName: nameOf.get(ambiguousAt) });
+    }
     if (path.length === 0) {
-      unrouted.push(week);
+      if (!ambiguousAt) unrouted.push(week);
       continue;
     }
     const keys = input.weekKeysOf(week);
@@ -156,7 +190,7 @@ export function planChainInvoices<W>(input: PlanChainInvoicesInput<W>): {
       if (!input.canBillSeller(hop.sellerId)) return;
       const already = input.invoicedKeysBySeller.get(hop.sellerId);
       if (keys.some((key) => already?.has(key) || input.unattributedInvoicedKeys?.has(key))) return;
-      const rate = resolveHopRate(hop, workerId, input.linkRates, input.legacyRates, index === path.length - 1);
+      const rate = resolveHopRate(hop, workerId, input.linkRates, input.legacyRates, !ambiguousAt && index === path.length - 1);
       if (!rate) {
         missing.set(`${hop.sellerId}>${hop.buyerId}>${workerId}`, {
           ...hop,
@@ -182,13 +216,16 @@ export function planChainInvoices<W>(input: PlanChainInvoicesInput<W>): {
     });
   }
 
-  // A seller invoice with a missing worker price is not generated at all: no
-  // partial invoices that silently under-bill.
-  const blocked = new Set([...missing.values()].map((item) => `${item.sellerId}>${item.buyerId}`));
+  // A worker with no price on a hop is left out of that hop's invoice (and
+  // reported in `missing`); the other workers on the hop are still invoiced.
+  // Their weeks stay un-invoiced for that seller, so the next Generate after
+  // the rate is set bills them. Blocking the whole hop for one missing rate
+  // stopped an agency's entire monthly invoice for one new hire.
   return {
-    groups: [...groups.entries()].filter(([key]) => !blocked.has(key)).map(([, group]) => group),
+    groups: [...groups.values()],
     missing: [...missing.values()],
     unrouted,
+    ambiguous: [...ambiguous.values()],
   };
 }
 
@@ -204,7 +241,7 @@ export function linkMargin(
   parties: ChainParty[],
   linkRates: LinkRate[],
 ): { sell: LinkRate; cost: LinkRate; margin: number } | null {
-  const path = billingPathFor(workerNodeId, parties);
+  const path = billingPathFor(workerNodeId, parties, linkRates);
   const outIndex = path.findIndex((hop) => hop.sellerId === partyId);
   if (outIndex < 0) return null;
   const pick = (hop: ChainHop) => {
@@ -233,8 +270,8 @@ export function chainBillingRates(
 ): Record<string, HopRate> {
   const result: Record<string, HopRate> = {};
   workerNodeIds.forEach((workerId) => {
-    const path = billingPathFor(workerId, parties);
-    if (path.length === 0) return;
+    const { hops: path, ambiguousAt } = resolveBillingPath(workerId, parties, linkRates);
+    if (path.length === 0 || ambiguousAt) return;
     const hops = path.map((hop, index) => resolveHopRate(hop, workerId, linkRates, legacyRates, index === path.length - 1));
     if (hops.every(Boolean)) result[workerId] = hops[hops.length - 1]!;
   });
