@@ -28,6 +28,7 @@ import {
   type ApprovalSubjectSnapshot,
 } from '../utils/api/approvals-supabase';
 import type { SubmissionEnvelope, TimeEntry } from '../types/timesheets';
+import { matchesProject as weekMatchesProject } from '../utils/timesheet-match';
 import type { ApprovalParty } from '../utils/graph/approval-fallback';
 import {
   normalizeStoredDay,
@@ -245,10 +246,8 @@ function activeProjectId(): string {
   return sessionStorage.getItem('currentProjectId') || DEFAULT_PROJECT_ID;
 }
 
-/** Returns true if a week belongs to the given project (or has no projectId — legacy data). */
 function matchesProject(week: StoredWeek, projectId: string): boolean {
-  if (!week.projectId) return true; // Legacy weeks without projectId are shown everywhere
-  return week.projectId === projectId;
+  return weekMatchesProject(week, projectId);
 }
 
 function readNameDir(projectId: string): Record<string, NameDirEntry> {
@@ -485,18 +484,6 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
   const pendingSyncs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const bump = useCallback(() => setVersion(v => v + 1), []);
-
-  // One-time migration: tag untagged (legacy) weeks with the current project
-  const hasTaggedLegacy = useRef(false);
-  useEffect(() => {
-    if (hasTaggedLegacy.current) return;
-    const currentProject = activeProjectId();
-    if (!currentProject || currentProject === DEFAULT_PROJECT_ID) return;
-    const hasUntagged = weeks.some(w => !w.projectId && !isDemoPersonId(w.personId));
-    if (!hasUntagged) { hasTaggedLegacy.current = true; return; }
-    setWeeks(prev => prev.map(w => (!w.projectId && !isDemoPersonId(w.personId)) ? { ...w, projectId: currentProject } : w));
-    hasTaggedLegacy.current = true;
-  }, [weeks]);
 
   // Persist to localStorage on every change (debounced)
   const lsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

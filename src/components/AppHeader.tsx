@@ -13,6 +13,7 @@ import {
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { SHOW_SOCIAL_FEATURES } from "../utils/feature-flags";
+import { projectWorkspacePath } from "../utils/workspace-link";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
 import { useState } from "react";
@@ -124,7 +125,7 @@ export function AppHeader() {
             </SheetContent>
           </Sheet>
 
-          <Link to="/app/notifications">
+          <Link to="/app/approvals">
             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
               <Bell className="w-4 h-4" />
             </Button>
@@ -145,7 +146,10 @@ export function AppHeader() {
                 <Briefcase className="w-4 h-4 mr-2" />
                 New Project
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate('/app/approvals')} className="cursor-pointer">
+              <DropdownMenuItem onClick={() => navigate(projectWorkspacePath(
+                typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectId') : null,
+                'timesheets',
+              ))} className="cursor-pointer">
                 <Clock className="w-4 h-4 mr-2" />
                 Submit Timesheet
               </DropdownMenuItem>

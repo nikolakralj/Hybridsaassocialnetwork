@@ -14,6 +14,7 @@ import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import { sumWeekHours } from '../../types/timesheets';
 import type { StoredWeek } from '../../types/timesheets';
 import { lineAmount, sumMoney } from '../../utils/money';
+import { resolveInvoiceParties } from '../../utils/invoice-parties';
 import {
   blockingKeysFor,
   formatBillingPeriod,
@@ -66,6 +67,8 @@ export type InvoiceDraft = {
   /** All timesheet keys covered by this invoice (consolidated invoices span several weeks/people). */
   timesheetIds?: string[];
   lineItems?: InvoiceLineItem[];
+  fromPartyId?: string | null;
+  toPartyId?: string | null;
   fromPartyName?: string | null;
   toPartyName?: string | null;
   fromAddress?: string | null;
@@ -148,8 +151,8 @@ function readPartyIds(projectId: string): { fromPartyId: string; toPartyId: stri
     || parties[0];
 
   return {
-    fromPartyId: seller?.id || projectId,
-    toPartyId: buyer?.id || projectId,
+    fromPartyId: seller?.id || '',
+    toPartyId: buyer?.id || '',
     fromPartyName: seller?.name || '',
     toPartyName: buyer?.name || '',
   };
@@ -663,6 +666,8 @@ export function buildConsolidatedDraft(
     rate: 0, // multi-line invoice: pricing lives on the per-week lines
     amount: totalAmount,
     currency,
+    fromPartyId: group.sellerId,
+    toPartyId: group.buyerId,
     fromPartyName: group.sellerName || perWeek[0].fromPartyName,
     toPartyName: group.buyerName || perWeek[0].toPartyName || clientName,
     timesheetKey: perWeek[0].timesheetKey || makeTimesheetKey(perWeek[0].personId, perWeek[0].weekStart),
@@ -712,10 +717,12 @@ function toInvoicePayload(invoice: InvoiceDraft) {
     status: apiStatus,
     notes: invoice.notes,
     lineItemTemplateDescription: invoice.lineItemTemplateDescription,
-    fromPartyId: partyIds.fromPartyId,
-    toPartyId: partyIds.toPartyId,
-    fromPartyName: invoice.fromPartyName || partyIds.fromPartyName || invoice.projectName,
-    toPartyName: invoice.toPartyName || partyIds.toPartyName || invoice.clientName,
+    ...resolveInvoiceParties(invoice, {
+      fromPartyId: partyIds.fromPartyId,
+      toPartyId: partyIds.toPartyId,
+      fromPartyName: partyIds.fromPartyName || invoice.projectName,
+      toPartyName: partyIds.toPartyName || invoice.clientName,
+    }),
     fromAddress: invoice.fromAddress ?? undefined,
     toAddress: invoice.toAddress ?? undefined,
     taxRate: invoice.taxRate ?? 0,
