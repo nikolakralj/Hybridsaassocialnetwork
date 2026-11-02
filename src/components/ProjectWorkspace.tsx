@@ -152,7 +152,7 @@ export function ProjectWorkspace({
     window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
       detail: { projectId },
     }));
-  }, [projectId, shouldReplaceDemoProjectId]);
+  }, [projectId]);
   
   // Load project name from API if not provided
   useEffect(() => {
