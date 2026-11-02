@@ -12,7 +12,9 @@
 --     per-person bill rate applies only on the final hop (buyer bills nobody),
 --     so projects without link rates price exactly as under 041;
 --   * "already billed" looks only at live invoices from the same seller;
---   * each line names the worker (041 wrote only the week).
+--   * each line names the worker (041 wrote only the week);
+--   * the seller must be on the worker's billing chain (041 let the Sub bill
+--     the Agency for the Agency's own employee's approved week).
 -- And it lets a party's own decision-makers (044 wg_user_is_party_commercial:
 -- Owner/Editor or approver scoped to that party, or its org admin/finance/
 -- manager/approver) create invoices FROM their party, so the Sub can issue
@@ -93,6 +95,7 @@ DECLARE
   v_po_ok boolean;
   v_node text;
   v_final_hop boolean;
+  v_employer text;
 BEGIN
   IF NEW.status = 'cancelled' THEN
     RETURN NEW;
@@ -208,6 +211,39 @@ BEGIN
         ORDER BY (lr.subject_graph_node_id IS NULL AND lr.subject_user_id IS NULL),
                  lr.effective_from DESC NULLS LAST, lr.created_at DESC
         LIMIT 1;
+      END IF;
+
+      -- 047: the seller must be on this worker's billing chain (its employer
+      -- or a party the employer's chain bills through). 041 let any party
+      -- that bills the buyer invoice any approved week of the project, e.g.
+      -- the Sub billing the Agency for the Agency's own employee.
+      SELECT COALESCE(n->'data'->>'partyId', n->'data'->>'orgId')
+        INTO v_employer
+      FROM jsonb_array_elements(COALESCE(v_graph->'nodes', '[]'::jsonb)) n
+      WHERE n->>'type' = 'person' AND n->>'id' IN (v_person, COALESCE(v_node, v_person))
+      LIMIT 1;
+      IF v_employer IS NULL AND v_uid IS NOT NULL THEN
+        SELECT m.scope INTO v_employer
+        FROM wg_project_members m
+        WHERE m.project_id = NEW.project_id AND m.user_id = v_uid AND m.scope IS NOT NULL
+        ORDER BY m.accepted_at DESC NULLS LAST
+        LIMIT 1;
+      END IF;
+      IF v_employer IS NOT NULL AND NOT EXISTS (
+        WITH RECURSIVE chain(party_id, depth) AS (
+          SELECT v_employer, 0
+          UNION
+          SELECT e->>'target', chain.depth + 1
+          FROM chain
+          JOIN jsonb_array_elements(COALESCE(v_graph->'edges', '[]'::jsonb)) e
+            ON e->>'source' = chain.party_id
+           AND COALESCE(e->'data'->>'edgeType', e->>'type') IN ('billsTo', 'subcontracts', 'bills_to')
+          WHERE chain.depth < 20
+        )
+        SELECT 1 FROM chain WHERE party_id = NEW.from_party_id
+      ) THEN
+        RAISE EXCEPTION 'Timesheet % is not work this seller can bill: the worker is not on its billing chain.', v_key
+          USING ERRCODE = '23514';
       END IF;
 
       v_final_hop := NOT EXISTS (
