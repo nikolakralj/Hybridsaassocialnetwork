@@ -1425,7 +1425,8 @@ export function InvoicesWorkspace({
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900">{invoice.number}</h4>
                         <p className="text-sm text-slate-500">
-                          {invoice.personName} - {invoice.clientName}
+                          {/* Saved invoices carry seller/buyer names; the person id alone is a raw account id after reload. */}
+                          {invoice.fromPartyName || invoice.personName} → {invoice.toPartyName || invoice.clientName}
                         </p>
                       </div>
                     </div>
