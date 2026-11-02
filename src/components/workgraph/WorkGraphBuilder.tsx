@@ -36,6 +36,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { toast } from 'sonner';
 import { TEMPLATES } from './templates';
 import { useGraphPersistence } from '../hooks/useGraphPersistence';
+import { preserveServerGraphNodes } from '../../utils/graph/preserve-node-data';
 import { ProjectCreateWizard } from './ProjectCreateWizard';
 import {
   computeScopedView,
@@ -2107,7 +2108,7 @@ export function WorkGraphBuilder({
     }
     // The editor returns the full active snapshot. Merging preserved removed
     // parties as ghost nodes; version history already retains the old graph.
-    const mergedNodes = nodes;
+    let mergedNodes = nodes;
     const mergedEdges = edges;
 
     try {
@@ -2119,6 +2120,9 @@ export function WorkGraphBuilder({
         toast.error('Supply chain not saved', { description: STALE_GRAPH_MESSAGE });
         return;
       }
+      // Keep what the wizard doesn't know about (linked accounts, billing
+      // fields, emails hidden from this viewer) on the nodes it regenerated.
+      mergedNodes = preserveServerGraphNodes(latest.nodes as BaseNode[], nodes);
     } catch {
       toast.error('Could not check the latest graph, so nothing was saved. Try again.');
       return;
