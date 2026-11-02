@@ -99,8 +99,10 @@ export async function saveTimesheetWeek(
         .eq('id', rowId)
         .maybeSingle();
       if (existingError) throw new Error(existingError.message || 'Failed to save timesheet');
-      if (existing && timesheetContentLocked(existing.status)) {
-        throw new Error(timesheetLockMessage(existing.status));
+      // wg_timesheet_weeks is not in the generated Supabase types; type the row here.
+      const existingStatus = (existing as { status?: string } | null)?.status;
+      if (existing && timesheetContentLocked(existingStatus)) {
+        throw new Error(timesheetLockMessage(existingStatus));
       }
 
       const { error } = await supabase
@@ -109,7 +111,7 @@ export async function saveTimesheetWeek(
 
       if (!error) return { weekStart, ...row };
       if (isTimesheetLockError(error)) {
-        throw new Error(error.message || timesheetLockMessage(existing?.status));
+        throw new Error(error.message || timesheetLockMessage(existingStatus));
       }
       console.warn('[timesheets] Direct Supabase save failed:', error.message);
     }
