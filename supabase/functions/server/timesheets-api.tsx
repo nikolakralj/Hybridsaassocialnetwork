@@ -206,6 +206,15 @@ timesheetsRouter.put("/make-server-f8b491be/api/timesheets/:weekStart", async (c
       .eq("id", rowId)
       .maybeSingle();
     if (existingError) throw existingError;
+    if (existing?.status === "approved") {
+      return c.json({ error: "Approved timesheets are locked.", code: "timesheet_locked" }, 409);
+    }
+    if (existing?.status === "submitted") {
+      return c.json({
+        error: "Submitted timesheets are locked while they are being approved. Recall the week to edit it.",
+        code: "timesheet_locked",
+      }, 409);
+    }
 
     const { status: _ignoredStatus, ...content } = body || {};
     const upsertRow = {
@@ -284,6 +293,14 @@ timesheetsRouter.patch("/make-server-f8b491be/api/timesheets/:weekStart/status",
 
     if (fe) throw fe;
     if (!existing) return c.json({ error: "Timesheet week not found" }, 404);
+    if (existing.status !== "rejected") {
+      return c.json({
+        error: existing.status === "approved"
+          ? "Approved timesheets are locked."
+          : "Only a rejected week can be reopened.",
+        code: "timesheet_locked",
+      }, 409);
+    }
 
     if (targetsAnotherUser && !(await canReviewTimesheet(user.id, existing))) {
       return c.json({ error: "Forbidden" }, 403);
