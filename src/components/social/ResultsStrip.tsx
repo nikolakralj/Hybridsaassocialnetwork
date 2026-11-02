@@ -22,9 +22,9 @@ export function ResultsStrip() {
     },
     {
       icon: Rocket,
-      number: "Open",
-      label: "Beta",
-      sublabel: "Free while we build in public",
+      number: "€199/mo",
+      label: "Founding pilot",
+      sublabel: "+ €750 one-time onboarding",
     },
   ];
 
