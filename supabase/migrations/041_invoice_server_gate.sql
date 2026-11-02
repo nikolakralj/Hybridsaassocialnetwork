@@ -86,7 +86,7 @@ BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Sign in to create an invoice.' USING ERRCODE = '42501';
   END IF;
-  IF NEW.created_by IS DISTINCT FROM auth.uid() THEN
+  IF TG_OP = 'INSERT' AND NEW.created_by IS DISTINCT FROM auth.uid() THEN
     RAISE EXCEPTION 'You cannot create an invoice for another user.' USING ERRCODE = '42501';
   END IF;
   IF NOT public.wg_invoice_caller_controls_party(NEW.project_id, NEW.from_party_id) THEN
@@ -128,6 +128,13 @@ BEGIN
       END IF;
       v_person := left(v_base, length(v_base) - 11);
       v_week := right(v_base, 10)::date;
+      IF v_part IS NOT NULL AND (
+        v_part !~ '^[0-9]{4}-[0-9]{2}$'
+        OR v_part < to_char(v_week, 'YYYY-MM')
+        OR v_part > to_char((v_week + 6), 'YYYY-MM')
+      ) THEN
+        RAISE EXCEPTION 'Invoice timesheet key % is not a month of this week.', v_key USING ERRCODE = '23514';
+      END IF;
       v_uid := public.wg_resolve_timesheet_person(NEW.project_id, v_person);
 
       SELECT count(*), count(*) FILTER (WHERE w.status <> 'approved')
@@ -276,6 +283,17 @@ BEGIN
         AND d.type = 'purchase_order'
         AND d.status = 'signed'
         AND (d.expires_at IS NULL OR d.expires_at > now())
+        AND (
+          (d.from_party = NEW.from_party_id AND d.to_party = NEW.to_party_id)
+          OR (d.from_party = NEW.to_party_id AND d.to_party = NEW.from_party_id)
+        )
+        AND (
+          COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId', '') = ''
+          OR COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId') IN (
+            SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
+            FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+          )
+        )
     )
     OR EXISTS (
       SELECT 1
@@ -283,6 +301,14 @@ BEGIN
       WHERE n->>'type' = 'po'
         AND COALESCE(n->'data'->>'poNumber', n->'data'->>'po_number', '') <> ''
         AND COALESCE(n->'data'->>'status', n->'data'->>'poStatus', '') IN ('signed', 'active')
+        AND COALESCE(n->'data'->>'partyId', n->'data'->>'orgId', n->'data'->>'fromPartyId', '') IN (NEW.from_party_id, NEW.to_party_id)
+        AND (
+          COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId', '') = ''
+          OR COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId') IN (
+            SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
+            FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+          )
+        )
     )
   ) THEN
     RAISE EXCEPTION 'A signed purchase order is required before this invoice can be issued.'
