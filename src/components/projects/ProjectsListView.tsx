@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { Plus, Search, Filter, MoreVertical, Trash2, Eye, Users, Calendar, Loader2, ArrowRight } from 'lucide-react';
 import { Button } from '../ui/button';
@@ -76,18 +76,29 @@ export function ProjectsListView() {
   const [projectMembers, setProjectMembers] = useState<Record<string, number>>({});
   const [projectRoles, setProjectRoles] = useState<Record<string, ProjectRole | null>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // After a reload the list can load twice (auth restoring, then token ready).
+  // Only the newest request may update state, otherwise a slower stale
+  // response could overwrite it or leave the page without content.
+  const loadRequestRef = useRef(0);
 
   const loadProjects = async () => {
+    const requestId = ++loadRequestRef.current;
+    const isStale = () => requestId !== loadRequestRef.current;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [userProjects, pendingInvitations] = await Promise.all([
         listProjects(accessToken),
         listProjectInvitations(accessToken).catch(() => []),
       ]);
+      if (isStale()) return;
 
-      setProjects(userProjects);
+      setProjects(Array.isArray(userProjects) ? userProjects : []);
       setInvitations(pendingInvitations);
-      
+      // Show the list now; member counts and roles fill in afterwards.
+      setIsLoading(false);
+
       // Load member counts in parallel
       const memberCounts: Record<string, number> = {};
       const roleByProject: Record<string, ProjectRole | null> = {};
@@ -112,19 +123,21 @@ export function ProjectsListView() {
           }
         })
       );
+      if (isStale()) return;
       setProjectMembers(memberCounts);
       setProjectRoles(roleByProject);
     } catch (error) {
+      if (isStale()) return;
       console.error('Error loading projects:', error);
-      // Don't toast on initial load if there's just no data
+      setLoadError(error instanceof Error ? error.message : 'Projects could not be loaded');
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     if (authLoading) return;
-    loadProjects();
+    void loadProjects();
   }, [accessToken, authLoading]);
 
   const handleCreateProject = () => {
@@ -267,10 +280,13 @@ export function ProjectsListView() {
     await loadProjects();
   };
 
-  const filteredProjects = projects.filter(project =>
-    project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    project.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredProjects = normalizedQuery
+    ? projects.filter(project =>
+        project.name?.toLowerCase().includes(normalizedQuery) ||
+        project.description?.toLowerCase().includes(normalizedQuery)
+      )
+    : projects;
 
   const getSourceBadge = (project: ProjectListItem) => {
     if (project.storageSource === 'cloud') {
@@ -358,8 +374,21 @@ export function ProjectsListView() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <div className="flex flex-col items-center justify-center gap-2 py-24 text-sm text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          Loading projects...
+        </div>
+      ) : loadError ? (
+        <div className="text-center py-16 rounded-2xl border border-destructive/30 bg-destructive/5">
+          <p className="text-foreground font-medium mb-1">Projects could not be loaded</p>
+          <p className="text-muted-foreground text-sm mb-4">{loadError}</p>
+          <Button variant="outline" size="sm" onClick={() => void loadProjects()}>
+            Try again
+          </Button>
+        </div>
+      ) : projects.length > 0 && filteredProjects.length === 0 ? (
+        <div className="text-center py-16 text-sm text-muted-foreground">
+          No projects match "{searchQuery.trim()}".
         </div>
       ) : filteredProjects.length === 0 ? (
         <div className="text-center py-24 rounded-2xl border-2 border-dashed border-border/60 bg-muted/20">
