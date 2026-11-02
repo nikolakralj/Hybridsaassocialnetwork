@@ -16,18 +16,15 @@
  *  - pay fields survive only for: self, and org_admin/org_finance of the
  *    person's own organization
  *
- * Adoption (M2-WIRE, after current UI work settles):
- *  1. WorkGraphContext / WorkGraphBuilder load via fetchScopedGraph() instead
- *     of reading project.graph directly for non-editing viewers.
- *  2. Keep computeScopedView() as client-side defense-in-depth; it becomes
- *     presentation-only.
- *  3. Graph EDITING (owner) keeps the full-graph path until an editing RPC
- *     exists — editors already see full topology by rule.
+ * Markup, margin and other commercial edge fields are returned only when the
+ * caller's party is the source (the seller). fetchScopedGraph applies the same
+ * rule to the payload it received.
  *
  * Adversarially verified live (2026-07-15): see TRUST_CORE_REVIEW_2026-07-15.md.
  */
 
 import { createClient } from '../supabase/client';
+import { stripCommercialEdgeFields } from './scoped-graph-commercial';
 
 export type VisibilityScope = 'company_only' | 'counterparty' | 'named_chain';
 
@@ -67,7 +64,7 @@ export async function fetchScopedGraph(projectId: string): Promise<ScopedGraph> 
   }
 
   const result = (data ?? {}) as Partial<ScopedGraph>;
-  return {
+  const graph: ScopedGraph = {
     nodes: Array.isArray(result.nodes) ? result.nodes : [],
     edges: Array.isArray(result.edges) ? result.edges : [],
     meta: {
@@ -82,4 +79,5 @@ export async function fetchScopedGraph(projectId: string): Promise<ScopedGraph> 
       ...(result.meta ?? {}),
     },
   };
+  return stripCommercialEdgeFields(graph);
 }
