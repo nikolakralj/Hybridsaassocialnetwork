@@ -9,7 +9,7 @@ export interface InvoicePartyRef {
 export function resolveInvoiceParties(
   draft: InvoicePartyRef,
   fallback: InvoicePartyRef = {},
-): Required<Pick<InvoicePartyRef, 'fromPartyId' | 'toPartyId' | 'fromPartyName' | 'toPartyName'>> {
+): { fromPartyId: string; toPartyId: string; fromPartyName: string; toPartyName: string } {
   const pick = (primary?: string | null, secondary?: string | null) => {
     const value = (primary || secondary || '').trim();
     return value;
