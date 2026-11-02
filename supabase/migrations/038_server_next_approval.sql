@@ -27,6 +27,7 @@ DECLARE
   v_route jsonb := '[]'::jsonb;
   v_next jsonb;
   v_position integer;
+  v_party text;
   v_week_start date;
   v_week_status text;
 BEGIN
@@ -76,6 +77,29 @@ BEGIN
     FROM jsonb_array_elements(v_route) s
     WHERE s->>'partyId' = v_rec.approver_node_id
     LIMIT 1;
+
+    -- A legacy row may store a person id or a user id instead of a party id.
+    -- Find that person's party on the fresh route before using the layer number.
+    IF v_position IS NULL THEN
+      SELECT COALESCE(n->'data'->>'partyId', n->'data'->>'orgId') INTO v_party
+      FROM wg_projects p
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.graph->'nodes', '[]'::jsonb)) n
+      WHERE p.id = v_rec.project_id
+        AND n->>'type' = 'person'
+        AND (
+          n->>'id' = v_rec.approver_node_id
+          OR n->'data'->>'userId' = v_rec.approver_node_id
+          OR public.wg_graph_node_user_id(p.id, n)::text = v_rec.approver_node_id
+        )
+      LIMIT 1;
+
+      IF v_party IS NOT NULL THEN
+        SELECT (s->>'step')::integer INTO v_position
+        FROM jsonb_array_elements(v_route) s
+        WHERE s->>'partyId' = v_party
+        LIMIT 1;
+      END IF;
+    END IF;
 
     IF v_position IS NOT NULL THEN
       SELECT s INTO v_next
