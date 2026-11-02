@@ -36,7 +36,7 @@ It does **not** use `can_view_rates`, which the wizard defaulted to true for eve
 
 Rules:
 - **SELECT** on `wg_link_rates`: the caller is commercial for the seller party, or (supply only) for the buyer party, or (employment only) is the subject worker (`subject_user_id = auth.uid()`, or the caller's accepted member row has `graph_node_id = subject_graph_node_id`).
-- **INSERT / UPDATE / DELETE**: commercial for the seller, or (supply only) for the buyer. Employment rates can only be written by the employer. `created_by` must equal `auth.uid()`. There is **no** creator-can-always-read clause.
+- **INSERT / UPDATE / DELETE**: commercial for the seller only. The buyer reads the price but cannot change it (a client cannot rewrite what the agency charges it). Employment rates can only be written by the employer. `created_by` must equal `auth.uid()`. There is **no** creator-can-always-read clause.
 
 Expected results for the Vis chain:
 
@@ -58,7 +58,7 @@ For each approved worker-week, walk the billing chain from the worker's employer
 2. else `supply` link rate (S, B, any worker);
 3. else (legacy) the worker's old per-person bill rate, but only on the hop that ends at the final client. This keeps today's single-rate projects billing exactly as before.
 
-A hop with no rate is skipped and reported by name; the other invoices are still generated. Invoices are only built for hops whose seller the caller is commercial for, or for any hop when the caller manages the project (current behaviour). Duplicate detection is per seller: a week already invoiced by the Sub does not block the Agency from billing the same hours onward.
+A worker with no rate on a hop is left out of that hop's invoice and reported by name; the other workers on the hop and the other invoices are still generated, and the next Generate bills the left-out weeks once the rate is set. A party that bills more than one company is ambiguous: the buyer is taken from a per-worker supply rate when exactly one exists, otherwise those weeks are left out and reported (nothing is guessed). Invoices are only built for hops whose seller the caller is commercial for, or for any hop when the caller manages the project (current behaviour). Duplicate detection is per seller: a week already invoiced by the Sub does not block the Agency from billing the same hours onward.
 
 ## 4. Company add / remove (edge function `PUT /projects/:id`, needs deploy)
 
@@ -73,6 +73,7 @@ A hop with no rate is skipped and reported by name; the other invoices are still
 - **Graph (migration 045):** the privity projection gives `org_approver` the same one-hop counterparty sight as org_admin/finance/manager, so the Sub sees Agency and the Client sees Agency. Commercial fields are still stripped.
 - **Timesheets (front end):** approvers see the weeks the server already returns to them (RLS-scoped). Names resolve from the week's own person/graph ids.
 - **Invoices (migration 046):** `wg_invoices` SELECT adds `wg_user_is_party_commercial` on `from_party_id` / `to_party_id`. The Invoices tab shows party approvers a read-only list of the invoices where their party is buyer or seller.
+- **Buyers see issued invoices only (migration 048):** `wg_invoices.issued_at` is set by trigger the first time an invoice leaves draft and is never cleared. The seller side reads its invoices in any status; the buyer side reads one only when `issued_at` is set. The edge `GET /invoices` and the Invoices tab apply the same rule. A company that bills nobody on the project (the end client) gets the read-only list, with no Generate button.
 - **Edit Supply Chain people:** after a successful save, each new person node with an email gets a project member placeholder plus an invitation through the deployed `POST /projects/:id/members` route, with scope = the person's party. No SMTP is needed for the row to exist.
 
 ## 6. Migration list (files only, none applied)
@@ -83,6 +84,8 @@ A hop with no rate is skipped and reported by name; the other invoices are still
 | 044 | `044_link_rates.sql`: table, helper, RLS | 018, 020, 024 |
 | 045 | `045_scoped_graph_approver_counterparty.sql`: renames the current `wg_get_scoped_graph` to `wg_get_scoped_graph_pre045` and wraps it; adds org_approver one-hop counterparties | 025, 031 |
 | 046 | `046_invoice_party_commercial_read.sql`: invoice SELECT for buyer/seller decision-makers | 044 |
+| 048 | `048_invoice_buyer_sees_issued_only.sql`: `issued_at` + trigger; buyer-side invoice read only after issue | 046 |
+| 049 | `049_repair_member_scope_from_graph.sql`: one-off data repair of member scopes that differ from their graph person's company (live: 1 row, test user Will) | — |
 | 047 | `047_invoice_hop_pricing_once_per_seller.sql`: replaces 041's invoice trigger function. It adds per-hop pricing from wg_link_rates (the legacy per-person rate applies only on the final hop), "already billed" per seller, a seller-must-be-on-the-worker's-chain check, and worker names on lines. Party decision-makers may invoice from their own party. It refuses to apply without 041 and 044 | 041, 044 |
 
 Verification: a local PostgreSQL 18 (embedded-postgres) with Supabase auth stubs, all repo migrations plus 044–047 applied, and a seeded Vis-shaped project. SQL assertions run per user (`request.jwt.claim.sub` + `SET ROLE authenticated`). Front-end logic gets vitest tests. Live checks use the 5 vis accounts for everything that needs no new migration or deploy.
