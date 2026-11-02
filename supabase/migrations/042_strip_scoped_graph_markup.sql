@@ -1,7 +1,7 @@
--- 042: wg_get_scoped_graph strips commercial edge fields unless the caller
--- is the seller. The seller is the party on the source side of the edge.
--- A project owner sees the topology and their own sell markup, not the
--- markup on an edge they buy.
+-- 042: wg_get_scoped_graph strips commercial fields on billing edges unless
+-- the caller is org_admin or org_finance of the selling party (the source).
+-- Funding edges are not treated as sales: their amount stays for whoever
+-- the privity projection already allowed to see the edge.
 
 BEGIN;
 
@@ -43,22 +43,29 @@ AS $$
 DECLARE
   v_result jsonb;
   v_parties text[];
+  v_role text;
+  v_finance boolean;
   v_edges jsonb := '[]'::jsonb;
   v_edge jsonb;
+  v_kind text;
 BEGIN
   v_result := public.wg_get_scoped_graph_with_role_meta(p_project_id);
 
   SELECT COALESCE(array_agg(value), '{}')
   INTO v_parties
   FROM jsonb_array_elements_text(COALESCE(v_result #> '{meta,viewerPartyIds}', '[]'::jsonb));
+  v_role := COALESCE(v_result #>> '{meta,viewerOrgRole}', '');
+  v_finance := v_role IN ('org_admin', 'org_finance');
 
   FOR v_edge IN
     SELECT value FROM jsonb_array_elements(COALESCE(v_result->'edges', '[]'::jsonb))
   LOOP
-    IF v_edge->>'source' = ANY(v_parties) THEN
-      v_edges := v_edges || jsonb_build_array(v_edge);
-    ELSE
+    v_kind := COALESCE(v_edge->'data'->>'edgeType', v_edge->>'type', '');
+    IF v_kind IN ('billsTo', 'subcontracts', 'bills_to')
+       AND NOT (v_finance AND v_edge->>'source' = ANY(v_parties)) THEN
       v_edges := v_edges || jsonb_build_array(public.wg_strip_commercial_edge(v_edge));
+    ELSE
+      v_edges := v_edges || jsonb_build_array(v_edge);
     END IF;
   END LOOP;
 
@@ -71,6 +78,6 @@ REVOKE ALL ON FUNCTION public.wg_get_scoped_graph(TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.wg_get_scoped_graph(TEXT) TO authenticated;
 
 COMMENT ON FUNCTION public.wg_get_scoped_graph(TEXT) IS
-  'Privity projection. Commercial edge fields (markup, margin, rates) stay only on edges the caller sells.';
+  'Privity projection. Billing-edge markup and rates stay only for org_admin or org_finance of the selling party. Funding amounts are left as the privity projection returned them.';
 
 COMMIT;

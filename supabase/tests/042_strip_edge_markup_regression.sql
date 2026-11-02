@@ -23,7 +23,8 @@ SELECT
 FROM (VALUES
   ('04200000-0000-4000-8000-0000000000a1'::uuid, 'nikola-042@example.test', 'Nikola'),
   ('04200000-0000-4000-8000-0000000000b1'::uuid, 'rodman-042@example.test', 'Rodman'),
-  ('04200000-0000-4000-8000-0000000000c1'::uuid, 'james-042@example.test', 'James')
+  ('04200000-0000-4000-8000-0000000000c1'::uuid, 'james-042@example.test', 'James'),
+  ('04200000-0000-4000-8000-0000000000f1'::uuid, 'finance-042@example.test', 'Finance')
 ) AS u(id, email, display_name);
 
 INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
@@ -39,7 +40,8 @@ INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
     ),
     'edges', jsonb_build_array(
       jsonb_build_object('id', 'e_buy', 'source', 'party_contractor', 'target', 'party_agency', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 17.25)),
-      jsonb_build_object('id', 'e_sell', 'source', 'party_agency', 'target', 'party_client', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 22))
+      jsonb_build_object('id', 'e_sell', 'source', 'party_agency', 'target', 'party_client', 'type', 'billsTo', 'data', jsonb_build_object('edgeType', 'billsTo', 'markup', 22)),
+      jsonb_build_object('id', 'e_fund', 'source', 'party_client', 'target', 'party_agency', 'type', 'funds', 'data', jsonb_build_object('edgeType', 'funds', 'amount', 500))
     )
   ),
   '[]'::jsonb
@@ -50,14 +52,18 @@ INSERT INTO public.wg_project_members (
 ) VALUES
   ('mem_042_nikola', 'proj_reg_042', '04200000-0000-4000-8000-0000000000a1', 'Nikola', 'Owner', 'party_agency', 'person_nikola', '04200000-0000-4000-8000-0000000000a1', NOW()),
   ('mem_042_rodman', 'proj_reg_042', '04200000-0000-4000-8000-0000000000b1', 'Rodman', 'Contributor', 'party_contractor', 'person_rodman', '04200000-0000-4000-8000-0000000000a1', NOW()),
-  ('mem_042_james', 'proj_reg_042', '04200000-0000-4000-8000-0000000000c1', 'James', 'Commenter', 'party_client', 'person_james', '04200000-0000-4000-8000-0000000000a1', NOW());
+  ('mem_042_james', 'proj_reg_042', '04200000-0000-4000-8000-0000000000c1', 'James', 'Commenter', 'party_client', 'person_james', '04200000-0000-4000-8000-0000000000a1', NOW()),
+  ('mem_042_finance', 'proj_reg_042', '04200000-0000-4000-8000-0000000000f1', 'Finance', 'Viewer', 'party_agency', NULL, '04200000-0000-4000-8000-0000000000a1', NOW());
 
 INSERT INTO public.wg_organizations (id, name, owner_user_id, created_by) VALUES
-  ('org_042_client', 'James Client', '04200000-0000-4000-8000-0000000000c1', '04200000-0000-4000-8000-0000000000c1');
+  ('org_042_client', 'James Client', '04200000-0000-4000-8000-0000000000c1', '04200000-0000-4000-8000-0000000000c1'),
+  ('org_042_agency', 'Nikola Agency', '04200000-0000-4000-8000-0000000000a1', '04200000-0000-4000-8000-0000000000a1');
 INSERT INTO public.wg_organization_members (id, organization_id, user_id, org_role, membership_state) VALUES
-  ('orgmem_042_james', 'org_042_client', '04200000-0000-4000-8000-0000000000c1', 'org_manager', 'verified');
+  ('orgmem_042_james', 'org_042_client', '04200000-0000-4000-8000-0000000000c1', 'org_manager', 'verified'),
+  ('orgmem_042_finance', 'org_042_agency', '04200000-0000-4000-8000-0000000000f1', 'org_finance', 'verified');
 INSERT INTO public.wg_project_organizations (id, project_id, organization_id, graph_node_id, party_role, status) VALUES
-  ('porg_042_james', 'proj_reg_042', 'org_042_client', 'party_client', 'client', 'active');
+  ('porg_042_james', 'proj_reg_042', 'org_042_client', 'party_client', 'client', 'active'),
+  ('porg_042_agency', 'proj_reg_042', 'org_042_agency', 'party_agency', 'agency', 'active');
 
 CREATE OR REPLACE FUNCTION public.wg_test_042_act_as(p_uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -83,11 +89,24 @@ BEGIN
   scoped := public.wg_get_scoped_graph('proj_reg_042');
   SELECT e->'data'->>'markup' INTO sell_markup FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell';
   SELECT e->'data'->>'markup' INTO buy_markup FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_buy';
+  IF sell_markup IS NOT NULL OR scoped::text LIKE '%22%' OR scoped::text LIKE '%17.25%' THEN
+    RAISE EXCEPTION 'project owner Nikola saw billing markup without a finance role: % / %', sell_markup, buy_markup;
+  END IF;
+  IF (
+    SELECT e->'data'->>'amount' FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_fund'
+  ) IS DISTINCT FROM '500' THEN
+    RAISE EXCEPTION 'funding amount was stripped';
+  END IF;
+
+  PERFORM public.wg_test_042_act_as('04200000-0000-4000-8000-0000000000f1');
+  scoped := public.wg_get_scoped_graph('proj_reg_042');
+  SELECT e->'data'->>'markup' INTO sell_markup FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_sell';
+  SELECT e->'data'->>'markup' INTO buy_markup FROM jsonb_array_elements(scoped->'edges') e WHERE e->>'id' = 'e_buy';
   IF sell_markup IS DISTINCT FROM '22' THEN
-    RAISE EXCEPTION 'Nikola lost the markup on the edge he sells (%)', sell_markup;
+    RAISE EXCEPTION 'agency finance lost the markup on the edge they sell (%)', sell_markup;
   END IF;
   IF buy_markup IS NOT NULL OR scoped::text LIKE '%17.25%' THEN
-    RAISE EXCEPTION 'Nikola saw the contractor markup he buys (%)', buy_markup;
+    RAISE EXCEPTION 'agency finance saw the contractor markup (%)', buy_markup;
   END IF;
 
   PERFORM public.wg_test_042_act_as('04200000-0000-4000-8000-0000000000c1');
@@ -110,7 +129,7 @@ BEGIN
   END IF;
 
   INSERT INTO wg_regression_042_results VALUES
-    ('markup_only_for_seller', 'Nikola keeps markup 22 on the edge his agency sells and does not see 17.25 on the edge he buys. James sees that sell edge without the markup. Rodman sees neither figure.');
+    ('markup_only_for_seller_finance', 'Agency finance keeps markup 22 on the edge they sell and does not see 17.25. Nikola as project owner, James, and Rodman do not see billing markup. A funding amount stays.');
 END $$;
 
 RESET ROLE;
