@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Plus, Search, Filter, MoreVertical, Trash2, Eye, Users, Calendar, Loader2, ArrowRight } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -71,6 +72,7 @@ export function ProjectsListView() {
   const navigate = useNavigate();
   const { user, accessToken, loading: authLoading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'draft' | 'archived'>('all');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -286,12 +288,15 @@ export function ProjectsListView() {
   };
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredProjects = normalizedQuery
-    ? projects.filter(project =>
-        project.name?.toLowerCase().includes(normalizedQuery) ||
-        project.description?.toLowerCase().includes(normalizedQuery)
-      )
-    : projects;
+  const filteredProjects = projects.filter(project => {
+    if (statusFilter !== 'all' && (project.status || 'active') !== statusFilter) return false;
+    if (!normalizedQuery) return true;
+    return Boolean(
+      project.name?.toLowerCase().includes(normalizedQuery) ||
+      project.description?.toLowerCase().includes(normalizedQuery)
+    );
+  });
+  const statusFilterLabel = { all: 'All statuses', active: 'Active', draft: 'Draft', archived: 'Archived' }[statusFilter];
 
   const getSourceBadge = (project: ProjectListItem) => {
     if (project.storageSource === 'cloud') {
@@ -371,10 +376,18 @@ export function ProjectsListView() {
             className="pl-10 bg-background border-border/60 h-9 text-sm"
           />
         </div>
-        <Button variant="outline" size="sm" className="h-9 gap-2 text-sm" onClick={() => toast.info('Filter options coming soon')}>
-          <Filter className="h-4 w-4" />
-          Filter
-        </Button>
+        <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
+          <SelectTrigger className="h-9 w-[160px] gap-2 text-sm" aria-label="Filter projects by status">
+            <Filter className="h-4 w-4" />
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Content */}
@@ -393,7 +406,9 @@ export function ProjectsListView() {
         </div>
       ) : projects.length > 0 && filteredProjects.length === 0 ? (
         <div className="text-center py-16 text-sm text-muted-foreground">
-          No projects match "{searchQuery.trim()}".
+          {normalizedQuery
+            ? `No ${statusFilter === 'all' ? '' : `${statusFilterLabel.toLowerCase()} `}projects match "${searchQuery.trim()}".`
+            : `No ${statusFilterLabel.toLowerCase()} projects.`}
         </div>
       ) : filteredProjects.length === 0 ? (
         <div className="text-center py-24 rounded-2xl border-2 border-dashed border-border/60 bg-muted/20">
