@@ -355,7 +355,8 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
-  const teamButtonLabel = teamMembers.length > 0 ? `Team (${teamMembers.length})` : "Team";
+  const visibleTeamCount = dedupeTeamMembers(teamMembers).length;
+  const teamButtonLabel = visibleTeamCount > 0 ? `Team (${visibleTeamCount})` : "Team";
   const allowedViewerIds = useMemo(
     () => getAllowedViewerIds(currentMembership, currentProjectRole, user?.id),
     [currentMembership, currentProjectRole, user?.id]
@@ -897,7 +898,7 @@ export function ProjectWorkspace({
 
             {/* Tab Content */}
             <TabsContent value="overview" className="space-y-6">
-              <OverviewModule projectName={projectName} teamSize={teamMembers.length} />
+              <OverviewModule projectName={projectName} teamSize={visibleTeamCount} />
             </TabsContent>
 
             <TabsContent value="project-graph" className="space-y-6">
@@ -989,6 +990,7 @@ export function ProjectWorkspace({
             <TabsContent value="team" className="space-y-6">
               <TeamModule
                 members={teamMembers}
+                projectOwnerId={projectOwnerId}
                 loading={isTeamLoading}
                 canManageMembers={canInviteMembers}
                 canSetUpWorkers={currentProjectRole === "Owner"}
@@ -1330,8 +1332,24 @@ function AnalyticsModule() {
   );
 }
 
+// The creation wizard stores each person it lists as a placeholder member row
+// (no account, no invitation). Once that person accepts a real invitation they
+// get a second, accepted row, so the Team list showed everyone twice.
+function dedupeTeamMembers(members: ProjectMember[]): ProjectMember[] {
+  const acceptedEmails = new Set(
+    members
+      .filter((member) => member.acceptedAt && member.userEmail)
+      .map((member) => member.userEmail!.toLowerCase())
+  );
+  return members.filter((member) => {
+    if (member.acceptedAt || !member.userEmail) return true;
+    return !acceptedEmails.has(member.userEmail.toLowerCase());
+  });
+}
+
 function TeamModule({
-  members,
+  members: rawMembers,
+  projectOwnerId,
   loading,
   canManageMembers,
   canSetUpWorkers,
@@ -1340,6 +1358,7 @@ function TeamModule({
   onSetUpWorker,
 }: {
   members: ProjectMember[];
+  projectOwnerId: string | null;
   loading: boolean;
   canManageMembers: boolean;
   canSetUpWorkers: boolean;
@@ -1347,6 +1366,15 @@ function TeamModule({
   onRefresh: () => void;
   onSetUpWorker: (member: ProjectMember) => void;
 }) {
+  const members = dedupeTeamMembers(rawMembers);
+  const isOwnerRow = (member: ProjectMember) => !!projectOwnerId && member.userId === projectOwnerId;
+  const statusLabel = (member: ProjectMember) => {
+    if (isOwnerRow(member)) return "Active";
+    if (!member.acceptedAt) return member.invitationId ? "Invited" : "Not invited yet";
+    if (member.graphNodeId) return "Active";
+    if (member.role === "Contributor") return "Needs setup";
+    return member.role === "Owner" || member.role === "Editor" ? "Manager" : "Active";
+  };
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -1381,17 +1409,12 @@ function TeamModule({
                 <p className="text-xs text-muted-foreground m-0">{member.userEmail || member.userId}</p>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{member.role}</Badge>
-                <Badge variant={member.acceptedAt && (member.graphNodeId || member.role === 'Owner' || member.role === 'Editor') ? "default" : "secondary"}>
-                  {!member.acceptedAt
-                    ? "Invited"
-                    : member.graphNodeId
-                      ? "Active"
-                      : member.role === 'Owner' || member.role === 'Editor'
-                        ? "Manager"
-                        : "Needs setup"}
+                <Badge variant="outline">{isOwnerRow(member) ? "Owner" : member.role}</Badge>
+                <Badge variant={statusLabel(member) === "Active" || statusLabel(member) === "Manager" ? "default" : "secondary"}>
+                  {statusLabel(member)}
                 </Badge>
-                {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role !== 'Owner' && member.role !== 'Editor' ? (
+                {/* Only Contributors can become time-submitting workers. */}
+                {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role === 'Contributor' && !isOwnerRow(member) ? (
                   <Button size="sm" variant="outline" onClick={() => onSetUpWorker(member)}>
                     Set up employee
                   </Button>
