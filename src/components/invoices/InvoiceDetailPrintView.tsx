@@ -8,6 +8,12 @@ import { ArrowLeft, Download, FileCheck2, Loader2, Pencil, Printer, Save, Send, 
 import { toast } from 'sonner';
 import type { InvoiceDraft } from './InvoicesWorkspace';
 import type { InvoiceLineItem, InvoicePayload, InvoiceTemplate } from '../../utils/api/invoices-api';
+import {
+  buildInvoicePdf,
+  invoicePdfFilename,
+  loadInvoiceFont,
+  type InvoicePdfInput,
+} from '../../utils/invoice-pdf';
 import { lineAmount, roundMoney, sumMoney, taxOn } from '../../utils/money';
 
 function formatMoney(amount: number, currency: string): string {
@@ -74,6 +80,42 @@ function baseLines(invoice: InvoiceDraft): InvoiceLineItem[] {
   ];
 }
 
+function pdfInputFromDraft(invoice: InvoiceDraft): InvoicePdfInput {
+  const storedLines = Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+  const lines = storedLines.length > 0
+    ? storedLines.map((item) => ({
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      amount: item.amount,
+    }))
+    : [{
+      description: invoice.lineItemTemplateDescription?.trim()
+        || [invoice.personName, invoice.weekLabel].filter((part) => part?.trim()).join(' · '),
+      quantity: invoice.hours,
+      unitPrice: invoice.rate,
+      amount: invoice.amount,
+    }];
+  return {
+    status: invoice.apiStatus || invoice.status,
+    number: invoice.number,
+    issueDate: invoice.date,
+    dueDate: invoice.dueDate,
+    currency: invoice.currency ?? '',
+    sellerName: invoice.fromPartyName ?? '',
+    sellerAddress: invoice.fromAddress ?? '',
+    sellerTaxId: invoice.fromTaxId ?? '',
+    sellerIban: invoice.fromIban ?? '',
+    buyerName: invoice.toPartyName ?? '',
+    buyerAddress: invoice.toAddress ?? '',
+    buyerTaxId: invoice.toTaxId ?? '',
+    paymentRef: invoice.paymentRef ?? '',
+    notes: invoice.notes ?? '',
+    taxRate: typeof invoice.taxRate === 'number' ? invoice.taxRate : null,
+    lines,
+  };
+}
+
 function buildForm(invoice: InvoiceDraft): InvoiceForm {
   return {
     number: invoice.number || '',
@@ -118,6 +160,7 @@ export function InvoiceDetailPrintView({
   const currency = invoice.currency || 'EUR';
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [form, setForm] = useState<InvoiceForm>(() => buildForm(invoice));
   const [templateSelectValue, setTemplateSelectValue] = useState('template-picker');
   const [templateName, setTemplateName] = useState(`${invoice.fromPartyName || invoice.projectName || 'Company'} invoice`);
@@ -171,6 +214,26 @@ export function InvoiceDetailPrintView({
     if (!onSaveTemplate) return;
     const name = templateName.trim() || `${invoice.fromPartyName || invoice.projectName || 'Company'} invoice`;
     await onSaveTemplate(name);
+  };
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const font = await loadInvoiceFont();
+      const bytes = buildInvoicePdf(pdfInputFromDraft(invoice), font);
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = invoicePdfFilename(invoice.number);
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not export the PDF.';
+      toast.error(message);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleSave = async () => {
@@ -323,12 +386,12 @@ export function InvoiceDetailPrintView({
                 <Printer className="w-4 h-4 mr-2" />
                 Print
               </Button>
-              {/* Until P4-3 ships a real PDF generator, route through the browser's
-                  print dialog — "Save as PDF" produces the identical document. */}
-              <Button variant="outline" onClick={() => window.print()}>
-                <Download className="w-4 h-4 mr-2" />
-                Export PDF
-              </Button>
+              {invoice.status !== 'draft' && (
+                <Button variant="outline" onClick={() => void exportPdf()} disabled={exporting}>
+                  {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                  Export PDF
+                </Button>
+              )}
             </>
           )}
         </div>
