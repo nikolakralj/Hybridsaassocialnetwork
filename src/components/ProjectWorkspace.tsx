@@ -1,8 +1,9 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
 import { useSearchParams } from "react-router";
+import { userDisplayName } from "../utils/auth/display-name";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
-  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck, ClipboardCheck
+  Plus, Settings, Users, MessageSquare, X, Network, ShieldCheck, ClipboardCheck
 } from "lucide-react";
 import { ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
@@ -25,7 +26,7 @@ import { NotificationCenterBell } from "./notifications/InAppNotificationCenter"
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectWorkerSetupDialog } from "./projects/ProjectWorkerSetupDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
-import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
+import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers, updateProject } from "../utils/api/projects-api";
 import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
 import { withWorkspaceSearch, workspaceTab } from "../utils/workspace-link";
@@ -33,6 +34,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
 import { ALLOW_GRAPH_ADMIN_VIEW, buildViewerOptions, type ViewerIdentity } from "./workgraph/graph-visibility";
+import { createClient } from "../utils/supabase/client";
 
 const LazyWorkGraphBuilder = lazy(() =>
   import("./workgraph/WorkGraphBuilder").then((mod) => ({ default: mod.WorkGraphBuilder }))
@@ -322,6 +324,11 @@ export function ProjectWorkspace({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
+  const [projectStatus, setProjectStatus] = useState<string | null>(null);
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectParties, setProjectParties] = useState<Array<{ id: string; name: string; partyType?: string }>>([]);
+  // Lets the Settings drawer tell "0 parties" apart from "parties haven't loaded yet / failed to load".
+  const [projectPartiesStatus, setProjectPartiesStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [selfMembership, setSelfMembership] = useState<ProjectMember | null>(null);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
@@ -353,6 +360,13 @@ export function ProjectWorkspace({
     return currentMembership?.role || null;
   }, [currentMembership?.role, projectOwnerId, user?.id]);
   const canManageProject = currentProjectRole === "Owner" || currentProjectRole === "Editor";
+  // Month close and invoicing are the billing side of the project. Workers
+  // (Contributors) submit time; they don't close months or see invoices.
+  const BILLING_MODULE_IDS: ModuleId[] = ["close", "invoices"];
+  const hideBillingModules = currentProjectRole === "Contributor";
+  const visibleModules = hideBillingModules
+    ? enabledModules.filter((module) => !BILLING_MODULE_IDS.includes(module.id))
+    : enabledModules;
   const canInviteMembers = getInvitableRolesForRole(currentProjectRole).length > 0;
   // A project role opens the workspace; an accepted organization scope limits
   // which party the member may administer inside the shared supply chain.
@@ -362,7 +376,8 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
-  const teamButtonLabel = teamMembers.length > 0 ? `Team (${teamMembers.length})` : "Team";
+  const visibleTeamCount = dedupeTeamMembers(teamMembers).length;
+  const teamButtonLabel = visibleTeamCount > 0 ? `Team (${visibleTeamCount})` : "Team";
   const allowedViewerIds = useMemo(
     () => getAllowedViewerIds(currentMembership, currentProjectRole, user?.id),
     [currentMembership, currentProjectRole, user?.id]
@@ -383,8 +398,20 @@ export function ProjectWorkspace({
     setEditingProject({
       id: projectId,
       name: projectName,
-      description: "",
-      approvalChain: [],
+      description: projectDescription,
+      // Prefill from the project's real parties (graph party nodes).
+      approvalChain: projectParties.map((party, index) => ({
+        id: party.id,
+        type: party.partyType === "client" || party.partyType === "agency" || party.partyType === "contractor"
+          ? party.partyType
+          : "company",
+        organizationName: party.name,
+        role: "",
+        order: index,
+        canApprove: true,
+        canViewRates: false,
+        canEditTimesheets: false,
+      })),
       contracts: [],
       settings: {
         requireSequentialApproval: true,
@@ -392,15 +419,25 @@ export function ProjectWorkspace({
         monthlyInvoicing: true,
       },
       createdAt: new Date().toISOString(),
-      status: "active",
+      status: projectStatus === "draft" || projectStatus === "archived" ? projectStatus : "active",
     });
     setIsDrawerOpen(true);
   };
 
-  const handleSaveProject = (project: ProjectConfiguration) => {
-    setProjectName(project.name || projectName);
-    sessionStorage.setItem('currentProjectName', project.name || projectName);
-    toast.success('Project settings updated');
+  const handleSaveProject = async (project: ProjectConfiguration) => {
+    const nextName = project.name?.trim() || projectName;
+    try {
+      await updateProject(projectId, { name: nextName, description: project.description || "" }, accessToken);
+    } catch (error) {
+      toast.error('Project settings were not saved', {
+        description: error instanceof Error ? error.message : 'Please try again',
+      });
+      return;
+    }
+    setProjectName(nextName);
+    setProjectDescription(project.description || "");
+    sessionStorage.setItem('currentProjectName', nextName);
+    toast.success('Project name and description saved');
   };
 
   const loadTeamMembers = async () => {
@@ -447,26 +484,46 @@ export function ProjectWorkspace({
       return;
     }
 
+    setProjectPartiesStatus('loading');
+
     const loadProjectMeta = async () => {
       try {
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
+          setProjectPartiesStatus('loaded');
           const loadedName = data?.project?.name;
           if (loadedName) {
             setProjectName(loadedName);
             sessionStorage.setItem('currentProjectName', loadedName);
           }
           setProjectOwnerId(data?.project?.ownerId || null);
+          setProjectStatus(typeof data?.project?.status === 'string' ? data.project.status : null);
+          setProjectDescription(typeof data?.project?.description === 'string' ? data.project.description : "");
+          if (!propProjectName && typeof data?.project?.name === 'string' && data.project.name.trim()) {
+            setProjectName(data.project.name);
+          }
           const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
           const creatorParty = graphNodes.find((node: any) => node?.type === 'party' && node?.data?.isCreator);
+          setProjectParties(
+            graphNodes
+              .filter((node: any) => node?.type === 'party')
+              .map((node: any) => ({
+                id: String(node.id),
+                name: String(node?.data?.name || ''),
+                partyType: node?.data?.partyType,
+              }))
+          );
           setOwnerOrganizationName(creatorParty?.data?.name || "");
           setOwnerPartyId(creatorParty?.id || null);
           setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
         }
       } catch {
         if (!cancelled) {
+          setProjectPartiesStatus('error');
           setProjectOwnerId(null);
+          setProjectStatus(null);
+          setProjectParties([]);
           setOwnerPartyId(null);
           setProjectGraphViewers([]);
         }
@@ -486,8 +543,10 @@ export function ProjectWorkspace({
   }, [activeTab, canManageProject]);
 
   useEffect(() => {
-    if (!pilotVisible(activeTab)) openTab("overview");
-  }, [activeTab]);
+    if (!pilotVisible(activeTab) || (hideBillingModules && (activeTab === "close" || activeTab === "invoices"))) {
+      openTab("overview");
+    }
+  }, [activeTab, hideBillingModules]);
 
   useEffect(() => {
     const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;
@@ -517,7 +576,7 @@ export function ProjectWorkspace({
         ? [{
             nodeId: '__admin__',
             type: 'admin',
-            name: ALLOW_GRAPH_ADMIN_VIEW ? 'Admin (Full View)' : 'Full project view',
+            name: ALLOW_GRAPH_ADMIN_VIEW ? 'Admin (Full View)' : 'All parties',
           }]
         : [];
       // Try sessionStorage first, fall back to localStorage
@@ -692,7 +751,17 @@ export function ProjectWorkspace({
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <h1 className="m-0">{projectName}</h1>
-                <Badge variant="secondary">Active</Badge>
+                {projectStatus ? (
+                  <Badge variant={projectStatus === "active" ? "secondary" : "outline"}>
+                    {projectStatus === "draft"
+                      ? "Draft"
+                      : projectStatus === "archived"
+                        ? "Archived"
+                        : projectStatus === "active"
+                          ? "Active"
+                          : projectStatus}
+                  </Badge>
+                ) : null}
               </div>
               <p className="text-sm text-muted-foreground m-0">
                 Project workspace
@@ -732,7 +801,7 @@ export function ProjectWorkspace({
               />
             ) : (
               <Badge variant="outline" className="text-xs text-muted-foreground">
-                Graph identity not mapped
+                Not yet linked to a party in this project
               </Badge>
             )}
           </div>
@@ -774,7 +843,7 @@ export function ProjectWorkspace({
             {/* Tab List with (+) Button */}
             <div className="flex items-center gap-2 mb-6">
               <TabsList className="flex-1">
-                {enabledModules.map((module) => {
+                {visibleModules.map((module) => {
                   const Icon = module.icon;
                   return (
                     <TabsTrigger 
@@ -865,7 +934,7 @@ export function ProjectWorkspace({
 
             {/* Tab Content */}
             <TabsContent value="overview" className="space-y-6">
-              <OverviewModule projectName={projectName} />
+              <OverviewModule projectName={projectName} teamSize={visibleTeamCount} />
             </TabsContent>
 
             <TabsContent value="project-graph" className="space-y-6">
@@ -878,6 +947,7 @@ export function ProjectWorkspace({
                   asOf={asOf}
                   canEditGraph={canEditGraph}
                   editablePartyIds={editablePartyIds}
+                  allowFullProjectView={canManageProject}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
                     setWorkspaceViewer(viewer);
@@ -892,7 +962,7 @@ export function ProjectWorkspace({
                 <LazyProjectTimesheetsView
                   projectId={projectId}
                   ownerId={user?.id || "current-user"}
-                  ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
+                  ownerName={userDisplayName(user, "Current User")}
                   contractors={[]}
                   viewerOverride={effectiveViewer ? {
                     id: effectiveViewer.nodeId,
@@ -917,31 +987,35 @@ export function ProjectWorkspace({
 
             <TabsContent value="close" className="space-y-6">
               <Suspense fallback={tabLoadingFallback}>
+                {hideBillingModules ? null : (
                 <LazyCloseReadinessGate
                   projectId={projectId}
                   projectName={projectName}
                   canConfirmRates={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
                   members={teamMembers}
                 />
+                )}
               </Suspense>
             </TabsContent>
 
             <TabsContent value="invoices" className="space-y-6">
               <Suspense fallback={tabLoadingFallback}>
+                {hideBillingModules ? null : (
                 <LazyInvoicesWorkspace
                   projectId={projectId}
                   projectName={projectName}
                   canGenerateInvoices={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
                 />
+                )}
               </Suspense>
             </TabsContent>
 
             <TabsContent value="contracts" className="space-y-6">
-              <ContractsModule />
+              <ContractsModule projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="documents" className="space-y-6">
-              <DocumentsModule />
+              <DocumentsModule projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="tasks" className="space-y-6">
@@ -955,6 +1029,7 @@ export function ProjectWorkspace({
             <TabsContent value="team" className="space-y-6">
               <TeamModule
                 members={teamMembers}
+                projectOwnerId={projectOwnerId}
                 loading={isTeamLoading}
                 canManageMembers={canInviteMembers}
                 canSetUpWorkers={currentProjectRole === "Owner"}
@@ -971,14 +1046,18 @@ export function ProjectWorkspace({
         </MonthProvider>
       </div>
 
-      {canManageProject ? (
+      {/* Mount only while open so the drawer's state initialises from the
+          current project (it used to mount empty: blank name, 0 parties). */}
+      {canManageProject && isDrawerOpen && editingProject ? (
         <ProjectConfigurationDrawer
+          key={editingProject.id}
           isOpen={isDrawerOpen}
           onClose={() => {
             setIsDrawerOpen(false);
             setEditingProject(undefined);
           }}
           project={editingProject}
+          partiesStatus={projectPartiesStatus}
           onSave={handleSaveProject}
         />
       ) : null}
@@ -1011,7 +1090,7 @@ export function ProjectWorkspace({
 
 // Module Components (placeholders for now)
 
-function OverviewModule({ projectName }: { projectName: string }) {
+function OverviewModule({ projectName, teamSize }: { projectName: string; teamSize: number }) {
   const store = useTimesheetStore();
 
   // Derive real stats from timesheet store
@@ -1036,7 +1115,7 @@ function OverviewModule({ projectName }: { projectName: string }) {
         <p className="text-sm text-muted-foreground mb-2">Hours This Month</p>
         <p className="text-3xl font-semibold mb-1">{totalHours}h</p>
         <p className="text-sm text-muted-foreground">
-          {approvedHours}h approved · {uniquePeople} {uniquePeople === 1 ? 'person' : 'people'}
+          {approvedHours}h approved · {uniquePeople} {uniquePeople === 1 ? 'person' : 'people'} logged time
         </p>
       </Card>
 
@@ -1078,7 +1157,7 @@ function OverviewModule({ projectName }: { projectName: string }) {
           </div>
           <div>
             <p className="text-muted-foreground">Team Size</p>
-            <p className="font-semibold text-lg">{uniquePeople}</p>
+            <p className="font-semibold text-lg">{teamSize}</p>
           </div>
         </div>
       </Card>
@@ -1088,61 +1167,181 @@ function OverviewModule({ projectName }: { projectName: string }) {
 
 
 
-function ContractsModule() {
+const CONTRACT_DOCUMENT_TYPES = new Set(["nda", "contract", "sow", "rate_card", "change_order"]);
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  nda: "NDA",
+  contract: "Contract",
+  sow: "SOW",
+  invoice: "Invoice",
+  purchase_order: "Purchase order",
+  expense_report: "Expense report",
+  deliverable_signoff: "Deliverable sign-off",
+  change_order: "Change order",
+  compliance: "Compliance",
+  rate_card: "Rate card",
+  other: "Other",
+};
+
+interface ProjectDocumentRow {
+  id: string;
+  type: string;
+  title: string;
+  status: string;
+  file_name?: string | null;
+  created_at?: string | null;
+}
+
+// Real documents stored for this project (wg_documents). No seed/demo rows:
+// a new project shows an empty state, not invented agreements or files.
+function useProjectDocuments(projectId: string) {
+  const [rows, setRows] = useState<ProjectDocumentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [storageMissing, setStorageMissing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStorageMissing(false);
+    if (!projectId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    void createClient()
+      .from("wg_documents")
+      .select("id, type, title, status, file_name, created_at")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .then(({ data, error: queryError }) => {
+        if (cancelled) return;
+        if (queryError) {
+          // PGRST205: the wg_documents table is not in this database yet
+          // (migration 006 not applied). That is "nothing stored", not an outage.
+          if (queryError.code === "PGRST205" || queryError.code === "42P01") {
+            setStorageMissing(true);
+            setError(null);
+          } else {
+            setError("Documents could not be loaded right now.");
+          }
+          setRows([]);
+        } else {
+          setRows(Array.isArray(data) ? (data as ProjectDocumentRow[]) : []);
+        }
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  return { rows, loading, error, storageMissing };
+}
+
+function formatDocumentStatus(status: string) {
+  return status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function formatDocumentDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+}
+
+function DocumentList({
+  rows,
+  loading,
+  error,
+  emptyTitle,
+  emptyText,
+  storageMissing = false,
+}: {
+  rows: ProjectDocumentRow[];
+  loading: boolean;
+  error: string | null;
+  emptyTitle: string;
+  emptyText: string;
+  storageMissing?: boolean;
+}) {
+  if (loading) {
+    return <p className="text-sm text-muted-foreground">Loading...</p>;
+  }
+  if (error) {
+    return <p className="text-sm text-muted-foreground">{error}</p>;
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-12 border border-dashed rounded-lg">
+        <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+        <p className="font-medium mb-1">{emptyTitle}</p>
+        <p className="text-sm text-muted-foreground m-0">
+          {storageMissing ? "Document storage is not enabled for this workspace yet, so nothing has been uploaded." : emptyText}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {rows.map((doc) => (
+        <div key={doc.id} className="flex items-center justify-between p-4 border border-border rounded-lg">
+          <div className="flex items-center gap-3">
+            <FileText className="w-5 h-5 text-accent-brand" />
+            <div>
+              <p className="font-medium">{doc.title || doc.file_name || "Untitled document"}</p>
+              <p className="text-sm text-muted-foreground">
+                {DOCUMENT_TYPE_LABELS[doc.type] || doc.type}
+                {formatDocumentDate(doc.created_at) ? ` · ${formatDocumentDate(doc.created_at)}` : ""}
+              </p>
+            </div>
+          </div>
+          <Badge variant={doc.status === "signed" ? "default" : "secondary"}>
+            {formatDocumentStatus(doc.status)}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContractsModule({ projectId }: { projectId: string }) {
+  const { rows, loading, error, storageMissing } = useProjectDocuments(projectId);
+  const contracts = rows.filter((row) => CONTRACT_DOCUMENT_TYPES.has(row.type));
   return (
     <Card className="p-6">
       <h3 className="mb-4">Contracts & Legal Documents</h3>
       <p className="text-muted-foreground mb-4">
-        Centralized storage for all project agreements, NDAs, and statements of work.
+        Agreements, NDAs, and statements of work recorded for this project.
       </p>
-      <div className="space-y-3">
-        {[
-          { name: "Master Service Agreement", type: "MSA", status: "Signed", date: "Dec 15, 2023" },
-          { name: "Non-Disclosure Agreement", type: "NDA", status: "Signed", date: "Dec 15, 2023" },
-          { name: "Statement of Work", type: "SOW", status: "Pending Signature", date: "Jan 5, 2024" },
-        ].map((doc, i) => (
-          <div key={i} className="flex items-center justify-between p-4 border border-border rounded-lg">
-            <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-accent-brand" />
-              <div>
-                <p className="font-medium">{doc.name}</p>
-                <p className="text-sm text-muted-foreground">{doc.type} · {doc.date}</p>
-              </div>
-            </div>
-            <Badge variant={doc.status === "Signed" ? "default" : "secondary"}>
-              {doc.status}
-            </Badge>
-          </div>
-        ))}
-      </div>
+      <DocumentList
+        rows={contracts}
+        loading={loading}
+        error={error}
+        storageMissing={storageMissing}
+        emptyTitle="No contracts yet"
+        emptyText="Contracts recorded for this project will appear here. Rates between parties are set on the Project Graph."
+      />
     </Card>
   );
 }
 
-function DocumentsModule() {
+function DocumentsModule({ projectId }: { projectId: string }) {
+  const { rows, loading, error, storageMissing } = useProjectDocuments(projectId);
   return (
     <Card className="p-6">
       <h3 className="mb-4">Project Documents</h3>
       <p className="text-muted-foreground mb-4">
-        All project files, deliverables, and assets organized in one place.
+        Documents exchanged between the parties on this project.
       </p>
-      <div className="grid md:grid-cols-2 gap-4">
-        {[
-          { name: "Design Mockups v3.fig", folder: "Deliverables", size: "12.4 MB" },
-          { name: "Project Brief.pdf", folder: "Planning", size: "2.1 MB" },
-          { name: "User Research Report.docx", folder: "Research", size: "5.8 MB" },
-          { name: "Brand Guidelines.pdf", folder: "Assets", size: "8.3 MB" },
-        ].map((doc, i) => (
-          <div key={i} className="p-4 border border-border rounded-lg hover:border-accent-brand apple-transition cursor-pointer">
-            <div className="flex items-start justify-between mb-2">
-              <FileText className="w-5 h-5 text-accent-brand" />
-              <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <p className="font-medium mb-1">{doc.name}</p>
-            <p className="text-sm text-muted-foreground">{doc.folder} · {doc.size}</p>
-          </div>
-        ))}
-      </div>
+      <DocumentList
+        rows={rows}
+        loading={loading}
+        error={error}
+        storageMissing={storageMissing}
+        emptyTitle="No documents yet"
+        emptyText="Documents added to this project, such as purchase orders, will appear here."
+      />
     </Card>
   );
 }
@@ -1173,8 +1372,24 @@ function AnalyticsModule() {
   );
 }
 
+// The creation wizard stores each person it lists as a placeholder member row
+// (no account, no invitation). Once that person accepts a real invitation they
+// get a second, accepted row, so the Team list showed everyone twice.
+function dedupeTeamMembers(members: ProjectMember[]): ProjectMember[] {
+  const acceptedEmails = new Set(
+    members
+      .filter((member) => member.acceptedAt && member.userEmail)
+      .map((member) => member.userEmail!.toLowerCase())
+  );
+  return members.filter((member) => {
+    if (member.acceptedAt || !member.userEmail) return true;
+    return !acceptedEmails.has(member.userEmail.toLowerCase());
+  });
+}
+
 function TeamModule({
-  members,
+  members: rawMembers,
+  projectOwnerId,
   loading,
   canManageMembers,
   canSetUpWorkers,
@@ -1183,6 +1398,7 @@ function TeamModule({
   onSetUpWorker,
 }: {
   members: ProjectMember[];
+  projectOwnerId: string | null;
   loading: boolean;
   canManageMembers: boolean;
   canSetUpWorkers: boolean;
@@ -1190,6 +1406,15 @@ function TeamModule({
   onRefresh: () => void;
   onSetUpWorker: (member: ProjectMember) => void;
 }) {
+  const members = dedupeTeamMembers(rawMembers);
+  const isOwnerRow = (member: ProjectMember) => !!projectOwnerId && member.userId === projectOwnerId;
+  const statusLabel = (member: ProjectMember) => {
+    if (isOwnerRow(member)) return "Active";
+    if (!member.acceptedAt) return member.invitationId ? "Invited" : "Not invited yet";
+    if (member.graphNodeId) return "Active";
+    if (member.role === "Contributor") return "Needs setup";
+    return member.role === "Owner" || member.role === "Editor" ? "Manager" : "Active";
+  };
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -1224,17 +1449,12 @@ function TeamModule({
                 <p className="text-xs text-muted-foreground m-0">{member.userEmail || member.userId}</p>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{member.role}</Badge>
-                <Badge variant={member.acceptedAt && (member.graphNodeId || member.role === 'Owner' || member.role === 'Editor') ? "default" : "secondary"}>
-                  {!member.acceptedAt
-                    ? "Invited"
-                    : member.graphNodeId
-                      ? "Active"
-                      : member.role === 'Owner' || member.role === 'Editor'
-                        ? "Manager"
-                        : "Needs setup"}
+                <Badge variant="outline">{isOwnerRow(member) ? "Owner" : member.role}</Badge>
+                <Badge variant={statusLabel(member) === "Active" || statusLabel(member) === "Manager" ? "default" : "secondary"}>
+                  {statusLabel(member)}
                 </Badge>
-                {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role !== 'Owner' && member.role !== 'Editor' ? (
+                {/* Only Contributors can become time-submitting workers. */}
+                {canSetUpWorkers && member.acceptedAt && !member.graphNodeId && member.role === 'Contributor' && !isOwnerRow(member) ? (
                   <Button size="sm" variant="outline" onClick={() => onSetUpWorker(member)}>
                     Set up employee
                   </Button>

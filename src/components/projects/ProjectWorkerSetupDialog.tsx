@@ -108,7 +108,7 @@ export function ProjectWorkerSetupDialog({
               id="worker-company-name"
               value={organizationName}
               onChange={(event) => setOrganizationName(event.target.value)}
-              placeholder="Nikola Company"
+              placeholder="e.g. Your company d.o.o."
               disabled={isSubmitting}
               required
             />

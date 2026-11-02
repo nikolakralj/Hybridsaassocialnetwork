@@ -19,8 +19,20 @@ import type {
 } from '../../types/dashboard';
 import { listProjects } from './projects-api';
 import { listContracts } from './contracts-api';
-import { moneyFromHours } from '../dashboard-earnings';
 import { listTimesheets } from './timesheets-api';
+import { createClient } from '../supabase/client';
+import { sumWeekHoursInMonth } from '../../types/timesheets';
+
+/** Invoices this user can see (RLS-scoped). 0 when the query fails. */
+async function countVisibleInvoices(): Promise<number> {
+  try {
+    const { count, error } = await createClient().from('wg_invoices').select('id', { count: 'exact', head: true });
+    if (error) return 0;
+    return count || 0;
+  } catch {
+    return 0;
+  }
+}
 
 const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
 
@@ -53,36 +65,39 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     let totalHours = 0;
     let billableHours = 0;
     let submittedCount = 0;
-    let submittedHours = 0;
+
+    // The stats are labelled "this month": count only this month's days (a
+    // week like Nov 30 - Dec 4 must not add its December days to November).
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthHours = (week: any) => (
+      week?.weekStart
+        ? sumWeekHoursInMonth(week, monthKey)
+        : (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0)
+    );
+
     timesheetWeeks.forEach((week: any) => {
-      const weekHours = (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0);
+      const weekHours = monthHours(week);
       totalHours += weekHours;
       billableHours += weekHours; // Assume all hours billable for now
 
       if (week.status === 'submitted') {
         submittedCount++;
-        submittedHours += weekHours;
       }
     });
 
-    const approvedHours = timesheetWeeks
-      .filter((week: any) => week.status === 'approved')
-      .reduce((sum: number, week: any) => (
-        sum + (week.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0)
-      ), 0);
-    const savedRates = activeContracts.map((contract: any) => ({
-      baseHourlyRate: contract.baseHourlyRate,
-      currency: contract.currency,
-    }));
-    const earnings = moneyFromHours(approvedHours, savedRates);
-    const pending = moneyFromHours(submittedHours, savedRates);
+    // No money on the dashboard: rates are private and amounts only exist on
+    // real invoices. (This used to multiply hours by a contract average or an
+    // invented 100/h.) Approved hours and invoice counts are real data.
+    const approvedWeeks = timesheetWeeks.filter((w: any) => w.status === 'approved');
+    const approvedHours = approvedWeeks.reduce((sum: number, w: any) => sum + monthHours(w), 0);
+    const invoiceCount = await countVisibleInvoices();
 
     return {
       earnings: {
-        current_period: earnings.amount,
-        previous_period: 0,
-        currency: earnings.currency,
-        money_known: earnings.known,
+        current_period: 0,
+        previous_period: 0, // No historical comparison yet
+        currency: 'USD',
         period: 'month',
         trend: 0,
       },
@@ -90,17 +105,20 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
         total: totalHours || 0,
         billable: billableHours || 0,
         non_billable: 0,
+        approved: approvedHours || 0,
         period: 'month',
       },
       pending_approvals: {
         count: submittedCount,
-        total_value: pending.amount,
-        currency: pending.currency,
-        money_known: pending.known,
+        total_value: 0,
+        currency: 'USD',
       },
       active_contracts: {
         count: activeContracts.length,
         expiring_soon: expiringSoon.length,
+      },
+      invoices: {
+        count: invoiceCount,
       },
     };
   } catch (err) {
@@ -448,15 +466,18 @@ const MOCK_MESSAGES: MessagePreview[] = [
 // Mock Data - Insights (dynamically generated from real data)
 // ============================================================================
 
-function generateInsights(workStats: WorkStats): Insight[] {
+export function generateInsights(workStats: WorkStats): Insight[] {
   const insights: Insight[] = [];
 
-  if (workStats.earnings.current_period > 0) {
+  const approvedHours = workStats.hours.approved || 0;
+  if (approvedHours > 0) {
     insights.push({
-      id: 'insight-earnings',
+      id: 'insight-approved-hours',
       type: 'earning',
-      title: workStats.earnings.current_period > 5000 ? 'Great month!' : 'Getting started',
-      description: `You've earned $${workStats.earnings.current_period.toLocaleString()} this month from approved timesheets.`,
+      title: `${approvedHours.toLocaleString()}h approved`,
+      description: 'Approved hours are ready to invoice. Amounts come from the private rates on each project\'s Invoices tab.',
+      action_label: 'Open projects',
+      action_url: '/app/projects',
       icon: 'TrendingUp',
       color: 'text-green-600',
     });
@@ -467,7 +488,7 @@ function generateInsights(workStats: WorkStats): Insight[] {
       id: 'insight-pending',
       type: 'opportunity',
       title: `${workStats.pending_approvals.count} pending approval${workStats.pending_approvals.count !== 1 ? 's' : ''}`,
-      description: `You have ${workStats.pending_approvals.count} timesheet${workStats.pending_approvals.count !== 1 ? 's' : ''} waiting for approval worth $${workStats.pending_approvals.total_value.toLocaleString()}.`,
+      description: `You have ${workStats.pending_approvals.count} timesheet${workStats.pending_approvals.count !== 1 ? 's' : ''} waiting for approval.`,
       action_label: 'View Approvals',
       action_url: '/app/approvals',
       icon: 'Clock',
@@ -493,7 +514,7 @@ function generateInsights(workStats: WorkStats): Insight[] {
       id: 'insight-getstarted',
       type: 'opportunity',
       title: 'Get started with WorkGraph',
-      description: 'Create your first project and contract to start tracking time and earnings.',
+      description: 'Create your first project and contract to start tracking time and approvals.',
       action_label: 'Create Project',
       action_url: '/app/projects',
       icon: 'Sparkles',

@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { userDisplayName } from '../../utils/auth/display-name';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
@@ -45,6 +46,18 @@ import {
 // ============================================================================
 // Types & Constants
 // ============================================================================
+
+
+// A picked calendar day as "yyyy-MM-dd" in the user's own timezone.
+// toISOString() converts to UTC first, so Nov 1 picked in Zagreb (UTC+1)
+// was stored as Oct 31.
+function toLocalDateOnly(date?: Date): string | undefined {
+  if (!date) return undefined;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
 export interface ProjectCreateWizardProps {
   open: boolean;
@@ -175,21 +188,22 @@ export function ProjectCreateWizard({
       setParties([
         {
           id: 'your-org',
-          name: user?.user_metadata?.org_name || 'Your Organization',
-          partyType: (user?.user_metadata?.org_type as PartyType) || 'agency',
+          // Prefill with the company given at sign-up; otherwise leave the
+          // name empty so the user types their real company (Next explains it).
+          name: user?.company?.trim() || '',
+          partyType: 'agency',
           billsTo: [],
           organizationId: user?.id,
           people: [{
             id: user?.id || 'me',
             // Never store the viewer-relative label "Me" — use the real name so
             // approvals and the graph read correctly for everyone.
-            name: user?.user_metadata?.full_name
-              || user?.user_metadata?.name
-              || (user?.email ? user.email.split('@')[0] : '')
-              || 'Owner',
+            name: userDisplayName(user, 'Owner'),
             email: user?.email || '',
             // The project owner is their own organization's approver by default.
             canApprove: true,
+            // The owner sets the rates, so they see them.
+            canViewRates: true,
           }],
           isCreator: true,
         }
@@ -300,8 +314,8 @@ export function ProjectCreateWizard({
       if (onCreate) {
         await onCreate({
           name,
-          startDate: startDate?.toISOString(),
-          endDate: endDate?.toISOString(),
+          startDate: toLocalDateOnly(startDate),
+          endDate: toLocalDateOnly(endDate),
           workWeek,
           status: isDraftProject ? 'draft' : 'active',
           supplyChainStatus: isDraftProject ? 'incomplete' : 'complete',
@@ -310,8 +324,8 @@ export function ProjectCreateWizard({
         const graph = generateGraphFromWizard(parties, name);
         const result = await createProject({
           name, description: '', region: 'EU',
-          startDate: startDate?.toISOString(), endDate: endDate?.toISOString(), workWeek,
-          ownerName: user?.user_metadata?.full_name || user?.email || 'Project Owner',
+          startDate: toLocalDateOnly(startDate), endDate: toLocalDateOnly(endDate), workWeek,
+          ownerName: userDisplayName(user, 'Project Owner'),
           ownerEmail: user?.email || '',
           ownerId: user?.id,
           graph: { nodes: graph.nodes, edges: graph.edges },
@@ -350,7 +364,7 @@ export function ProjectCreateWizard({
 
         sessionStorage.setItem('currentProjectName', name);
         if (startDate) {
-          sessionStorage.setItem('currentProjectStartDate', startDate.toISOString());
+          sessionStorage.setItem('currentProjectStartDate', toLocalDateOnly(startDate)!);
         } else {
           sessionStorage.removeItem('currentProjectStartDate');
         }
@@ -358,7 +372,7 @@ export function ProjectCreateWizard({
           const detail = {
             projectId: result.project.id,
             projectName: name,
-            projectStartDate: startDate ? startDate.toISOString() : null,
+            projectStartDate: startDate ? toLocalDateOnly(startDate)! : null,
           };
           window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
           window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
@@ -371,7 +385,7 @@ export function ProjectCreateWizard({
         if (onSuccess) {
           onSuccess(
             result.project.id,
-            startDate ? startDate.toISOString() : null,
+            startDate ? toLocalDateOnly(startDate)! : null,
             result.project.storageSource === 'cloud' ? 'cloud' : undefined
           );
         }
@@ -395,6 +409,20 @@ export function ProjectCreateWizard({
     'people': true,
     'review': true,
   };
+
+  // Tell the user why Next is disabled instead of a silent grey button.
+  const nextBlockedReason: string | null = (() => {
+    if (canProceed[step]) return null;
+    if (step === 'basic') {
+      const missing = [!name.trim() ? 'a project name' : null, !startDate ? 'a start date' : null].filter(Boolean);
+      return missing.length ? `Add ${missing.join(' and ')} to continue.` : null;
+    }
+    if (step === 'supply-chain') {
+      if (parties.length < 1) return 'Add at least one party to continue.';
+      return 'Give every party a name to continue.';
+    }
+    return null;
+  })();
 
   return (
     <>
@@ -451,7 +479,7 @@ export function ProjectCreateWizard({
                   updateParty={updateParty} canEditParty={canEditParty} />
               )}
               {step === 'review' && (
-                <ReviewStep name={name} 
+                <ReviewStep region="EU" name={name} 
                   startDate={startDate} endDate={endDate} workWeek={workWeek}
                   parties={parties} generatedGraph={generatedGraph}
                   validationErrors={validationErrors} isDraftProject={isDraftProject} />
@@ -471,8 +499,13 @@ export function ProjectCreateWizard({
               </Button>
             )}
             <div className="flex-1" />
+            {currentStepIndex < steps.length - 1 && nextBlockedReason ? (
+              <p className="m-0 self-center text-xs text-amber-700 dark:text-amber-400" role="status">
+                {nextBlockedReason}
+              </p>
+            ) : null}
             {currentStepIndex < steps.length - 1 ? (
-              <Button size="sm" className="px-4" onClick={handleNext} disabled={!canProceed[step]}>
+              <Button size="sm" className="px-4" onClick={handleNext} disabled={!canProceed[step]} title={nextBlockedReason || undefined}>
                 Next <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : (
@@ -482,7 +515,7 @@ export function ProjectCreateWizard({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {editMode ? 'Save Supply Chain' : (isDraftProject ? 'Create Draft Project' : 'Create Project &amp; Generate Graph')}
+                    {editMode ? 'Save Supply Chain' : (isDraftProject ? 'Create Draft Project' : 'Create Project & Generate Graph')}
                   </>
                 )}
               </Button>
@@ -695,10 +728,12 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
             ))}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" onClick={onSearchExisting} disabled={!editable} className="h-7 w-7 p-0">
+        <Button variant="ghost" size="sm" onClick={onSearchExisting} disabled={!editable} className="h-7 w-7 p-0"
+          aria-label="Pick an existing organization" title="Pick an existing organization">
           <Building2 className="w-3.5 h-3.5" />
         </Button>
-        <Button variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive">
+        <Button variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+          aria-label={`Remove ${party.name || opt.label}`} title={`Remove ${party.name || opt.label}`}>
           <X className="w-3.5 h-3.5" />
         </Button>
       </div>
@@ -921,7 +956,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
     addPerson(party.id, {
       id: `person-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: pName.trim(), email: pEmail.trim(), role: pRole.trim() || 'Member',
-      canApprove: false, canViewRates: true, canEditTimesheets: true,
+      // Rates are private by default; the owner can turn this on per person.
+      canApprove: false, canViewRates: false, canEditTimesheets: true,
       visibleToChain: true,
     });
     setPName(''); setPEmail(''); setPRole('');
@@ -980,6 +1016,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { canApprove: !person.canApprove })} disabled={!editable}
+                  type="button" aria-pressed={!!person.canApprove}
+                  aria-label={person.canApprove ? `${person.name} is an approver. Click to remove approver` : `Make ${person.name} an approver`}
                   className={`p-1 rounded transition-colors ${person.canApprove
                     ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -990,6 +1028,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { canViewRates: !person.canViewRates })} disabled={!editable}
+                  type="button" aria-pressed={!!person.canViewRates}
+                  aria-label={person.canViewRates ? `${person.name} sees rates. Click to hide rates` : `Let ${person.name} see rates`}
                   className={`p-1 rounded transition-colors ${person.canViewRates
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -1000,6 +1040,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { visibleToChain: !(person.visibleToChain ?? true) })} disabled={!editable}
+                  type="button" aria-pressed={!(person.visibleToChain ?? true)}
+                  aria-label={(person.visibleToChain ?? true) ? `${person.name} is visible to the chain. Click to hide` : `${person.name} is hidden from the chain. Click to show`}
                   className={`p-1 rounded transition-colors ${(person.visibleToChain ?? true)
                     ? 'text-muted-foreground/30 hover:text-muted-foreground'
                     : 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300'}`}>
@@ -1008,6 +1050,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
               </TooltipTrigger><TooltipContent><p className="text-xs">{(person.visibleToChain ?? true) ? 'Visible to chain — click to hide' : 'Hidden from chain ✓'}</p></TooltipContent></Tooltip>
             </TooltipProvider>
             <Button variant="ghost" size="sm" onClick={() => removePerson(party.id, person.id)} disabled={!editable}
+              aria-label={`Remove ${person.name}`}
               className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-destructive hover:text-destructive">
               <X className="w-3 h-3" />
             </Button>
@@ -1021,7 +1064,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
           <Input value={pRole} onChange={(e: any) => setPRole(e.target.value)} placeholder="Role" disabled={!editable} className="h-7 text-[11px] w-20"
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
-          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!editable || !pName.trim() || !pEmail.includes('@')}>
+          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!editable || !pName.trim() || !pEmail.includes('@')}
+            aria-label={`Add person to ${party.name || 'this party'}`}>
             <Plus className="w-3 h-3" />
           </Button>
         </div>

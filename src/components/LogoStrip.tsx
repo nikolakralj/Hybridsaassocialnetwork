@@ -6,7 +6,7 @@ export function LogoStrip() {
     { icon: Clock, label: "Time Tracking" },
     { icon: FileText, label: "Contracts & SOWs" },
     { icon: Shield, label: "Multi-Party Approvals" },
-    { icon: Users, label: "Social Feed" },
+    { icon: Users, label: "Client Approvers" },
     { icon: Zap, label: "Auto Invoicing" },
   ];
 

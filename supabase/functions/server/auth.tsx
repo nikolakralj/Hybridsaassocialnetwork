@@ -13,8 +13,8 @@ authRouter.post("/make-server-f8b491be/auth/signup", async (c) => {
       return c.json({ error: "Email, password, and name are required" }, 400);
     }
 
-    if (password.length < 6) {
-      return c.json({ error: "Password must be at least 6 characters" }, 400);
+    if (typeof password !== "string" || password.length < 10) {
+      return c.json({ error: "Password must be at least 10 characters" }, 400);
     }
 
     const supabase = createClient(

@@ -22,9 +22,9 @@ export function ResultsStrip() {
     },
     {
       icon: Rocket,
-      number: "Pilot",
-      label: "Paid",
-      sublabel: "See pricing",
+      number: "€199/mo",
+      label: "Founding pilot",
+      sublabel: "+ €750 one-time onboarding",
     },
   ];
 

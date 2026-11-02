@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { userDisplayName } from "../../utils/auth/display-name";
 import { User } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -36,8 +37,12 @@ export function ProjectApprovalsTab({
 
   // The graph viewer label can be a generic "Me"/"You"; prefer the real
   // signed-in name so the badge reads "Signed in as Nikola Kralj".
-  const isGenericViewer = !viewerName || ["me", "you"].includes(viewerName.trim().toLowerCase());
-  const signedInLabel = isGenericViewer ? (user?.name || user?.email) : viewerName;
+  const trimmedViewerName = viewerName?.trim() || "";
+  // "__admin__" ("Full project view") and other "__" placeholders are views, not people.
+  const isPlaceholderViewer = !!viewerNodeId && viewerNodeId.startsWith("__");
+  const isGenericViewer =
+    isPlaceholderViewer || !trimmedViewerName || ["me", "you"].includes(trimmedViewerName.toLowerCase());
+  const signedInLabel = isGenericViewer ? userDisplayName(user) : trimmedViewerName;
 
   return (
     <Tabs
@@ -107,8 +112,8 @@ export function ProjectApprovalsTab({
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter={filterStatus}
-          viewerNodeId={viewerNodeId}
-          viewerName={viewerName}
+          viewerNodeId={isPlaceholderViewer ? undefined : viewerNodeId}
+          viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="inbox"
           embedded
         />
@@ -118,8 +123,8 @@ export function ProjectApprovalsTab({
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter="all"
-          viewerNodeId={viewerNodeId}
-          viewerName={viewerName}
+          viewerNodeId={isPlaceholderViewer ? undefined : viewerNodeId}
+          viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="submitted"
           embedded
         />

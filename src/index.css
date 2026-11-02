@@ -2,3 +2,29 @@
 @source './**/*.{js,ts,jsx,tsx}';
 @import 'tw-animate-css';
 @import './styles/globals.css';
+/* Invoice "Print" / "Export PDF": print only the invoice sheet, not the app
+   header, tabs and action bar around it. Everything that is neither the sheet,
+   inside it, nor one of its ancestors is removed from layout (display:none, so
+   it can't push an empty second page), and the ancestors lose their own
+   spacing/heights. */
+@media print {
+  body:has(.invoice-print-root) *:not(:has(.invoice-print-root)):not(.invoice-print-root):not(.invoice-print-root *) {
+    display: none !important;
+  }
+  body:has(.invoice-print-root) *:has(.invoice-print-root) {
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+  body:has(.invoice-print-root) .invoice-print-root {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+}

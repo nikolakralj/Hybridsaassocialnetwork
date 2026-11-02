@@ -2,8 +2,8 @@ import { X, Check, ArrowRight } from "lucide-react";
 
 export function ComparisonDiagram() {
   const oldWay = [
-    "LinkedIn for networking",
-    "Upwork/Toptal for finding contracts",
+    "Rates and POs scattered across spreadsheets",
+    "Client sign-off chased by phone",
     "Spreadsheets for time tracking",
     "QuickBooks for invoicing",
     "Email threads for approvals",
@@ -11,8 +11,8 @@ export function ComparisonDiagram() {
   ];
 
   const warpWay = [
-    "Professional profile + social feed",
-    "Job listings in your network",
+    "Rates and POs attached to each worker",
+    "Client approvers sign off in the app",
     "Built-in weekly timesheets",
     "Auto-invoicing from approved hours",
     "Multi-party approval chains",
@@ -28,7 +28,7 @@ export function ComparisonDiagram() {
             Stop juggling tools
           </h2>
           <p className="text-muted-foreground max-w-2xl mx-auto">
-            Replace your entire freelance tech stack with one platform
+            One place for hours, approvals, and invoices across every company in the chain
           </p>
         </div>
 
@@ -80,7 +80,7 @@ export function ComparisonDiagram() {
             </div>
             <div className="mt-6 pt-6 border-t border-success/20">
               <p className="text-sm font-medium text-success m-0">
-                Free for individuals
+                Founding pilot: €199/month + €750 onboarding
               </p>
             </div>
           </div>

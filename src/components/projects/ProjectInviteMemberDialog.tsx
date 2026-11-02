@@ -265,7 +265,7 @@ export function ProjectInviteMemberDialog({
               id="invite-name"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              placeholder="Alex Rivera"
+              placeholder="Their full name"
               disabled={!canSendInvite || loading}
             />
           </div>

@@ -93,7 +93,7 @@ export function Landing() {
       </section>
 
       {/* 8. FAQ */}
-      <div className="py-16 px-6">
+      <div id="faq" className="py-16 px-6">
         <PricingFAQ />
       </div>
 

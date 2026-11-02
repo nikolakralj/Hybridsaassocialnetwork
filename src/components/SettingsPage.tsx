@@ -13,6 +13,7 @@ import {
   Loader2, Check, Eye, EyeOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { MIN_PASSWORD_LENGTH } from '../utils/auth/password-recovery';
 
 type SettingsTab = 'account' | 'notifications' | 'privacy' | 'appearance';
 
@@ -84,10 +85,66 @@ export function SettingsPage() {
 }
 
 function AccountSettings() {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, updatePassword } = useAuth();
   const [changingPassword, setChangingPassword] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [companyDraft, setCompanyDraft] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
 
   if (!user) return null;
+
+  const startEditProfile = () => {
+    setNameDraft(user.name || '');
+    setCompanyDraft(user.company || '');
+    setEditingProfile(true);
+  };
+
+  const saveProfile = async () => {
+    const name = nameDraft.trim();
+    if (!name) {
+      toast.error('Name cannot be empty');
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      // Stored on the user's own auth metadata; the project wizard prefills
+      // the first organization from `company`.
+      await updateProfile({ name, company: companyDraft.trim() });
+      toast.success('Profile saved');
+      setEditingProfile(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save your profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const savePassword = async () => {
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      toast.error(`Use at least ${MIN_PASSWORD_LENGTH} characters`);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('The two passwords do not match');
+      return;
+    }
+    setSavingPassword(true);
+    try {
+      await updatePassword(newPassword);
+      toast.success('Password updated');
+      setNewPassword('');
+      setConfirmPassword('');
+      setChangingPassword(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update the password');
+    } finally {
+      setSavingPassword(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -102,10 +159,48 @@ function AccountSettings() {
             <p className="text-sm">{user.email}</p>
           </div>
           <Separator />
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Name</Label>
-            <p className="text-sm">{user.name}</p>
-          </div>
+          {editingProfile ? (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="settings-name" className="text-xs">Name</Label>
+                <Input id="settings-name" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} className="mt-1" />
+              </div>
+              <div>
+                <Label htmlFor="settings-company" className="text-xs">Company</Label>
+                <Input
+                  id="settings-company"
+                  value={companyDraft}
+                  onChange={(e) => setCompanyDraft(e.target.value)}
+                  placeholder="e.g. Your company d.o.o."
+                  className="mt-1"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">Used as your organization's name when you create a project.</p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => void saveProfile()} disabled={savingProfile}>
+                  {savingProfile ? 'Saving…' : 'Save'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setEditingProfile(false)} disabled={savingProfile}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Name</Label>
+                  <p className="text-sm">{user.name}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={startEditProfile}>Edit</Button>
+              </div>
+              <Separator />
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Company</Label>
+                <p className={`text-sm ${user.company ? '' : 'text-muted-foreground'}`}>{user.company || 'Not set'}</p>
+              </div>
+            </>
+          )}
           <Separator />
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Account Type</Label>
@@ -128,15 +223,30 @@ function AccountSettings() {
             <div className="mt-4 space-y-3">
               <div>
                 <Label htmlFor="new-password" className="text-xs">New password</Label>
-                <Input id="new-password" type="password" placeholder="Min 6 characters" className="mt-1" />
+                <Input
+                  id="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+                  className="mt-1"
+                />
               </div>
               <div>
                 <Label htmlFor="confirm-password" className="text-xs">Confirm password</Label>
-                <Input id="confirm-password" type="password" className="mt-1" />
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="mt-1"
+                />
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => { toast.info('Password change coming soon'); setChangingPassword(false); }}>
-                  Update password
+                <Button size="sm" onClick={() => void savePassword()} disabled={savingPassword}>
+                  {savingPassword ? 'Updating…' : 'Update password'}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setChangingPassword(false)}>
                   Cancel

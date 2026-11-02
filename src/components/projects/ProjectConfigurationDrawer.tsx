@@ -68,13 +68,17 @@ interface ProjectConfigurationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   project?: ProjectConfiguration; // For editing existing project
-  onSave: (project: ProjectConfiguration) => void;
+  // Whether the project's real parties (graph party nodes) have finished loading.
+  // Lets the UI tell "0 parties" apart from "still loading" / "failed to load".
+  partiesStatus?: 'loading' | 'loaded' | 'error';
+  onSave: (project: ProjectConfiguration) => void | Promise<void>;
 }
 
 export function ProjectConfigurationDrawer({
   isOpen,
   onClose,
   project,
+  partiesStatus = 'loaded',
   onSave,
 }: ProjectConfigurationDrawerProps) {
   const [projectName, setProjectName] = useState(project?.name || '');
@@ -177,7 +181,9 @@ export function ProjectConfigurationDrawer({
               {project ? 'Edit Project Configuration' : 'Create New Project'}
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Set up approval chain, contracts, and permissions
+              {project
+                ? 'Saving updates the project name and description. Parties and people are edited on the Project Graph (Edit supply chain).'
+                : 'Set up approval chain, contracts, and permissions'}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -294,7 +300,18 @@ export function ProjectConfigurationDrawer({
 
               {/* Parties List */}
               <div className="space-y-3">
-                {approvalChain.length === 0 ? (
+                {approvalChain.length === 0 && project && partiesStatus === 'loading' ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="h-12 w-12 mx-auto mb-3 text-gray-400 animate-pulse" />
+                    <p>Loading parties from the project graph…</p>
+                  </div>
+                ) : approvalChain.length === 0 && project && partiesStatus === 'error' ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+                    <p>Couldn't load this project's parties</p>
+                    <p className="text-sm mt-1">Close this dialog and try again. Name and description can still be saved below.</p>
+                  </div>
+                ) : approvalChain.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <Users className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                     <p>No parties in approval chain yet</p>
@@ -784,13 +801,24 @@ export function ProjectConfigurationDrawer({
         {/* Footer */}
         <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50">
           <div className="text-sm text-gray-500">
-            {approvalChain.length} parties • {contracts.length} contracts
+            {project && partiesStatus === 'loading'
+              ? 'Loading parties…'
+              : project && partiesStatus === 'error'
+                ? "Parties failed to load"
+                : `${approvalChain.length} parties • ${contracts.length} contracts`}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={!projectName || approvalChain.length === 0}>
+            {/* Editing an existing project saves name/description on their own;
+                the parties list may still be loading or have failed to load, and
+                must not block a rename. A new project still needs a party. */}
+            <Button
+              onClick={handleSave}
+              disabled={!projectName.trim() || (!project && approvalChain.length === 0)}
+              title={!projectName.trim() ? 'Add a project name' : undefined}
+            >
               {project ? 'Update Project' : 'Create Project'}
             </Button>
           </div>

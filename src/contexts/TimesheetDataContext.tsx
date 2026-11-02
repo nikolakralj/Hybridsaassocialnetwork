@@ -11,6 +11,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { userDisplayName } from '../utils/auth/display-name';
 import { toast } from 'sonner';
 import { useAuth } from './AuthContext';
 import {
@@ -937,7 +938,7 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
       if (status === 'submitted') {
         const nameDir = readNameDir(projectId);
         const approvalParties = readApprovalParties(projectId);
-        const submitterName = nameDir[personId]?.name || user?.user_metadata?.full_name || normalizedWeek.personId || 'Submitted timesheet';
+        const submitterName = nameDir[personId]?.name || userDisplayName(user) || normalizedWeek.personId || 'Submitted timesheet';
         const submitterOrgId = nameDir[personId]?.orgId || approvalParties.find((party) =>
           party.people.some((person) => person.id === personId)
         )?.id;
@@ -954,7 +955,9 @@ export function TimesheetStoreProvider({ children }: { children: React.ReactNode
         const approvalSnapshot: ApprovalSubjectSnapshot = {
           kind: 'timesheet',
           title: `${submitterName} · ${normalizedWeek.weekLabel}`,
-          summary: `${submitterOrg || 'Unknown organization'} · ${normalizedWeek.weekLabel} · ${sumWeekHours(normalizedWeek)}h`,
+          // Never bake "Unknown organization" into the stored record; the
+          // approvals view resolves the org from the project graph instead.
+          summary: [submitterOrg, normalizedWeek.weekLabel, `${sumWeekHours(normalizedWeek)}h`].filter(Boolean).join(' · '),
           submitterId: personId,
           submitterName,
           submitterOrg,

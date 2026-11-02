@@ -9,7 +9,7 @@ export function Footer() {
           <div>
             <h3 className="mb-4 font-semibold">WorkGraph</h3>
             <p className="text-sm text-muted-foreground m-0 leading-relaxed">
-              The social work network.
+              Timesheets, approvals, and invoices across every company in the chain.
             </p>
           </div>
 
@@ -20,6 +20,11 @@ export function Footer() {
               <li>
                 <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                   Pricing
+                </a>
+              </li>
+              <li>
+                <a href="#faq" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  FAQ
                 </a>
               </li>
             </ul>
