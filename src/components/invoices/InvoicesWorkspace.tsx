@@ -111,7 +111,7 @@ function readNameDir(projectId: string): Record<string, { name?: string }> {
   }
 }
 
-function readApprovalParties(projectId: string): Array<{ id: string; name?: string; partyType?: string }> {
+function readApprovalParties(projectId: string): Array<{ id: string; name?: string; partyType?: string; billsTo?: string[] }> {
   try {
     const raw = sessionStorage.getItem(`workgraph-approval-dir:${projectId}`);
     if (!raw) return [];

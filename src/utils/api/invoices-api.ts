@@ -17,6 +17,11 @@ import { lineAmount, roundMoney, sumMoney, taxOn } from '../money';
 import { ratesFromScopedGraph } from './scoped-graph-rates';
 
 const supabase = createClient();
+
+// wg_create_invoice (041) and wg_get_scoped_graph are not in the generated
+// Supabase types; call them through an untyped rpc instead of casting args.
+const untypedRpc = (fn: string, args: Record<string, unknown>) =>
+  (supabase.rpc.bind(supabase) as unknown as (fn: string, args: Record<string, unknown>) => ReturnType<typeof supabase.rpc>)(fn, args);
 const ALLOW_GRAPH_RATE_FALLBACK = import.meta.env.VITE_ALLOW_GRAPH_RATE_FALLBACK === 'true';
 
 const LOCAL_INVOICES_KEY = (projectId: string) => `workgraph-invoices-${projectId}`;
@@ -232,7 +237,7 @@ async function resolveLegacyGraphRates(projectId: string): Promise<Record<string
 
   // The raw project graph is not readable (036). The scoped RPC already removed
   // rates this caller must not see; this only copies what it returned.
-  const { data, error } = await supabase.rpc('wg_get_scoped_graph', { p_project_id: scope });
+  const { data, error } = await untypedRpc('wg_get_scoped_graph', { p_project_id: scope });
 
   if (error) {
     console.warn(`[invoices] resolveProjectRates failed for ${scope}: ${error.message}`);
@@ -898,18 +903,18 @@ export async function createInvoice(invoice: InvoicePayload, _accessToken?: stri
   let row = toInvoiceRow(body, userId);
 
   try {
-    let { data, error } = await supabase.rpc('wg_create_invoice', { p_invoice: row });
+    let { data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row });
 
     // FK violation on template_id → retry without the template link.
     if (error && error.code === '23503' && row.template_id) {
       row = { ...row, template_id: null };
-      ({ data, error } = await supabase.rpc('wg_create_invoice', { p_invoice: row }));
+      ({ data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row }));
     }
 
     // Duplicate invoice number for this project → retry once with a suffix.
     if (error && error.code === '23505') {
       row = { ...row, invoice_number: `${row.invoice_number}-${Date.now() % 10000}` };
-      ({ data, error } = await supabase.rpc('wg_create_invoice', { p_invoice: row }));
+      ({ data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row }));
     }
 
     if (error) {
