@@ -1147,7 +1147,7 @@ function ContractsSection({
 
 function DocumentsSection({ personId }: { personId: string }) {
   const docs = PERSON_DOCUMENTS[personId];
-  if (!docs || docs.length === 0) return null;
+  if (pilotModuleHidden('documents') || !docs || docs.length === 0) return null;
 
   const docIcons: Record<string, React.ReactNode> = {
     nda: <ShieldCheck className="h-3 w-3 text-violet-500" />,
