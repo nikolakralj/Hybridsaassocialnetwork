@@ -539,7 +539,7 @@ export function ProjectWorkspace({
         ? [{
             nodeId: '__admin__',
             type: 'admin',
-            name: ALLOW_GRAPH_ADMIN_VIEW ? 'Admin (Full View)' : 'Full project view',
+            name: ALLOW_GRAPH_ADMIN_VIEW ? 'Admin (Full View)' : 'All parties',
           }]
         : [];
       // Try sessionStorage first, fall back to localStorage
@@ -764,7 +764,7 @@ export function ProjectWorkspace({
               />
             ) : (
               <Badge variant="outline" className="text-xs text-muted-foreground">
-                Graph identity not mapped
+                Not yet linked to a party in this project
               </Badge>
             )}
           </div>

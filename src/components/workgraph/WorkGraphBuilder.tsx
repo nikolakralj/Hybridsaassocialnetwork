@@ -16,6 +16,7 @@ import {
   Maximize2,
   List,
   Network,
+  ChevronDown,
   ChevronRight,
   ChevronLeft,
   Lock,
@@ -703,7 +704,8 @@ export function ViewerSelector({
   }, []);
 
   const iconMap: Record<string, React.ReactNode> = {
-    admin: <Shield className="h-3.5 w-3.5 text-red-500" />,
+    // Neutral icon: the manager's whole-project view is normal, not an alert.
+    admin: <Network className="h-3.5 w-3.5 text-muted-foreground" />,
     company: <Building2 className="h-3.5 w-3.5 text-blue-500" />,
     agency: <Users className="h-3.5 w-3.5 text-violet-500" />,
     client: <Building2 className="h-3.5 w-3.5 text-amber-500" />,
@@ -716,7 +718,7 @@ export function ViewerSelector({
   };
 
   const getLabel = (v: ViewerIdentity) => {
-    if (v.type === 'admin') return 'Admin';
+    if (v.type === 'admin') return ALLOW_GRAPH_ADMIN_VIEW ? 'Admin' : 'Manager view: every party';
     if (v.type === 'freelancer') return 'Freelancer';
     if (v.orgId) return 'Employee';
     return v.type;
@@ -753,13 +755,14 @@ export function ViewerSelector({
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted/50 transition-colors text-sm"
         aria-label={`Viewing as ${current.name}`}
       >
-        <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Viewing as</span>
         <span className="flex items-center gap-1.5">
           {getIcon(current)}
           <span className="text-xs font-semibold text-foreground max-w-[140px] truncate">
             {current.name}
           </span>
         </span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </button>
 
       {open && (
