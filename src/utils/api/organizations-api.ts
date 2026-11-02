@@ -107,8 +107,11 @@ export interface OrganizationBillingProfile {
 
 /** Organizations the signed-in user may keep invoice details for (owner, org admin or org approver). */
 export async function listMyBillingOrganizations(): Promise<OrganizationBillingProfile[]> {
-  const { data, error } = await (supabase.rpc as unknown as (fn: string) => Promise<{ data: unknown; error: { message?: string } | null }>)
-    .call(supabase, 'wg_list_my_billing_organizations');
+  const rpc = (supabase.rpc as unknown as (fn: string) => Promise<{ data: unknown; error: { message?: string } | null }>);
+  // A project owner's own company may not have an organization row yet
+  // (it used to be created only by "Set up employee"); create it first.
+  await rpc.call(supabase, 'wg_ensure_my_owner_organizations').catch(() => undefined);
+  const { data, error } = await rpc.call(supabase, 'wg_list_my_billing_organizations');
   if (error) throw new Error(error.message || 'Could not load company billing details.');
   return ((data as Array<Record<string, string | null>>) || []).map((row) => ({
     organizationId: String(row.organization_id),

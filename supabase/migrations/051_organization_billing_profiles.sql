@@ -79,6 +79,111 @@ CREATE TRIGGER wg_org_billing_updated_at
   BEFORE UPDATE ON public.wg_organization_billing_profiles
   FOR EACH ROW EXECUTE FUNCTION public.wg_set_updated_at();
 
+-- A project owner's own company only got a wg_organizations row when they
+-- first used "Set up employee" (022/050), so an agency that never did had no
+-- organization to keep billing details for. This creates (or adopts) the
+-- organization for the owner's own party on each project they own, exactly
+-- like the 022 bootstrap does, and makes the owner its verified org_admin.
+-- It never touches another party's organization.
+CREATE OR REPLACE FUNCTION public.wg_ensure_my_owner_organizations()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor UUID := auth.uid();
+  v_project RECORD;
+  v_nodes JSONB;
+  v_party_id TEXT;
+  v_party_name TEXT;
+  v_party_role TEXT;
+  v_org_id TEXT;
+  v_count INTEGER := 0;
+BEGIN
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'Authentication required' USING ERRCODE = '42501';
+  END IF;
+
+  FOR v_project IN
+    SELECT id, graph FROM public.wg_projects WHERE owner_id = v_actor
+  LOOP
+    v_nodes := COALESCE(v_project.graph->'nodes', '[]'::jsonb);
+    v_party_id := NULL;
+
+    SELECT node->'data'->>'partyId' INTO v_party_id
+    FROM public.wg_project_members m
+    JOIN jsonb_array_elements(v_nodes) AS node
+      ON node->>'type' = 'person' AND node->>'id' = m.graph_node_id
+    WHERE m.project_id = v_project.id AND m.user_id = v_actor AND m.accepted_at IS NOT NULL
+    LIMIT 1;
+
+    IF v_party_id IS NULL THEN
+      SELECT node->'data'->>'partyId' INTO v_party_id
+      FROM jsonb_array_elements(v_nodes) AS node
+      WHERE node->>'type' = 'person'
+        AND (node->>'id' = v_actor::text OR node->'data'->>'userId' = v_actor::text)
+      LIMIT 1;
+    END IF;
+
+    CONTINUE WHEN v_party_id IS NULL;
+
+    SELECT node->'data'->>'name', COALESCE(node->'data'->>'partyType', 'company')
+    INTO v_party_name, v_party_role
+    FROM jsonb_array_elements(v_nodes) AS node
+    WHERE node->>'type' = 'party' AND node->>'id' = v_party_id
+    LIMIT 1;
+
+    CONTINUE WHEN v_party_name IS NULL;
+    IF v_party_role NOT IN ('agency', 'client', 'company', 'supplier', 'subcontractor', 'freelancer', 'other') THEN
+      v_party_role := 'company';
+    END IF;
+
+    v_org_id := NULL;
+    SELECT organization_id INTO v_org_id
+    FROM public.wg_project_organizations
+    WHERE project_id = v_project.id AND graph_node_id = v_party_id AND status <> 'removed'
+    LIMIT 1;
+
+    IF v_org_id IS NULL THEN
+      INSERT INTO public.wg_organizations (name, profile_visibility, owner_user_id, created_by, data)
+      VALUES (v_party_name, 'private', v_actor, v_actor, jsonb_build_object('legacyGraphPartyId', v_party_id))
+      RETURNING id INTO v_org_id;
+
+      INSERT INTO public.wg_project_organizations (
+        project_id, organization_id, graph_node_id, party_role, status, invited_by, accepted_by, accepted_at
+      ) VALUES (
+        v_project.id, v_org_id, v_party_id, v_party_role, 'active', v_actor, v_actor, NOW()
+      );
+      v_count := v_count + 1;
+    ELSE
+      -- Adopt only an organization nobody owns yet.
+      UPDATE public.wg_organizations
+      SET owner_user_id = v_actor
+      WHERE id = v_org_id AND owner_user_id IS NULL;
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM public.wg_organization_members
+      WHERE organization_id = v_org_id AND user_id = v_actor
+        AND membership_state IN ('claimed', 'invited', 'verified')
+    ) THEN
+      INSERT INTO public.wg_organization_members (
+        organization_id, user_id, display_name, org_role, membership_state,
+        default_visibility, verified_by, verified_at
+      ) VALUES (
+        v_org_id, v_actor, 'Owner', 'org_admin', 'verified', 'contact', v_actor, NOW()
+      );
+    END IF;
+  END LOOP;
+
+  RETURN v_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.wg_ensure_my_owner_organizations() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.wg_ensure_my_owner_organizations() TO authenticated;
+
 -- Organizations the caller may keep billing details for, with the profile.
 CREATE OR REPLACE FUNCTION public.wg_list_my_billing_organizations()
 RETURNS TABLE (
