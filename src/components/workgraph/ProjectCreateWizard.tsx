@@ -728,10 +728,12 @@ function CompactPartyCard({ party, allParties, onUpdate, onRemove, onToggleConne
             ))}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" onClick={onSearchExisting} disabled={!editable} className="h-7 w-7 p-0">
+        <Button variant="ghost" size="sm" onClick={onSearchExisting} disabled={!editable} className="h-7 w-7 p-0"
+          aria-label="Pick an existing organization" title="Pick an existing organization">
           <Building2 className="w-3.5 h-3.5" />
         </Button>
-        <Button variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive">
+        <Button variant="ghost" size="sm" onClick={onRemove} disabled={!canRemove} className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+          aria-label={`Remove ${party.name || opt.label}`} title={`Remove ${party.name || opt.label}`}>
           <X className="w-3.5 h-3.5" />
         </Button>
       </div>
@@ -1014,6 +1016,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { canApprove: !person.canApprove })} disabled={!editable}
+                  type="button" aria-pressed={!!person.canApprove}
+                  aria-label={person.canApprove ? `${person.name} is an approver. Click to remove approver` : `Make ${person.name} an approver`}
                   className={`p-1 rounded transition-colors ${person.canApprove
                     ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -1024,6 +1028,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { canViewRates: !person.canViewRates })} disabled={!editable}
+                  type="button" aria-pressed={!!person.canViewRates}
+                  aria-label={person.canViewRates ? `${person.name} sees rates. Click to hide rates` : `Let ${person.name} see rates`}
                   className={`p-1 rounded transition-colors ${person.canViewRates
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300'
                     : 'text-muted-foreground/30 hover:text-muted-foreground'}`}>
@@ -1034,6 +1040,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             <TooltipProvider>
               <Tooltip><TooltipTrigger asChild>
                 <button onClick={() => updatePerson(party.id, person.id, { visibleToChain: !(person.visibleToChain ?? true) })} disabled={!editable}
+                  type="button" aria-pressed={!(person.visibleToChain ?? true)}
+                  aria-label={(person.visibleToChain ?? true) ? `${person.name} is visible to the chain. Click to hide` : `${person.name} is hidden from the chain. Click to show`}
                   className={`p-1 rounded transition-colors ${(person.visibleToChain ?? true)
                     ? 'text-muted-foreground/30 hover:text-muted-foreground'
                     : 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300'}`}>
@@ -1042,6 +1050,7 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
               </TooltipTrigger><TooltipContent><p className="text-xs">{(person.visibleToChain ?? true) ? 'Visible to chain — click to hide' : 'Hidden from chain ✓'}</p></TooltipContent></Tooltip>
             </TooltipProvider>
             <Button variant="ghost" size="sm" onClick={() => removePerson(party.id, person.id)} disabled={!editable}
+              aria-label={`Remove ${person.name}`}
               className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0 text-destructive hover:text-destructive">
               <X className="w-3 h-3" />
             </Button>
@@ -1055,7 +1064,8 @@ function PartyPeopleSection({ party, addPerson, removePerson, updatePerson, upda
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
           <Input value={pRole} onChange={(e: any) => setPRole(e.target.value)} placeholder="Role" disabled={!editable} className="h-7 text-[11px] w-20"
             onKeyDown={(e: any) => e.key === 'Enter' && handleAdd()} />
-          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!editable || !pName.trim() || !pEmail.includes('@')}>
+          <Button size="sm" className="h-7 px-2" onClick={handleAdd} disabled={!editable || !pName.trim() || !pEmail.includes('@')}
+            aria-label={`Add person to ${party.name || 'this party'}`}>
             <Plus className="w-3 h-3" />
           </Button>
         </div>
