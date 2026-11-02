@@ -177,7 +177,9 @@ export function ProjectConfigurationDrawer({
               {project ? 'Edit Project Configuration' : 'Create New Project'}
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Set up approval chain, contracts, and permissions
+              {project
+                ? 'Saving updates the project name and description. Parties and people are edited on the Project Graph (Edit supply chain).'
+                : 'Set up approval chain, contracts, and permissions'}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>

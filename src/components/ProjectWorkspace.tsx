@@ -24,7 +24,7 @@ import { NotificationCenterBell } from "./notifications/InAppNotificationCenter"
 import { ProjectInviteMemberDialog } from "./projects/ProjectInviteMemberDialog";
 import { ProjectWorkerSetupDialog } from "./projects/ProjectWorkerSetupDialog";
 import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawer";
-import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
+import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers, updateProject } from "../utils/api/projects-api";
 import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
 import { useAuth } from "../contexts/AuthContext";
@@ -315,6 +315,8 @@ export function ProjectWorkspace({
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
   const [projectStatus, setProjectStatus] = useState<string | null>(null);
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectParties, setProjectParties] = useState<Array<{ id: string; name: string; partyType?: string }>>([]);
   const [teamMembers, setTeamMembers] = useState<ProjectMember[]>([]);
   const [selfMembership, setSelfMembership] = useState<ProjectMember | null>(null);
   const [isTeamLoading, setIsTeamLoading] = useState(false);
@@ -374,8 +376,20 @@ export function ProjectWorkspace({
     setEditingProject({
       id: projectId,
       name: projectName,
-      description: "",
-      approvalChain: [],
+      description: projectDescription,
+      // Prefill from the project's real parties (graph party nodes).
+      approvalChain: projectParties.map((party, index) => ({
+        id: party.id,
+        type: party.partyType === "client" || party.partyType === "agency" || party.partyType === "contractor"
+          ? party.partyType
+          : "company",
+        organizationName: party.name,
+        role: "",
+        order: index,
+        canApprove: true,
+        canViewRates: false,
+        canEditTimesheets: false,
+      })),
       contracts: [],
       settings: {
         requireSequentialApproval: true,
@@ -383,15 +397,25 @@ export function ProjectWorkspace({
         monthlyInvoicing: true,
       },
       createdAt: new Date().toISOString(),
-      status: "active",
+      status: projectStatus === "draft" || projectStatus === "archived" ? projectStatus : "active",
     });
     setIsDrawerOpen(true);
   };
 
-  const handleSaveProject = (project: ProjectConfiguration) => {
-    setProjectName(project.name || projectName);
-    sessionStorage.setItem('currentProjectName', project.name || projectName);
-    toast.success('Project settings updated');
+  const handleSaveProject = async (project: ProjectConfiguration) => {
+    const nextName = project.name?.trim() || projectName;
+    try {
+      await updateProject(projectId, { name: nextName, description: project.description || "" }, accessToken);
+    } catch (error) {
+      toast.error('Project settings were not saved', {
+        description: error instanceof Error ? error.message : 'Please try again',
+      });
+      return;
+    }
+    setProjectName(nextName);
+    setProjectDescription(project.description || "");
+    sessionStorage.setItem('currentProjectName', nextName);
+    toast.success('Project name and description saved');
   };
 
   const loadTeamMembers = async () => {
@@ -444,9 +468,22 @@ export function ProjectWorkspace({
         if (!cancelled) {
           setProjectOwnerId(data?.project?.ownerId || null);
           setProjectStatus(typeof data?.project?.status === 'string' ? data.project.status : null);
+          setProjectDescription(typeof data?.project?.description === 'string' ? data.project.description : "");
+          if (!propProjectName && typeof data?.project?.name === 'string' && data.project.name.trim()) {
+            setProjectName(data.project.name);
+          }
           const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
           const creatorParty = graphNodes.find((node: any) => node?.type === 'party' && node?.data?.isCreator);
+          setProjectParties(
+            graphNodes
+              .filter((node: any) => node?.type === 'party')
+              .map((node: any) => ({
+                id: String(node.id),
+                name: String(node?.data?.name || ''),
+                partyType: node?.data?.partyType,
+              }))
+          );
           setOwnerOrganizationName(creatorParty?.data?.name || "");
           setOwnerPartyId(creatorParty?.id || null);
           setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
@@ -455,6 +492,7 @@ export function ProjectWorkspace({
         if (!cancelled) {
           setProjectOwnerId(null);
           setProjectStatus(null);
+          setProjectParties([]);
           setOwnerPartyId(null);
           setProjectGraphViewers([]);
         }
@@ -967,8 +1005,11 @@ export function ProjectWorkspace({
         </MonthProvider>
       </div>
 
-      {canManageProject ? (
+      {/* Mount only while open so the drawer's state initialises from the
+          current project (it used to mount empty: blank name, 0 parties). */}
+      {canManageProject && isDrawerOpen && editingProject ? (
         <ProjectConfigurationDrawer
+          key={editingProject.id}
           isOpen={isDrawerOpen}
           onClose={() => {
             setIsDrawerOpen(false);
