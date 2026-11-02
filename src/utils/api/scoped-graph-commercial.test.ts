@@ -30,7 +30,11 @@ describe('stripCommercialEdgeFields', () => {
 
   it('keeps billing markup only for finance of the selling party', () => {
     const stripped = stripCommercialEdgeFields({
-      meta: { viewerPartyIds: ['party_agency'], viewerOrgRole: 'org_finance' },
+      meta: {
+        viewerPartyIds: ['party_agency', 'party_contractor'],
+        viewerOrgRole: 'org_finance',
+        viewerFinancePartyIds: ['party_agency'],
+      },
       edges,
     });
     expect(stripped.edges[0].data).toMatchObject({ markup: 22, label: 'Agency bills client' });
@@ -41,9 +45,13 @@ describe('stripCommercialEdgeFields', () => {
     expect(stripped.edges[2].data).toMatchObject({ amount: 500 });
   });
 
-  it('strips a manager of the selling party and leaves funding amounts', () => {
+  it('does not reuse a finance role from another party, and leaves funding amounts', () => {
     const stripped = stripCommercialEdgeFields({
-      meta: { viewerPartyIds: ['party_agency'], viewerOrgRole: 'org_manager' },
+      meta: {
+        viewerPartyIds: ['party_agency', 'party_contractor'],
+        viewerOrgRole: 'org_finance',
+        viewerFinancePartyIds: [],
+      },
       edges,
     });
     expect(stripped.edges[0].data?.markup).toBeUndefined();

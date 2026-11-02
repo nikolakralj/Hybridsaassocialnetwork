@@ -32,14 +32,16 @@ function edgeKind(edge: CommercialEdge): string {
 
 export function stripCommercialEdgeFields<T extends {
   edges?: CommercialEdge[] | null;
-  meta?: { viewerPartyIds?: string[] | null; viewerOrgRole?: string | null } | null;
+  meta?: {
+    viewerPartyIds?: string[] | null;
+    viewerOrgRole?: string | null;
+    viewerFinancePartyIds?: string[] | null;
+  } | null;
 }>(graph: T): T {
-  const parties = new Set(graph.meta?.viewerPartyIds ?? []);
-  const role = graph.meta?.viewerOrgRole || '';
-  const finance = role === 'org_admin' || role === 'org_finance';
+  const financeParties = new Set(graph.meta?.viewerFinancePartyIds ?? []);
   const edges = (graph.edges ?? []).map((edge) => {
     if (!BILLING_EDGE_TYPES.has(edgeKind(edge))) return edge;
-    if (finance && edge.source && parties.has(edge.source)) return edge;
+    if (edge.source && financeParties.has(edge.source)) return edge;
     const data = { ...(edge.data ?? {}) };
     const next: CommercialEdge = { ...edge, data };
     for (const key of COMMERCIAL_EDGE_KEYS) {

@@ -33,7 +33,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.wg_get_scoped_graph(p_project_id TEXT)
+CREATE OR REPLACE FUNCTION public.wg_get_scoped_graph(p_project_id TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 STABLE
@@ -42,27 +42,38 @@ SET search_path = public
 AS $$
 DECLARE
   v_result jsonb;
-  v_parties text[];
-  v_role text;
-  v_finance boolean;
+  v_finance_parties text[];
   v_edges jsonb := '[]'::jsonb;
   v_edge jsonb;
   v_kind text;
 BEGIN
   v_result := public.wg_get_scoped_graph_with_role_meta(p_project_id);
 
-  SELECT COALESCE(array_agg(value), '{}')
-  INTO v_parties
-  FROM jsonb_array_elements_text(COALESCE(v_result #> '{meta,viewerPartyIds}', '[]'::jsonb));
-  v_role := COALESCE(v_result #>> '{meta,viewerOrgRole}', '');
-  v_finance := v_role IN ('org_admin', 'org_finance');
+  -- Finance of party A must not keep commercial fields on an edge sold by party B.
+  SELECT COALESCE(array_agg(DISTINCT project_org.graph_node_id), ARRAY[]::text[])
+  INTO v_finance_parties
+  FROM public.wg_project_organizations AS project_org
+  JOIN public.wg_organization_members AS org_member
+    ON org_member.organization_id = project_org.organization_id
+  WHERE project_org.project_id = p_project_id
+    AND project_org.status = 'active'
+    AND org_member.user_id = auth.uid()
+    AND org_member.membership_state = 'verified'
+    AND org_member.org_role IN ('org_admin', 'org_finance');
+
+  v_result := jsonb_set(
+    v_result,
+    '{meta,viewerFinancePartyIds}',
+    to_jsonb(v_finance_parties),
+    true
+  );
 
   FOR v_edge IN
     SELECT value FROM jsonb_array_elements(COALESCE(v_result->'edges', '[]'::jsonb))
   LOOP
     v_kind := COALESCE(v_edge->'data'->>'edgeType', v_edge->>'type', '');
     IF v_kind IN ('billsTo', 'subcontracts', 'bills_to')
-       AND NOT (v_finance AND v_edge->>'source' = ANY(v_parties)) THEN
+       AND NOT (v_edge->>'source' = ANY(v_finance_parties)) THEN
       v_edges := v_edges || jsonb_build_array(public.wg_strip_commercial_edge(v_edge));
     ELSE
       v_edges := v_edges || jsonb_build_array(v_edge);

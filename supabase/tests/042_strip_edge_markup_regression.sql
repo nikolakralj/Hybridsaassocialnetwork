@@ -57,13 +57,16 @@ INSERT INTO public.wg_project_members (
 
 INSERT INTO public.wg_organizations (id, name, owner_user_id, created_by) VALUES
   ('org_042_client', 'James Client', '04200000-0000-4000-8000-0000000000c1', '04200000-0000-4000-8000-0000000000c1'),
-  ('org_042_agency', 'Nikola Agency', '04200000-0000-4000-8000-0000000000a1', '04200000-0000-4000-8000-0000000000a1');
+  ('org_042_agency', 'Nikola Agency', '04200000-0000-4000-8000-0000000000a1', '04200000-0000-4000-8000-0000000000a1'),
+  ('org_042_contractor', 'Rodman Co', '04200000-0000-4000-8000-0000000000b1', '04200000-0000-4000-8000-0000000000a1');
 INSERT INTO public.wg_organization_members (id, organization_id, user_id, org_role, membership_state) VALUES
   ('orgmem_042_james', 'org_042_client', '04200000-0000-4000-8000-0000000000c1', 'org_manager', 'verified'),
-  ('orgmem_042_finance', 'org_042_agency', '04200000-0000-4000-8000-0000000000f1', 'org_finance', 'verified');
+  ('orgmem_042_finance', 'org_042_agency', '04200000-0000-4000-8000-0000000000f1', 'org_finance', 'verified'),
+  ('orgmem_042_finance_worker', 'org_042_contractor', '04200000-0000-4000-8000-0000000000f1', 'org_worker', 'verified');
 INSERT INTO public.wg_project_organizations (id, project_id, organization_id, graph_node_id, party_role, status) VALUES
   ('porg_042_james', 'proj_reg_042', 'org_042_client', 'party_client', 'client', 'active'),
-  ('porg_042_agency', 'proj_reg_042', 'org_042_agency', 'party_agency', 'agency', 'active');
+  ('porg_042_agency', 'proj_reg_042', 'org_042_agency', 'party_agency', 'agency', 'active'),
+  ('porg_042_contractor', 'proj_reg_042', 'org_042_contractor', 'party_contractor', 'supplier', 'active');
 
 CREATE OR REPLACE FUNCTION public.wg_test_042_act_as(p_uid uuid) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
