@@ -827,10 +827,13 @@ export function InvoicesWorkspace({
   projectId,
   projectName,
   canGenerateInvoices = false,
+  billingPartyIds,
 }: {
   projectId: string;
   projectName?: string;
   canGenerateInvoices?: boolean;
+  /** Companies this user issues invoices from. Other hops are left to their seller. */
+  billingPartyIds?: string[];
 }) {
   const store = useTimesheetStore();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
@@ -1035,7 +1038,9 @@ export function InvoicesWorkspace({
       legacyRates: rates,
       workerIdOf: (week) => weekBillingPersonId(week),
       weekKeysOf: (week) => blockingKeysFor(week),
-      canBillSeller: () => true, // canGenerateInvoices already limits this to project managers
+      // Each company issues its own invoices: the Sub bills the Agency, the
+      // Agency bills the Client. Hops sold by another company are skipped.
+      canBillSeller: (sellerId) => !billingPartyIds || billingPartyIds.includes(sellerId),
       invoicedKeysBySeller,
       unattributedInvoicedKeys: unattributedKeys,
     });
@@ -1137,7 +1142,7 @@ export function InvoicesWorkspace({
     } finally {
       setIsSavingInvoices(false);
     }
-  }, [accessToken, approvedWeeks, canGenerateInvoices, consolidateInvoices, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
+  }, [accessToken, approvedWeeks, billingPartyIds, canGenerateInvoices, consolidateInvoices, currentProjectName, defaultClientName, personNameLookup, projectId, projectTemplate, refreshInvoices, selectedBillingTemplate, selectedMonthLabel, storedInvoices, weekLookup]);
 
   const handleSaveInvoice = useCallback(async (invoiceId: string, patch: Partial<InvoicePayload>) => {
     await updateInvoice(invoiceId, patch, accessToken);

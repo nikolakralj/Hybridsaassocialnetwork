@@ -85,4 +85,19 @@ describe('chain billing', () => {
     expect(linkMargin('agency', 'will', parties, agencyView)?.margin).toBe(20);
     expect(linkMargin('sub', 'will', parties, agencyView)).toBeNull();
   });
+
+  it('chainBillingRates: ready only when every hop has a readable rate', async () => {
+    const { chainBillingRates } = await import('./chain-billing');
+    const parties = [
+      { id: 'ag', billsTo: ['cl'], people: [{ id: 'ana' }] },
+      { id: 'sub', billsTo: ['ag'], people: [{ id: 'will' }] },
+      { id: 'cl', billsTo: [], people: [] },
+    ];
+    const rates = [
+      { kind: 'supply' as const, sellerPartyId: 'ag', buyerPartyId: 'cl', subjectNodeId: null, amount: 80, rateType: 'hourly' as const, currency: 'EUR' },
+    ];
+    expect(Object.keys(chainBillingRates(['ana', 'will'], parties, rates, {}))).toEqual(['ana']);
+    const both = chainBillingRates(['ana', 'will'], parties, [...rates, { ...rates[0], sellerPartyId: 'sub', buyerPartyId: 'ag', amount: 60 }], {});
+    expect(both.will.rate).toBe(80);
+  });
 });

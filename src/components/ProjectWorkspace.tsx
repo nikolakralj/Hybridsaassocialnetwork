@@ -379,6 +379,13 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
+  // Companies this user invoices FROM: a manager's own company, or the
+  // company of a party approver (they set its link rates and issue its
+  // invoices, e.g. the Sub's director billing the Agency). The database
+  // (wg_invoice_caller_controls_party) makes the same check.
+  const billingPartyIds = canManageProject
+    ? editablePartyIds
+    : (currentMembership?.canApprove && currentMembership?.scope ? [currentMembership.scope] : []);
   // Adding/removing organizations mirrors the server rule: project owner, or
   // an Editor of the creator (owner) organization.
   const canManageStructure = canEditGraph && (
@@ -1034,7 +1041,8 @@ export function ProjectWorkspace({
                 <LazyInvoicesWorkspace
                   projectId={projectId}
                   projectName={projectName}
-                  canGenerateInvoices={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
+                  canGenerateInvoices={billingPartyIds.length > 0}
+                  billingPartyIds={billingPartyIds}
                 />
                 )}
               </Suspense>
