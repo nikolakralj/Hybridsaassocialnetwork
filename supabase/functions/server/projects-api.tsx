@@ -755,6 +755,24 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
     const email = normalizeEmail(body.userEmail || body.email);
     if (!email || email === user.email) return c.json({ error: "A valid invite email is required" }, 400);
 
+    // A person added in the project wizard already has a placeholder member row
+    // (graph node + company scope, no invitation). Inviting them upgrades that
+    // row instead of adding a second one; inviting someone who already has a
+    // pending invitation returns it unchanged.
+    const { data: openRows } = await db()
+      .from("wg_project_members")
+      .select("*")
+      .eq("project_id", projectId)
+      .is("accepted_at", null);
+    const sameEmail = (row: any) => normalizeEmail(row.user_email) === email;
+    const alreadyInvited = (openRows || []).find((row: any) => row.invitation_id && sameEmail(row));
+    if (alreadyInvited) {
+      return c.json({ member: rowToMember(alreadyInvited), alreadyInvited: true }, 200);
+    }
+    const placeholder = (openRows || []).find((row: any) => !row.invitation_id && (
+      sameEmail(row) || (graphNodeId && row.graph_node_id === graphNodeId)
+    ));
+
     const invitationId = generateId("inv");
     const invitation = {
       id: invitationId,
@@ -762,7 +780,7 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       project_name: projectRow.name,
       email,
       role: inviteeRole,
-      scope: body.scope || null,
+      scope: body.scope || placeholder?.scope || null,
       invited_by: user.id,
       invited_by_name: user.name,
       invited_at: now,
@@ -790,6 +808,29 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
 
     const { error: invErr } = await db().from("wg_project_invitations").insert(invitation);
     if (invErr) throw invErr;
+
+    if (placeholder) {
+      const upgraded = {
+        invitation_id: invitationId,
+        user_email: email,
+        user_name: body.userName || body.name || placeholder.user_name || email,
+        role: inviteeRole,
+        scope: body.scope || placeholder.scope || null,
+        graph_node_id: graphNodeId || placeholder.graph_node_id || null,
+        can_approve: canApprove || placeholder.can_approve === true,
+        invited_by: user.id,
+        invited_at: now,
+      };
+      const { data: updated, error: upErr } = await db()
+        .from("wg_project_members")
+        .update(upgraded)
+        .eq("id", placeholder.id)
+        .select("*")
+        .single();
+      if (upErr) throw upErr;
+      return c.json({ member: rowToMember(updated), invitation: rowToInvitation(invitation) }, 201);
+    }
+
     const { error: memErr } = await db().from("wg_project_members").insert(pendingMember);
     if (memErr) throw memErr;
 

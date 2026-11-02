@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MIN_PASSWORD_LENGTH } from '../utils/auth/password-recovery';
+import { OrganizationBillingCard } from './settings/OrganizationBillingCard';
 
 type SettingsTab = 'account' | 'notifications' | 'privacy' | 'appearance';
 
@@ -210,6 +211,8 @@ function AccountSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <OrganizationBillingCard />
 
       <Card>
         <CardHeader className="pb-3">

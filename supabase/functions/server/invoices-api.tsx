@@ -25,6 +25,12 @@ function db() {
   );
 }
 
+// Client that runs as the caller, so wg_invoices RLS (035/046/048 and the
+// invoice gate triggers) decides what they may read, create and change. The
+// service-role client is used only to resolve the caller and the project.
+// Before this, the routes re-implemented access with org roles only, so an
+// end-client approver got [] (RLS lets the buyer read issued invoices) and a
+// project Owner/Editor could create invoices for parties RLS would refuse.
 function userDb(c: any) {
   const header = c.req.header("Authorization") || "";
   const [scheme, token] = header.split(" ");
@@ -43,6 +49,11 @@ function invoiceGateStatus(code: string | undefined): number | null {
   if (code === "42501") return 403;
   if (code === "23514" || code === "23505") return 422;
   return null;
+}
+
+function isRlsDenied(error: any): boolean {
+  const message = String(error?.message || "");
+  return error?.code === "42501" || /row-level security/i.test(message);
 }
 
 function normalizeString(value: unknown): string {
@@ -85,13 +96,6 @@ function normalizeStatus(value: unknown): string | null {
   const status = normalizeString(value).toLowerCase();
   if (!status) return null;
   return ALLOWED_STATUSES.has(status) ? status : null;
-}
-
-const INVOICE_READ_ROLES = new Set(["org_admin", "org_finance", "org_manager"]);
-const INVOICE_MANAGE_ROLES = new Set(["org_admin", "org_finance"]);
-
-function hasAllowedRole(role: unknown, allowedRoles: Set<string>): boolean {
-  return allowedRoles.has(normalizeString(role));
 }
 
 function rowToInvoice(row: any) {
@@ -175,84 +179,6 @@ async function getProjectAccess(projectId: string, userId: string) {
   };
 }
 
-async function canEditInvoice(invoice: any, userId: string): Promise<boolean> {
-  if (!invoice) return false;
-  if (invoice.created_by === userId) return true;
-
-  const access = await getInvoiceAccess(invoice, userId);
-  return access.canManage;
-}
-
-async function getVerifiedOrgRole(organizationId: string, userId: string): Promise<string | null> {
-  const { data, error } = await db()
-    .from("wg_organization_members")
-    .select("org_role")
-    .eq("organization_id", organizationId)
-    .eq("user_id", userId)
-    .eq("membership_state", "verified")
-    .maybeSingle();
-
-  if (error) throw error;
-  return data?.org_role ?? null;
-}
-
-async function getProjectOrganizationsForParty(
-  projectId: string | null,
-  partyGraphNodeId: string | null
-): Promise<string[]> {
-  if (!projectId || !partyGraphNodeId) return [];
-
-  const { data, error } = await db()
-    .from("wg_project_organizations")
-    .select("organization_id")
-    .eq("project_id", projectId)
-    .eq("graph_node_id", partyGraphNodeId)
-    .eq("status", "active");
-
-  if (error) throw error;
-  return (data || [])
-    .map((row: any) => row.organization_id)
-    .filter((organizationId: unknown): organizationId is string => typeof organizationId === "string" && organizationId.length > 0);
-}
-
-async function getInvoicePartyAccess(
-  projectId: string | null,
-  partyGraphNodeId: string | null,
-  userId: string
-) {
-  let canRead = false;
-  let canManage = false;
-  const organizationIds = await getProjectOrganizationsForParty(projectId, partyGraphNodeId);
-
-  for (const organizationId of organizationIds) {
-    const role = await getVerifiedOrgRole(organizationId, userId);
-    if (!role) continue;
-
-    canRead = canRead || hasAllowedRole(role, INVOICE_READ_ROLES);
-    canManage = canManage || hasAllowedRole(role, INVOICE_MANAGE_ROLES);
-  }
-
-  return { canRead, canManage };
-}
-
-async function getInvoiceAccess(invoice: any, userId: string) {
-  if (!invoice) return { canRead: false, canManage: false };
-  if (invoice.created_by === userId) return { canRead: true, canManage: true };
-
-  const fromPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.from_party_id, userId);
-  const toPartyAccess = await getInvoicePartyAccess(invoice.project_id, invoice.to_party_id, userId);
-
-  // The buyer reads an invoice only once it was issued; a draft is the
-  // seller's working copy (same rule as wg_invoices RLS, migration 048).
-  const BUYER_VISIBLE_STATUSES = ["issued", "paid", "partially_paid", "overdue"];
-  const wasIssued = Boolean(invoice.issued_at) || BUYER_VISIBLE_STATUSES.includes(String(invoice.status));
-
-  return {
-    canRead: fromPartyAccess.canRead || (wasIssued && toPartyAccess.canRead),
-    canManage: fromPartyAccess.canManage,
-  };
-}
-
 function normalizeInvoicePayload(body: any) {
   const lineItems = Array.isArray(body.lineItems)
     ? body.lineItems
@@ -328,7 +254,10 @@ invoicesRouter.get("/", async (c) => {
     const access = await getProjectAccess(projectId, user.id);
     if (!access.project) return c.json({ error: "Project not found" }, 404);
 
-    const { data, error } = await db()
+    // RLS returns exactly what the caller may read: the seller side's invoices
+    // (drafts included) and, for the buyer side, only invoices once issued.
+    // Workers without a commercial role get nothing.
+    const { data, error } = await userDb(c)
       .from("wg_invoices")
       .select("*")
       .eq("project_id", projectId)
@@ -336,15 +265,7 @@ invoicesRouter.get("/", async (c) => {
 
     if (error) throw error;
 
-    const visibleInvoices = [];
-    for (const row of data || []) {
-      const invoiceAccess = await getInvoiceAccess(row, user.id);
-      if (invoiceAccess.canRead) {
-        visibleInvoices.push(rowToInvoice(row));
-      }
-    }
-
-    return c.json({ invoices: visibleInvoices });
+    return c.json({ invoices: (data || []).map(rowToInvoice) });
   } catch (err: any) {
     return c.json({ error: `Failed to list invoices: ${err.message}` }, 500);
   }
@@ -370,10 +291,9 @@ invoicesRouter.post("/", async (c) => {
 
     const access = await getProjectAccess(payload.projectId, user.id);
     if (!access.project) return c.json({ error: "Project not found" }, 404);
-    const fromPartyAccess = await getInvoicePartyAccess(payload.projectId, payload.fromPartyId, user.id);
-    if (!access.canManageBilling && !fromPartyAccess.canManage) {
-      return c.json({ error: "Employees submit time. Company finance/admin generates invoices." }, 403);
-    }
+    if (!access.isOwner && !access.isMember) return c.json({ error: "Forbidden" }, 403);
+    // Who may invoice for fromPartyId is decided by the wg_invoices insert
+    // policy and wg_create_invoice (041), which run as the caller below.
 
     if (payload.templateId) {
       const { data: template, error: templateError } = await db()
@@ -428,6 +348,9 @@ invoicesRouter.post("/", async (c) => {
     if (error) {
       const status = invoiceGateStatus(error.code);
       if (status) return c.json({ error: error.message }, status);
+      if (isRlsDenied(error)) {
+        return c.json({ error: "Employees submit time. Company finance/admin generates invoices." }, 403);
+      }
       if (error.code === "23503") {
         return c.json({ error: "Referenced project or template not found" }, 400);
       }
@@ -454,7 +377,8 @@ invoicesRouter.patch("/:id", async (c) => {
 
     if (!nextStatus) return c.json({ error: "Invalid status" }, 400);
 
-    const { data: invoice, error: fetchError } = await db()
+    const callerDb = userDb(c);
+    const { data: invoice, error: fetchError } = await callerDb
       .from("wg_invoices")
       .select("*")
       .eq("id", invoiceId)
@@ -463,21 +387,23 @@ invoicesRouter.patch("/:id", async (c) => {
     if (fetchError) throw fetchError;
     if (!invoice) return c.json({ error: "Invoice not found" }, 404);
 
-    const canEdit = await canEditInvoice(invoice, user.id);
-    if (!canEdit) return c.json({ error: "Forbidden" }, 403);
-
-    const { data: updated, error } = await userDb(c)
+    // The update policy (seller side only) decides; a buyer who can read the
+    // invoice updates 0 rows and gets 403.
+    const { data: updatedRows, error } = await callerDb
       .from("wg_invoices")
       .update({ status: nextStatus })
       .eq("id", invoiceId)
-      .select("*")
-      .single();
+      .select("*");
 
     if (error) {
+      if (isRlsDenied(error)) return c.json({ error: "Forbidden" }, 403);
       const status = invoiceGateStatus(error.code);
       if (status) return c.json({ error: error.message }, status);
+      if (error.code === "22023" || error.code === "P0001") return c.json({ error: error.message }, 409);
       throw error;
     }
+    const updated = Array.isArray(updatedRows) ? updatedRows[0] : null;
+    if (!updated) return c.json({ error: "Forbidden" }, 403);
 
     return c.json({ invoice: rowToInvoice(updated) });
   } catch (err: any) {

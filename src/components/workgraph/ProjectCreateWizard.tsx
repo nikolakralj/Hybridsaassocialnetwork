@@ -335,6 +335,7 @@ export function ProjectCreateWizard({
             : 'Contributor') as ProjectRole,
           scope: party.id,
           graphNodeId: person.id,
+          canApprove: person.canApprove === true,
         }))
       );
 
@@ -403,6 +404,10 @@ export function ProjectCreateWizard({
           };
           window.dispatchEvent(new CustomEvent('workgraph-project-changed', { detail }));
           window.dispatchEvent(new CustomEvent('workgraph-project-selected', { detail }));
+        }
+        const inviteFailures: string[] = (result as { inviteFailures?: string[] }).inviteFailures || [];
+        if (inviteFailures.length > 0) {
+          toast.error(`Could not invite ${inviteFailures.join(', ')}. Invite them from the Team tab.`);
         }
         toast.success(isDraftProject ? 'Draft project created!' : 'Project created!', {
           description: isDraftProject
