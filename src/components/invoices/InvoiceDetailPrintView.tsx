@@ -231,6 +231,7 @@ export function InvoiceDetailPrintView({
     taxId,
     iban,
     extra,
+    expectIban,
   }: {
     label: string;
     name: string;
