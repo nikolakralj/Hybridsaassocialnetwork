@@ -296,6 +296,7 @@ function normalizeInvoicePayload(body: any) {
       ? toNumber(rawTotal, Number.NaN)
       : null,
     status,
+    taxRate: taxRate !== undefined && taxRate !== null && taxRate !== "" ? toNumber(taxRate, 0) : 0,
     timesheetIds: Array.isArray(body.timesheetIds)
       ? body.timesheetIds
       : Array.isArray(body.timesheet_ids)
@@ -403,6 +404,7 @@ invoicesRouter.post("/", async (c) => {
       due_date: payload.dueDate,
       delivery_date: payload.deliveryDate,
       currency: payload.currency,
+      tax_rate: payload.taxRate,
       line_items: payload.lineItems,
       subtotal,
       tax_total: taxTotal,
@@ -459,14 +461,18 @@ invoicesRouter.patch("/:id", async (c) => {
     const canEdit = await canEditInvoice(invoice, user.id);
     if (!canEdit) return c.json({ error: "Forbidden" }, 403);
 
-    const { data: updated, error } = await db()
+    const { data: updated, error } = await userDb(c)
       .from("wg_invoices")
       .update({ status: nextStatus })
       .eq("id", invoiceId)
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const status = invoiceGateStatus(error.code);
+      if (status) return c.json({ error: error.message }, status);
+      throw error;
+    }
 
     return c.json({ invoice: rowToInvoice(updated) });
   } catch (err: any) {

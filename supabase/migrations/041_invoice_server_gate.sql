@@ -155,18 +155,40 @@ BEGIN
           USING ERRCODE = '23514';
       END IF;
 
-      SELECT w.total_hours,
-             (
-               SELECT count(*)::integer
-               FROM jsonb_array_elements(COALESCE(w.data->'days', '[]'::jsonb)) d
-               WHERE COALESCE(public.wg_safe_numeric(d->>'hours'), public.wg_safe_numeric(d->>'totalHours'), 0) > 0
-             )
+      -- A key ending in @YYYY-MM bills only the days in that month.
+      SELECT COALESCE(sum(slice.hours), 0),
+             COALESCE(count(*) FILTER (WHERE slice.hours > 0), 0)::integer
         INTO v_hours, v_days
       FROM wg_timesheet_weeks w
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(public.wg_safe_numeric(d->>'hours'), public.wg_safe_numeric(d->>'totalHours'), 0) AS hours,
+               (v_week + (
+                 CASE lower(trim(COALESCE(d->>'day', '')))
+                   WHEN 'mon' THEN 0 WHEN 'monday' THEN 0
+                   WHEN 'tue' THEN 1 WHEN 'tues' THEN 1 WHEN 'tuesday' THEN 1
+                   WHEN 'wed' THEN 2 WHEN 'wednesday' THEN 2
+                   WHEN 'thu' THEN 3 WHEN 'thur' THEN 3 WHEN 'thurs' THEN 3 WHEN 'thursday' THEN 3
+                   WHEN 'fri' THEN 4 WHEN 'friday' THEN 4
+                   WHEN 'sat' THEN 5 WHEN 'saturday' THEN 5
+                   WHEN 'sun' THEN 6 WHEN 'sunday' THEN 6
+                   ELSE (day_ord.ordinality - 1)::integer
+                 END
+               ))::date AS day_date
+        FROM jsonb_array_elements(COALESCE(w.data->'days', '[]'::jsonb)) WITH ORDINALITY AS day_ord(d, ordinality)
+      ) slice
       WHERE w.project_id = NEW.project_id
         AND w.week_start = v_week
         AND w.user_id = v_uid
-      LIMIT 1;
+        AND (v_part IS NULL OR to_char(slice.day_date, 'YYYY-MM') = v_part);
+
+      IF v_part IS NULL THEN
+        SELECT w.total_hours INTO v_hours
+        FROM wg_timesheet_weeks w
+        WHERE w.project_id = NEW.project_id
+          AND w.week_start = v_week
+          AND w.user_id = v_uid
+        LIMIT 1;
+      END IF;
 
       IF v_rate_type = 'fixed' THEN
         v_qty := 1;
@@ -187,6 +209,12 @@ BEGIN
       ));
 
       IF NEW.status = 'issued' THEN
+        -- Hold this week until the insert commits so a second invoice cannot
+        -- pass the same check before this row is visible.
+        PERFORM pg_advisory_xact_lock(hashtextextended(
+          NEW.project_id || ':' || COALESCE(v_uid::text, v_person) || ':' || v_week::text || ':' || COALESCE(v_part, '*'),
+          0
+        ));
         SELECT i.invoice_number INTO v_conflict
         FROM wg_invoices i, unnest(COALESCE(i.timesheet_ids, ARRAY[]::text[])) other_key
         WHERE i.project_id = NEW.project_id
