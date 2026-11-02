@@ -162,6 +162,15 @@ INSERT INTO public.wg_contract_signatories (
   'worker_company'
 );
 
+-- 041's trigger checks invoice facts regardless of caller; this fixture still
+-- runs as the agency owner so created_by is a real, consistent value below.
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}',
+  true
+);
+
 -- Amounts are fixture markers, not anyone's commercial rate.
 INSERT INTO public.wg_contract_rates (
   id, contract_id, project_id, organization_id, subject_user_id,

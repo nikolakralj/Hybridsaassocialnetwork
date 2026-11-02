@@ -143,7 +143,9 @@ function readClientName(projectId: string): string {
 function readPartyIds(projectId: string): { fromPartyId: string; toPartyId: string; fromPartyName: string; toPartyName: string } {
   const parties = readApprovalParties(projectId);
   const seller = parties.find((party) => party?.partyType === 'company' || party?.partyType === 'agency') || parties[0];
-  const buyer = parties.find((party) => party?.partyType === 'client' && party?.id !== seller?.id)
+  const directBuyerId = seller?.billsTo?.find((partyId) => partyId && partyId !== seller?.id);
+  const buyer = (directBuyerId && parties.find((party) => party?.id === directBuyerId))
+    || parties.find((party) => party?.partyType === 'client' && party?.id !== seller?.id)
     || parties.find((party) => party?.id !== seller?.id)
     || parties[0];
 
