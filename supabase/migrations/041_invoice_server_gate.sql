@@ -111,6 +111,15 @@ BEGIN
   END IF;
 
   IF COALESCE(array_length(NEW.timesheet_ids, 1), 0) > 0 THEN
+    IF EXISTS (
+      SELECT 1 FROM unnest(NEW.timesheet_ids) AS repeated_key
+      GROUP BY repeated_key
+      HAVING count(*) > 1
+    ) THEN
+      RAISE EXCEPTION 'This invoice lists the same timesheet more than once.'
+        USING ERRCODE = '23514';
+    END IF;
+
     FOREACH v_key IN ARRAY NEW.timesheet_ids LOOP
       v_base := split_part(v_key, '@', 1);
       v_part := nullif(split_part(v_key, '@', 2), '');
@@ -138,8 +147,9 @@ BEGIN
       FROM wg_contract_rates r
       WHERE r.project_id = NEW.project_id
         AND r.rate_scope = 'bill'
-        AND r.effective_to IS NULL
         AND r.amount > 0
+        AND (r.effective_from IS NULL OR r.effective_from <= v_week)
+        AND (r.effective_to IS NULL OR r.effective_to >= v_week)
         AND (
           r.subject_graph_node_id = v_person
           OR (v_uid IS NOT NULL AND (r.subject_user_id = v_uid OR r.subject_graph_node_id = v_uid::text))
@@ -368,5 +378,13 @@ $$;
 
 REVOKE ALL ON FUNCTION public.wg_create_invoice(jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.wg_create_invoice(jsonb) TO authenticated;
+
+-- Draft edits are priced when they are saved. A later status-only issue
+-- then does not rewrite lines that the lifecycle guard treats as frozen.
+DROP TRIGGER IF EXISTS wg_invoice_issue_checks ON public.wg_invoices;
+CREATE TRIGGER wg_invoice_issue_checks
+  BEFORE INSERT OR UPDATE ON public.wg_invoices
+  FOR EACH ROW
+  EXECUTE FUNCTION public.wg_check_invoice_can_issue();
 
 COMMIT;
