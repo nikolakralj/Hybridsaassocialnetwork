@@ -92,6 +92,7 @@ RETURNS boolean
 LANGUAGE plpgsql AS $$
 DECLARE
   denied boolean := false;
+  n integer := 0;
 BEGIN
   BEGIN
     IF p_status IS NOT NULL AND p_touch_created THEN
@@ -111,9 +112,14 @@ BEGIN
       SET data = jsonb_build_object('totalHours', p_hours)
       WHERE id = '04000000-0000-4000-8000-0000000000b1:2026-09-07';
     END IF;
+    GET DIAGNOSTICS n = ROW_COUNT;
   EXCEPTION WHEN insufficient_privilege THEN
     denied := true;
   END;
+  -- RLS can hide the row and update zero rows without raising.
+  IF n = 0 THEN
+    denied := true;
+  END IF;
   RETURN denied;
 END;
 $$;
