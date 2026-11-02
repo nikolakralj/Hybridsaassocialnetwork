@@ -461,6 +461,16 @@ export function ProjectWorkspace({
     loadTeamMembers();
   }, [projectId, accessToken]);
 
+  // Structure edits (add/remove a company) change who is on the team.
+  useEffect(() => {
+    const onProjectUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (!detail?.projectId || detail.projectId === projectId) void loadTeamMembers();
+    };
+    window.addEventListener('workgraph-project-updated', onProjectUpdated);
+    return () => window.removeEventListener('workgraph-project-updated', onProjectUpdated);
+  }, [projectId, accessToken]);
+
   useEffect(() => {
     let cancelled = false;
     if (!projectId || !user?.id) {

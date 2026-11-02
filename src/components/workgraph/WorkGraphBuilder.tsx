@@ -69,6 +69,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
 import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
+import { computeGraphMonthTimeStats, type GraphMonthTimeStats } from '../../utils/graph/month-time-stats';
 
 // ============================================================================
 // Layout Engine - Hierarchical Sugiyama-style
@@ -850,46 +851,7 @@ function MonthNavigator({
 // Month Summary Bar
 // ============================================================================
 
-export interface GraphMonthTimeStats {
-  peopleWithHours: number;
-  hoursSubmitted: number;
-  hoursApproved: number;
-  pendingWeeks: number;
-}
-
-/**
- * Real hours for the selected month from the project timesheet store, limited
- * to the people visible in this (scoped) graph. Only days inside the month are
- * counted. The bar used to show static demo snapshot numbers (always 0h and
- * "0 NDAs") even when hours were submitted and approved.
- */
-export function computeGraphMonthTimeStats(
-  weeks: Array<{ personId: string; graphNodeId?: string; weekStart: string; status: string; days: Array<{ hours?: number; totalHours?: number }> }>,
-  monthKey: string,
-  visiblePersonIds: Set<string>,
-): GraphMonthTimeStats {
-  const people = new Set<string>();
-  let submitted = 0;
-  let approved = 0;
-  let pending = 0;
-  for (const week of weeks) {
-    const id = visiblePersonIds.has(week.personId) ? week.personId
-      : (week.graphNodeId && visiblePersonIds.has(week.graphNodeId) ? week.graphNodeId : null);
-    if (!id) continue;
-    let hoursInMonth = 0;
-    week.days.forEach((day, index) => {
-      const date = new Date(`${week.weekStart}T00:00:00`);
-      date.setDate(date.getDate() + index);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      if (key === monthKey) hoursInMonth += Number(day.totalHours ?? day.hours ?? 0) || 0;
-    });
-    if (hoursInMonth > 0) people.add(id);
-    if (week.status === 'submitted' || week.status === 'approved') submitted += hoursInMonth;
-    if (week.status === 'approved') approved += hoursInMonth;
-    if (week.status === 'submitted') pending += 1;
-  }
-  return { peopleWithHours: people.size, hoursSubmitted: submitted, hoursApproved: approved, pendingWeeks: pending };
-}
+export { computeGraphMonthTimeStats, type GraphMonthTimeStats } from '../../utils/graph/month-time-stats';
 
 function MonthSummaryBar({ stats }: { stats: GraphMonthTimeStats }) {
   return (
@@ -2119,9 +2081,10 @@ export function WorkGraphBuilder({
   const timesheetStore = useTimesheetStore();
   const graphMonthTimeStats = useMemo(() => {
     const visiblePersonIds = new Set(filteredNodes.filter((n) => n.type === 'person').map((n) => n.id));
-    return computeGraphMonthTimeStats(timesheetStore.getAllWeeksForMonth(selectedMonth), selectedMonth, visiblePersonIds);
+    const graphPersonIds = new Set(allNodes.filter((n) => n.type === 'person').map((n) => n.id));
+    return computeGraphMonthTimeStats(timesheetStore.getAllWeeksForMonth(selectedMonth), selectedMonth, visiblePersonIds, graphPersonIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timesheetStore.version, selectedMonth, filteredNodes]);
+  }, [timesheetStore.version, selectedMonth, filteredNodes, allNodes]);
 
   const editableParties = useMemo(() => buildEditableParties(allNodes, allEdges), [allNodes, allEdges]);
 
@@ -2206,6 +2169,9 @@ export function WorkGraphBuilder({
     toast.success('Supply chain updated', {
       description: `Saved ${mergedNodes.length} nodes and ${mergedEdges.length} connections.`,
     });
+    // The server removed (or added) memberships with the companies; tell the
+    // workspace to reload its Team list so the count is not stale.
+    window.dispatchEvent(new CustomEvent('workgraph-project-updated', { detail: { projectId } }));
     setIsEditSupplyChainOpen(false);
   }, [projectId, accessToken, graphPersistence, canEditGraph, fetchServerGraphState, rememberServerGraph, allNodes]);
 
@@ -2363,6 +2329,7 @@ export function WorkGraphBuilder({
                 onNavigate={handleNavigate}
                 onUpdateNodeData={canEditGraph ? handleUpdateNodeData : undefined}
                 onAddPartyApprover={canEditGraph ? handleAddPartyApprover : undefined}
+                ownPartyIds={editablePartyIds}
               />
             </DrawerErrorBoundary>
           </div>

@@ -36,12 +36,15 @@ export function LinkRatesSection({
   nodes,
   edges,
   viewer,
+  ownPartyIds,
 }: {
   projectId: string;
   node: VisibleNode;
   nodes: VisibleNode[];
   edges: VisibleEdge[];
   viewer: ViewerIdentity;
+  /** The signed-in user's own companies; an admin ("all parties") view edits only their rates. */
+  ownPartyIds?: string[];
 }) {
   const [rates, setRates] = useState<LinkRate[]>([]);
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -99,10 +102,12 @@ export function LinkRatesSection({
     return [];
   }, [edges, nameOf, node, rates]);
 
+  // Only the seller sets the price on its link (the employer sets pay). The
+  // buyer reads it. The database enforces the same rule (044 write policies).
   const viewerParty = viewer.orgId || viewer.nodeId;
-  const canEdit = (row: LinkRow) => viewer.type === 'admin'
-    || viewerParty === row.sellerId
-    || (row.kind === 'supply' && viewerParty === row.buyerId);
+  const canEdit = (row: LinkRow) => (viewer.type === 'admin'
+    ? (!ownPartyIds || ownPartyIds.length === 0 || ownPartyIds.includes(row.sellerId))
+    : viewerParty === row.sellerId);
 
   const margins = useMemo(() => {
     if (node.type !== 'party' || rates.length === 0) return [];
@@ -137,7 +142,7 @@ export function LinkRatesSection({
       toast.success('Rate saved. Only the companies on this link can see it.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not save the rate.';
-      toast.error(/row-level security/i.test(message) ? 'Only the companies on this link can set its rate.' : message);
+      toast.error(/row-level security/i.test(message) ? 'Only the selling company on this link can set its rate.' : message);
     } finally {
       setSaving(false);
     }
@@ -183,6 +188,8 @@ export function LinkRatesSection({
             >
               <Pencil className="mr-1 h-3 w-3" />{row.rate ? 'Edit rate' : 'Set rate'}
             </Button>
+          ) : row.kind === 'supply' && available ? (
+            <div className="mt-0.5 text-[10px] text-muted-foreground">Set by {nameOf(row.sellerId)}</div>
           ) : null}
         </div>
       ))}
