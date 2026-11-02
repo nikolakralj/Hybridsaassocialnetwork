@@ -41,7 +41,6 @@ export function EdgeConfigPopover({
   const [edgeType, setEdgeType] = useState<string>(defaultEdgeType);
   const [order, setOrder] = useState<number>(1);
   const [amount, setAmount] = useState<string>('');
-  const [markup, setMarkup] = useState<string>('');
 
   // Get recommendations for this connection
   const suggestions = getRecommendedEdgeTypes(
@@ -84,7 +83,6 @@ export function EdgeConfigPopover({
       data.fundingType = 'direct';
     } else if (edgeType === 'subcontracts') {
       data.role = 'sub';
-      data.markup = parseFloat(markup) || 0;
     }
 
     onSave(data);
@@ -246,33 +244,6 @@ export function EdgeConfigPopover({
             </div>
           )}
 
-          {/* Subcontract-specific fields */}
-          {edgeType === 'subcontracts' && (
-            <div className="space-y-3 p-4 bg-purple-50 rounded-lg border border-purple-200">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full bg-purple-500" />
-                <span className="font-medium text-sm">Subcontract Configuration</span>
-              </div>
-              
-              <div>
-                <Label htmlFor="markup">Markup Percentage</Label>
-                <Input
-                  id="markup"
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={markup}
-                  onChange={(e) => setMarkup(e.target.value)}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  placeholder="e.g., 15"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Optional: Prime contractor's markup on subcontractor rates (0-100%)
-                </p>
-              </div>
-            </div>
-          )}
         </div>
 
         <DialogFooter className="gap-2">

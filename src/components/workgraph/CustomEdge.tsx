@@ -112,9 +112,6 @@ export function CustomEdge({
     if (edgeType === 'funds' && data?.amount) {
       return `${edgeType} ($${data.amount.toLocaleString()})`;
     }
-    if (edgeType === 'subcontracts' && data?.markup) {
-      return `${edgeType} (+${data.markup}%)`;
-    }
     return edgeType;
   };
 

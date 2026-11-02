@@ -34,6 +34,8 @@ import { getDashboardData } from '../../utils/api/dashboard';
 import type { DashboardData, RecentConnection, MessagePreview, Insight } from '../../types/dashboard';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatKnownMoney } from '../../utils/dashboard-earnings';
+import { projectWorkspacePath } from '../../utils/workspace-link';
 
 // Social/network surface (feed, connections, messaging, job board) is a
 // pre-product stub with no backend. Hidden until the WorkGraph billing loop
@@ -179,7 +181,10 @@ export function DashboardPage() {
           <Button
             size="sm"
             className="h-9 gap-2 text-sm"
-            onClick={() => handleNavigate('/app/approvals')}
+            onClick={() => handleNavigate(projectWorkspacePath(
+              typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('currentProjectId') : null,
+              'timesheets',
+            ))}
           >
             <Clock className="w-3.5 h-3.5" />
             Submit Timesheet
@@ -271,9 +276,13 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           title="Earnings"
-          value={`$${work_stats.earnings.current_period.toLocaleString()}`}
-          subtitle={`vs $${work_stats.earnings.previous_period.toLocaleString()} last month`}
-          trend={work_stats.earnings.trend}
+          value={work_stats.earnings.money_known
+            ? formatKnownMoney(work_stats.earnings.current_period, work_stats.earnings.currency)
+            : '—'}
+          subtitle={work_stats.earnings.money_known
+            ? 'Approved hours × saved contract rate'
+            : 'No saved contract rate'}
+          trend={work_stats.earnings.money_known ? work_stats.earnings.trend : undefined}
           icon={<DollarSign className="w-4 h-4" />}
           color="text-emerald-600"
           bgColor="bg-emerald-50"
@@ -292,7 +301,9 @@ export function DashboardPage() {
         <StatCard
           title="Pending Approvals"
           value={work_stats.pending_approvals.count}
-          subtitle={`Worth $${work_stats.pending_approvals.total_value.toLocaleString()}`}
+          subtitle={work_stats.pending_approvals.money_known
+            ? `Worth ${formatKnownMoney(work_stats.pending_approvals.total_value, work_stats.pending_approvals.currency)}`
+            : 'Waiting on approval'}
           icon={<AlertCircle className="w-4 h-4" />}
           color="text-amber-600"
           bgColor="bg-amber-50"

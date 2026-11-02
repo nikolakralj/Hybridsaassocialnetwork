@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
+import { useSearchParams } from "react-router";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck, ClipboardCheck
@@ -132,30 +133,12 @@ export function ProjectWorkspace({
   projectName: propProjectName,
 }: ProjectWorkspaceProps) {
   const { user, accessToken } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const storedProjectId = sessionStorage.getItem('currentProjectId');
-  const storedProjectName = sessionStorage.getItem('currentProjectName');
+  const queryProjectId = searchParams.get('projectId')?.trim() || '';
+  const storedIsDemo = !storedProjectId || storedProjectId === 'proj-alpha';
 
-  // Never fall back to demo project IDs (e.g. proj-alpha), otherwise real workspaces
-  // get silently blended with seed graph/timesheet data.
-  const buildFallbackProjectId = () => {
-    const fromName = propProjectName || storedProjectName;
-    if (!fromName) return '';
-    const slug = fromName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    return slug ? `proj-${slug}` : '';
-  };
-
-  const fallbackProjectId = buildFallbackProjectId();
-  const shouldReplaceDemoProjectId =
-    storedProjectId === 'proj-alpha' &&
-    !!fallbackProjectId &&
-    (propProjectName || storedProjectName) !== 'Mobile App Redesign';
-
-  const resolvedProjectId =
-    propProjectId ||
-    (shouldReplaceDemoProjectId ? fallbackProjectId : storedProjectId) ||
-    fallbackProjectId;
-
-  const projectId = resolvedProjectId || '';
+  const projectId = propProjectId || queryProjectId || (storedIsDemo ? '' : storedProjectId);
   const [projectName, setProjectName] = useState(
     propProjectName || sessionStorage.getItem('currentProjectName') || 'Project'
   );
@@ -163,7 +146,7 @@ export function ProjectWorkspace({
   useEffect(() => {
     if (!projectId) return;
     const stored = sessionStorage.getItem('currentProjectId');
-    if (!stored || shouldReplaceDemoProjectId) {
+    if (!stored || stored === 'proj-alpha') {
       sessionStorage.setItem('currentProjectId', projectId);
     }
     window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
@@ -307,7 +290,21 @@ export function ProjectWorkspace({
     },
   ]);
 
-  const [activeTab, setActiveTab] = useState<ModuleId>("overview");
+  const [activeTab, setActiveTab] = useState<ModuleId>(
+    (searchParams.get('tab') as ModuleId) || "overview",
+  );
+
+  useEffect(() => {
+    if (!projectId || searchParams.get('projectId') === projectId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('projectId', projectId);
+    setSearchParams(next, { replace: true });
+  }, [projectId, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && tab !== activeTab) setActiveTab(tab as ModuleId);
+  }, [searchParams, activeTab]);
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -873,7 +870,6 @@ export function ProjectWorkspace({
                   ownerId={user?.id || "current-user"}
                   ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
                   contractors={[]}
-                  hourlyRate={95}
                   viewerOverride={effectiveViewer ? {
                     id: effectiveViewer.nodeId,
                     type: effectiveViewer.type,

@@ -774,7 +774,7 @@ export function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvo
   // disagrees with its own lines is ignored); VAT is rounded on that subtotal.
   const subtotal = Math.max(0, sumMoney(lineItems.map((item) => item.amount)));
   const taxRate = Math.min(100, Math.max(0, toNumber(payload.taxRate, 0)));
-  const taxTotal = Math.max(0, roundMoney(toNumber(payload.taxTotal, taxOn(subtotal, taxRate))));
+  const taxTotal = Math.max(0, taxOn(subtotal, taxRate));
   const total = roundMoney(subtotal + taxTotal);
   const projectId = normalizeString(payload.projectId);
 

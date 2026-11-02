@@ -80,6 +80,20 @@ describe('invoice maths', () => {
     expect(even.taxTotal).toBe(25);
     expect(even.total).toBe(125);
 
+    const ignoredClientTotal = buildInvoiceRequestBody({
+      projectId: 'proj_synthetic',
+      invoiceNumber: 'INV-SYN-IGNORE',
+      issueDate: '2026-10-01',
+      dueDate: '2026-10-31',
+      lineItems: [{ id: 'line-even', description: 'Hours', quantity: 8, unitPrice: 12.5, amount: 100 }],
+      taxRate: 25,
+      taxTotal: 999,
+      subtotal: 1,
+      total: 1,
+    });
+    expect(ignoredClientTotal.taxTotal).toBe(25);
+    expect(ignoredClientTotal.total).toBe(125);
+
     const cents = buildInvoiceRequestBody({
       projectId: 'proj_synthetic',
       invoiceNumber: 'INV-SYN-CENTS',
