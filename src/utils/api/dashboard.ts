@@ -21,6 +21,7 @@ import { listProjects } from './projects-api';
 import { listContracts } from './contracts-api';
 import { listTimesheets } from './timesheets-api';
 import { createClient } from '../supabase/client';
+import { sumWeekHoursInMonth } from '../../types/timesheets';
 
 /** Invoices this user can see (RLS-scoped). 0 when the query fails. */
 async function countVisibleInvoices(): Promise<number> {
@@ -65,8 +66,18 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     let billableHours = 0;
     let submittedCount = 0;
 
+    // The stats are labelled "this month": count only this month's days (a
+    // week like Nov 30 - Dec 4 must not add its December days to November).
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthHours = (week: any) => (
+      week?.weekStart
+        ? sumWeekHoursInMonth(week, monthKey)
+        : (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0)
+    );
+
     timesheetWeeks.forEach((week: any) => {
-      const weekHours = (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0);
+      const weekHours = monthHours(week);
       totalHours += weekHours;
       billableHours += weekHours; // Assume all hours billable for now
 
@@ -79,9 +90,7 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     // real invoices. (This used to multiply hours by a contract average or an
     // invented 100/h.) Approved hours and invoice counts are real data.
     const approvedWeeks = timesheetWeeks.filter((w: any) => w.status === 'approved');
-    const approvedHours = approvedWeeks.reduce((sum: number, w: any) => (
-      sum + (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0)
-    ), 0);
+    const approvedHours = approvedWeeks.reduce((sum: number, w: any) => sum + monthHours(w), 0);
     const invoiceCount = await countVisibleInvoices();
 
     return {
