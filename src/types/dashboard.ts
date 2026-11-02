@@ -31,6 +31,10 @@ export interface WorkStats {
     count: number;
     expiring_soon: number; // within 30 days
   };
+  /** Real invoice rows visible to the user (no estimated amounts). */
+  invoices?: {
+    count: number;
+  };
 }
 
 export interface EarningsDataPoint {

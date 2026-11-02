@@ -20,6 +20,18 @@ import type {
 import { listProjects } from './projects-api';
 import { listContracts } from './contracts-api';
 import { listTimesheets } from './timesheets-api';
+import { createClient } from '../supabase/client';
+
+/** Invoices this user can see (RLS-scoped). 0 when the query fails. */
+async function countVisibleInvoices(): Promise<number> {
+  try {
+    const { count, error } = await createClient().from('wg_invoices').select('id', { count: 'exact', head: true });
+    if (error) return 0;
+    return count || 0;
+  } catch {
+    return 0;
+  }
+}
 
 const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
 
@@ -52,7 +64,6 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     let totalHours = 0;
     let billableHours = 0;
     let submittedCount = 0;
-    let submittedValue = 0;
 
     timesheetWeeks.forEach((week: any) => {
       const weekHours = (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0);
@@ -61,30 +72,21 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
 
       if (week.status === 'submitted') {
         submittedCount++;
-        // Estimate value at average rate if contracts exist
-        const avgRate = activeContracts.length > 0
-          ? activeContracts.reduce((sum: number, c: any) => sum + (c.baseHourlyRate || 0), 0) / activeContracts.length
-          : 100;
-        submittedValue += weekHours * avgRate;
       }
     });
 
-    // Estimate earnings based on approved weeks
+    // No money on the dashboard: rates are private and amounts only exist on
+    // real invoices. (This used to multiply hours by a contract average or an
+    // invented 100/h.) Approved hours and invoice counts are real data.
     const approvedWeeks = timesheetWeeks.filter((w: any) => w.status === 'approved');
-    const avgRate = activeContracts.length > 0
-      ? activeContracts.reduce((sum: number, c: any) => sum + (c.baseHourlyRate || 0), 0) / activeContracts.length
-      : 100;
     const approvedHours = approvedWeeks.reduce((sum: number, w: any) => (
       sum + (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0)
     ), 0);
-    const currentEarnings = approvedWeeks.reduce((sum: number, w: any) => {
-      const weekHours = (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0);
-      return sum + weekHours * avgRate;
-    }, 0);
+    const invoiceCount = await countVisibleInvoices();
 
     return {
       earnings: {
-        current_period: Math.round(currentEarnings) || 0,
+        current_period: 0,
         previous_period: 0, // No historical comparison yet
         currency: 'USD',
         period: 'month',
@@ -99,12 +101,15 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
       },
       pending_approvals: {
         count: submittedCount,
-        total_value: Math.round(submittedValue),
+        total_value: 0,
         currency: 'USD',
       },
       active_contracts: {
         count: activeContracts.length,
         expiring_soon: expiringSoon.length,
+      },
+      invoices: {
+        count: invoiceCount,
       },
     };
   } catch (err) {
@@ -453,12 +458,15 @@ const MOCK_MESSAGES: MessagePreview[] = [
 function generateInsights(workStats: WorkStats): Insight[] {
   const insights: Insight[] = [];
 
-  if (workStats.earnings.current_period > 0) {
+  const approvedHours = workStats.hours.approved || 0;
+  if (approvedHours > 0) {
     insights.push({
-      id: 'insight-earnings',
+      id: 'insight-approved-hours',
       type: 'earning',
-      title: workStats.earnings.current_period > 5000 ? 'Great month!' : 'Getting started',
-      description: `You've earned $${workStats.earnings.current_period.toLocaleString()} this month from approved timesheets.`,
+      title: `${approvedHours.toLocaleString()}h approved`,
+      description: 'Approved hours are ready to invoice. Amounts come from the private rates on each project\'s Invoices tab.',
+      action_label: 'Open projects',
+      action_url: '/app/projects',
       icon: 'TrendingUp',
       color: 'text-green-600',
     });
@@ -469,7 +477,7 @@ function generateInsights(workStats: WorkStats): Insight[] {
       id: 'insight-pending',
       type: 'opportunity',
       title: `${workStats.pending_approvals.count} pending approval${workStats.pending_approvals.count !== 1 ? 's' : ''}`,
-      description: `You have ${workStats.pending_approvals.count} timesheet${workStats.pending_approvals.count !== 1 ? 's' : ''} waiting for approval worth $${workStats.pending_approvals.total_value.toLocaleString()}.`,
+      description: `You have ${workStats.pending_approvals.count} timesheet${workStats.pending_approvals.count !== 1 ? 's' : ''} waiting for approval.`,
       action_label: 'View Approvals',
       action_url: '/app/approvals',
       icon: 'Clock',

@@ -117,7 +117,7 @@ export function DashboardPage() {
       { id: 'agency-client', label: 'Add your first Client organization to the project graph', actionText: 'Add Client', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
       { id: 'agency-roles', label: 'Define billing contract roles on your project workspace', actionText: 'Define Roles', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
       { id: 'agency-invite', label: 'Invite your first Contractor to log hours', actionText: 'Invite Team', route: '/app/projects', autoDone: work_stats.active_contracts.count > 1 },
-      { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: work_stats.earnings.current_period > 0 },
+      { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: (work_stats.invoices?.count || 0) > 0 },
     ],
     company: [
       { id: 'company-profile', label: 'Set up your company profile and details', actionText: 'Profile Setup', route: '/app/company-profile', autoDone: !!user?.headline || !!user?.bio },
