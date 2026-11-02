@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { toast } from "sonner";
+import { PILOT_HIDDEN_MODULE_IDS, SHOW_SOCIAL_FEATURES } from "../utils/feature-flags";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { MonthProvider } from "../contexts/MonthContext";
 import { NotificationCenterBell } from "./notifications/InAppNotificationCenter";
@@ -333,8 +334,10 @@ export function ProjectWorkspace({
   const [workspaceViewer, setWorkspaceViewer] = useState<ViewerIdentity | null>(null);
   const [workspaceViewerOptions, setWorkspaceViewerOptions] = useState<ViewerIdentity[]>([]);
 
-  const enabledModules = modules.filter(m => m.isEnabled);
-  const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional");
+  const pilotVisible = (moduleId: ModuleId) =>
+    SHOW_SOCIAL_FEATURES || !PILOT_HIDDEN_MODULE_IDS.includes(moduleId as typeof PILOT_HIDDEN_MODULE_IDS[number]);
+  const enabledModules = modules.filter(m => m.isEnabled && pilotVisible(m.id));
+  const availableModules = modules.filter(m => !m.isEnabled && m.category === "optional" && pilotVisible(m.id));
   const currentMembership = useMemo(() => {
     if (!user) return null;
     const email = user.email?.toLowerCase();
@@ -481,6 +484,10 @@ export function ProjectWorkspace({
       openTab("overview");
     }
   }, [activeTab, canManageProject]);
+
+  useEffect(() => {
+    if (!pilotVisible(activeTab)) openTab("overview");
+  }, [activeTab]);
 
   useEffect(() => {
     const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;

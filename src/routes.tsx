@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { capturePasswordRecoveryFromWindow } from "./utils/auth/password-recovery";
 import { PasswordRecoveryRedirect } from "./components/auth/PasswordRecoveryRedirect";
 import { ResetPasswordPage } from "./components/auth/ResetPasswordPage";
@@ -22,6 +22,18 @@ import { PublicProfilePage } from "./components/PublicProfilePage";
 import { AppLayout } from "./components/AppLayout";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import { InviteAcceptPage } from "./components/invitations/InviteAcceptPage";
+import { hiddenRouteTarget, SHOW_SOCIAL_FEATURES } from "./utils/feature-flags";
+
+function HiddenPilotPage() {
+  const projectId = typeof sessionStorage !== "undefined"
+    ? sessionStorage.getItem("currentProjectId")
+    : null;
+  return <Navigate to={hiddenRouteTarget(projectId)} replace />;
+}
+
+function pilotPage<T>(page: T): T | typeof HiddenPilotPage {
+  return SHOW_SOCIAL_FEATURES ? page : HiddenPilotPage;
+}
 
 // Snapshot a recovery hash before the router or auth client clears it.
 capturePasswordRecoveryFromWindow();
@@ -62,15 +74,15 @@ export const router = createBrowserRouter([
     Component: AppLayout,
     children: [
       { index: true, Component: DashboardPage },
-      { path: "feed", Component: FeedHome },
+      { path: "feed", Component: pilotPage(FeedHome) },
       { path: "projects", Component: ProjectsListView },
       { path: "project-workspace", Component: ProjectWorkspace },
       { path: "approvals", Component: ApprovalsWorkbench },
       { path: "contracts", Component: ContractsPage },
-      { path: "company-profile", Component: CompanyProfilePage },
-      { path: "notifications", Component: ActivityFeedPage },
+      { path: "company-profile", Component: pilotPage(CompanyProfilePage) },
+      { path: "notifications", Component: pilotPage(ActivityFeedPage) },
       { path: "profile", Component: ProfilePage },
-      { path: "profile/:userId", Component: PublicProfilePage },
+      { path: "profile/:userId", Component: pilotPage(PublicProfilePage) },
       { path: "settings", Component: SettingsPage },
       { path: "approve", Component: DeepLinkHandler },
       { path: "reject", Component: DeepLinkHandler },

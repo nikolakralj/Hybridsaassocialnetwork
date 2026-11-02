@@ -12,6 +12,7 @@ import {
 } from "./ui/dropdown-menu";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
+import { SHOW_SOCIAL_FEATURES } from "../utils/feature-flags";
 import { projectWorkspacePath } from "../utils/workspace-link";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -39,7 +40,7 @@ export function AppHeader() {
 
   // Feed is a pre-product social stub — hidden until the social layer ships
   // for real (ROADMAP Phase 9). Same gate as the dashboard social sections.
-  const showSocial = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
+  const showSocial = SHOW_SOCIAL_FEATURES;
   const navItems = [
     { label: "Dashboard", path: "/app" },
     { label: "Projects", path: "/app/projects" },
@@ -189,9 +190,11 @@ export function AppHeader() {
               <DropdownMenuItem asChild>
                 <Link to="/app/settings" className="cursor-pointer no-underline">Settings</Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to="/app/company-profile" className="cursor-pointer no-underline">Company Profile</Link>
-              </DropdownMenuItem>
+              {showSocial && (
+                <DropdownMenuItem asChild>
+                  <Link to="/app/company-profile" className="cursor-pointer no-underline">Company Profile</Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="text-destructive cursor-pointer">
                 Sign out
