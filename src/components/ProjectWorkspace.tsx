@@ -475,7 +475,7 @@ export function ProjectWorkspace({
   }, [activeTab, canManageProject]);
 
   useEffect(() => {
-    if (!pilotVisible(activeTab)) setActiveTab("overview");
+    if (!pilotVisible(activeTab)) openTab("overview");
   }, [activeTab]);
 
   useEffect(() => {

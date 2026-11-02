@@ -43,6 +43,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { toast } from 'sonner';
+import { PILOT_HIDDEN_MODULE_IDS, SHOW_SOCIAL_FEATURES } from '../../utils/feature-flags';
 import { buildPersonToOrgMap } from './graph-visibility';
 import type { ViewerIdentity, VisibleNode, VisibleEdge } from './graph-visibility';
 import {
@@ -1067,6 +1068,10 @@ function TimesheetSection({
 // Contracts Section
 // ============================================================================
 
+function pilotModuleHidden(target: string): boolean {
+  return !SHOW_SOCIAL_FEATURES && (PILOT_HIDDEN_MODULE_IDS as readonly string[]).includes(target);
+}
+
 function ContractsSection({
   personId,
   viewer,
@@ -1077,7 +1082,7 @@ function ContractsSection({
   onNavigate: (target: string) => void;
 }) {
   const contracts = PERSON_CONTRACTS[personId];
-  if (!contracts || contracts.length === 0) return null;
+  if (pilotModuleHidden('contracts') || !contracts || contracts.length === 0) return null;
 
   // Mask rates if viewer doesn't have access
   const shouldMaskRate = viewer.type === 'client' || (viewer.type === 'agency' && personId.startsWith('user-'));
@@ -1212,7 +1217,8 @@ function QuickActions({
     );
   }
 
-  if (actions.length === 0) return null;
+  const visibleActions = actions.filter((action) => !pilotModuleHidden(action.target));
+  if (visibleActions.length === 0) return null;
 
   return (
     <div className="space-y-2">
@@ -1220,7 +1226,7 @@ function QuickActions({
         Quick Actions
       </div>
       <div className="grid grid-cols-1 gap-1.5">
-        {actions.map(action => (
+        {visibleActions.map(action => (
           <button
             key={action.label}
             onClick={() => onNavigate(action.target)}

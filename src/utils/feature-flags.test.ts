@@ -3,8 +3,8 @@ import { hiddenRouteTarget, PILOT_HIDDEN_MODULE_IDS } from './feature-flags';
 
 describe('hidden pilot routes', () => {
   it('sends a direct link to the project workspace', () => {
-    expect(hiddenRouteTarget(null)).toBe('/app/project-workspace');
-    expect(hiddenRouteTarget('proj-alpha')).toBe('/app/project-workspace');
+    expect(hiddenRouteTarget(null)).toBe('/app/projects');
+    expect(hiddenRouteTarget('proj-alpha')).toBe('/app/projects');
     expect(hiddenRouteTarget('proj_1776')).toBe('/app/project-workspace?projectId=proj_1776');
   });
 

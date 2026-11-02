@@ -1,3 +1,5 @@
+import { projectWorkspacePath } from './workspace-link';
+
 /** Off unless VITE_SHOW_SOCIAL_FEATURES=true. Pilot builds leave it unset. */
 export const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
 
@@ -9,9 +11,7 @@ export const PILOT_HIDDEN_MODULE_IDS = [
   'messages',
 ] as const;
 
-/** Where a hidden route sends a pilot user. No slug id is invented. */
+/** Where a hidden route sends a pilot user. No project goes to the project list. */
 export function hiddenRouteTarget(projectId?: string | null): string {
-  const id = (projectId || '').trim();
-  if (!id || id === 'proj-alpha') return '/app/project-workspace';
-  return `/app/project-workspace?projectId=${encodeURIComponent(id)}`;
+  return projectWorkspacePath(projectId);
 }
