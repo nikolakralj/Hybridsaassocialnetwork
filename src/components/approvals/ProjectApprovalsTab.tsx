@@ -38,7 +38,10 @@ export function ProjectApprovalsTab({
   // The graph viewer label can be a generic "Me"/"You"; prefer the real
   // signed-in name so the badge reads "Signed in as Nikola Kralj".
   const trimmedViewerName = viewerName?.trim() || "";
-  const isGenericViewer = !trimmedViewerName || ["me", "you"].includes(trimmedViewerName.toLowerCase());
+  // "__admin__" ("Full project view") and other "__" placeholders are views, not people.
+  const isPlaceholderViewer = !!viewerNodeId && viewerNodeId.startsWith("__");
+  const isGenericViewer =
+    isPlaceholderViewer || !trimmedViewerName || ["me", "you"].includes(trimmedViewerName.toLowerCase());
   const signedInLabel = isGenericViewer ? userDisplayName(user) : trimmedViewerName;
 
   return (
@@ -110,7 +113,7 @@ export function ProjectApprovalsTab({
           projectFilter={projectId}
           statusFilter={filterStatus}
           viewerNodeId={viewerNodeId}
-          viewerName={viewerName}
+          viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="inbox"
           embedded
         />
@@ -121,7 +124,7 @@ export function ProjectApprovalsTab({
           projectFilter={projectId}
           statusFilter="all"
           viewerNodeId={viewerNodeId}
-          viewerName={viewerName}
+          viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="submitted"
           embedded
         />
