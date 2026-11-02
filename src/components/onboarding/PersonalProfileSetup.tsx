@@ -89,7 +89,7 @@ export function PersonalProfileSetup() {
               <Label htmlFor="fullName">Full name *</Label>
               <Input
                 id="fullName"
-                placeholder="Sarah Chen"
+                placeholder="Your full name"
                 value={formData.fullName}
                 onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                 className="mt-2"

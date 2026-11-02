@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { PASSWORD_RESET_SENT_MESSAGE } from '../utils/auth/password-recovery';
+import { MIN_PASSWORD_LENGTH, PASSWORD_RESET_SENT_MESSAGE } from '../utils/auth/password-recovery';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -84,8 +84,9 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
       setLocalError('Please enter your name');
       return;
     }
-    if (password.length < 6) {
-      setLocalError('Password must be at least 6 characters');
+    // New passwords only: existing accounts with shorter passwords must still sign in.
+    if (mode === 'signup' && password.length < MIN_PASSWORD_LENGTH) {
+      setLocalError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
       return;
     }
 
@@ -137,7 +138,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
               <Label htmlFor="auth-name">Full name</Label>
               <Input
                 id="auth-name"
-                placeholder="Sarah Chen"
+                placeholder="Your full name"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 autoComplete="name"
@@ -195,7 +196,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = 'signin' }: AuthMo
                 <Input
                   id="auth-password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder={mode === 'signup' ? 'Min 6 characters' : 'Enter password'}
+                  placeholder={mode === 'signup' ? `At least ${MIN_PASSWORD_LENGTH} characters` : 'Enter password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}

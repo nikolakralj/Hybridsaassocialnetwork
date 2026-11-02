@@ -128,7 +128,7 @@ function AccountSettings() {
             <div className="mt-4 space-y-3">
               <div>
                 <Label htmlFor="new-password" className="text-xs">New password</Label>
-                <Input id="new-password" type="password" placeholder="Min 6 characters" className="mt-1" />
+                <Input id="new-password" type="password" placeholder="At least 10 characters" className="mt-1" />
               </div>
               <div>
                 <Label htmlFor="confirm-password" className="text-xs">Confirm password</Label>
