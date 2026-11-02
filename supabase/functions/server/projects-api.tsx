@@ -789,6 +789,17 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       return c.json({ error: "Your project role cannot invite members with that role" }, 403);
     }
 
+    // A non-owner manager can only add people to their own organization.
+    const requestedScope = typeof body.scope === "string" && body.scope ? body.scope : null;
+    if (callerRole !== "Owner" && requestedScope) {
+      const callerScope = await getCallerScope(projectId, user.id);
+      if (callerScope && requestedScope !== callerScope) {
+        return c.json({ error: "You can only invite people into your own organization" }, 403);
+      }
+    }
+    const graphNodeId = typeof body.graphNodeId === "string" && body.graphNodeId ? body.graphNodeId : null;
+    const canApprove = body.canApprove === true;
+
     if (body.userId) {
       const newMember = {
         id: generateId("mem"),
@@ -798,10 +809,11 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
         user_email: normalizeEmail(body.userEmail || body.email),
         role: inviteeRole,
         scope: body.scope || null,
+        graph_node_id: graphNodeId,
         invited_by: user.id,
         invited_at: now,
         accepted_at: now,
-        can_approve: false,
+        can_approve: canApprove,
         can_view_rates: false,
         can_edit_timesheets: false,
         visible_to_chain: true,
@@ -836,11 +848,12 @@ projectsRouter.post("/make-server-f8b491be/api/projects/:projectId/members", asy
       user_email: email,
       role: inviteeRole,
       scope: body.scope || null,
+      graph_node_id: graphNodeId,
       invited_by: user.id,
       invited_at: now,
       accepted_at: null,
       invitation_id: invitationId,
-      can_approve: false,
+      can_approve: canApprove,
       can_view_rates: false,
       can_edit_timesheets: false,
       visible_to_chain: true,
