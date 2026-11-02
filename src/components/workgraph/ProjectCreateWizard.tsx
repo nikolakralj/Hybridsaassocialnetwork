@@ -465,7 +465,7 @@ export function ProjectCreateWizard({
                   updateParty={updateParty} canEditParty={canEditParty} />
               )}
               {step === 'review' && (
-                <ReviewStep name={name} 
+                <ReviewStep region="EU" name={name} 
                   startDate={startDate} endDate={endDate} workWeek={workWeek}
                   parties={parties} generatedGraph={generatedGraph}
                   validationErrors={validationErrors} isDraftProject={isDraftProject} />
@@ -501,7 +501,7 @@ export function ProjectCreateWizard({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {editMode ? 'Save Supply Chain' : (isDraftProject ? 'Create Draft Project' : 'Create Project &amp; Generate Graph')}
+                    {editMode ? 'Save Supply Chain' : (isDraftProject ? 'Create Draft Project' : 'Create Project & Generate Graph')}
                   </>
                 )}
               </Button>
