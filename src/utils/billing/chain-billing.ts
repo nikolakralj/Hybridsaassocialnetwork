@@ -218,3 +218,25 @@ export function linkMargin(
   if (!sell || !cost || sell.rateType !== cost.rateType || sell.currency !== cost.currency) return null;
   return { sell, cost, margin: Math.round((sell.amount - cost.amount) * 100) / 100 };
 }
+
+/**
+ * Close readiness: a worker on a billing chain has a billing rate when every
+ * hop of the chain has a rate this viewer can read. The rate reported is the
+ * final hop's (what the end client is billed). Workers with no chain are
+ * left out (the legacy per-person rate decides for them).
+ */
+export function chainBillingRates(
+  workerNodeIds: string[],
+  parties: ChainParty[],
+  linkRates: LinkRate[],
+  legacyRates: Record<string, { rate: number; rateType?: string; currency?: string; masked?: boolean } | undefined>,
+): Record<string, HopRate> {
+  const result: Record<string, HopRate> = {};
+  workerNodeIds.forEach((workerId) => {
+    const path = billingPathFor(workerId, parties);
+    if (path.length === 0) return;
+    const hops = path.map((hop, index) => resolveHopRate(hop, workerId, linkRates, legacyRates, index === path.length - 1));
+    if (hops.every(Boolean)) result[workerId] = hops[hops.length - 1]!;
+  });
+  return result;
+}

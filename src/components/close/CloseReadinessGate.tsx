@@ -27,6 +27,8 @@ import { buildScopedGraphDirectories } from '../../utils/graph/scoped-graph-dire
 import { getApprovalQueue, type ApprovalQueueItem } from '../../utils/api/approvals-supabase';
 import { updateProject } from '../../utils/api/projects-api';
 import { resolveProjectRates, type PersonRate } from '../../utils/api/invoices-api';
+import { listLinkRates } from '../../utils/api/link-rates-api';
+import { chainBillingRates, type ChainParty, type LinkRate } from '../../utils/billing/chain-billing';
 import { createClient } from '../../utils/supabase/client';
 import {
   buildCloseReadinessRows,
@@ -308,11 +310,16 @@ export function CloseReadinessGate({
           error: error instanceof Error ? error.message : 'The project graph could not be loaded.',
         }));
 
+      // Per-link rates (044): a chained worker is priced per hop; the legacy
+      // per-person rate covers workers without a chain.
+      const linkRatesPromise = listLinkRates(projectId)
+        .then((result) => result.rates)
+        .catch(() => [] as LinkRate[]);
       const ratesPromise = resolveProjectRates(projectId)
-        .then((resolved) => ({ rates: Object.values(resolved), loaded: true }))
+        .then((resolved) => ({ rates: Object.values(resolved), loaded: true, legacy: resolved }))
         .catch((error: unknown) => {
           console.warn('[close] billing rates could not be loaded', error);
-          return { rates: [] as PersonRate[], loaded: false };
+          return { rates: [] as PersonRate[], loaded: false, legacy: {} as Record<string, PersonRate> };
         });
 
       const approvalsPromise = getApprovalQueue({
@@ -340,11 +347,12 @@ export function CloseReadinessGate({
           return { rows: [], loaded: false };
         });
 
-      const [graphResult, rateResult, approvalItems, documentResult] = await Promise.all([
+      const [graphResult, rateResult, approvalItems, documentResult, linkRates] = await Promise.all([
         graphPromise,
         ratesPromise,
         approvalsPromise,
         documentsPromise,
+        linkRatesPromise,
       ]);
 
       if (cancelled) return;
@@ -366,7 +374,24 @@ export function CloseReadinessGate({
 
       setGraphNodes(nodes);
       setGraphEdges(edges);
-      setRates(rateResult.rates);
+      const personIds = nodes.filter((node) => node.type === 'person').map((node) => node.id);
+      const chained = chainBillingRates(
+        personIds,
+        directories.approvalDirectory as ChainParty[],
+        linkRates,
+        rateResult.legacy as Record<string, PersonRate>,
+      );
+      const chainedRates: PersonRate[] = Object.values(chained).map((hop) => ({
+        personId: hop.personId,
+        rate: hop.rate,
+        rateType: hop.rateType,
+        currency: hop.currency,
+        masked: false,
+      }));
+      setRates([
+        ...chainedRates,
+        ...rateResult.rates.filter((rate: PersonRate) => !chained[rate.personId]),
+      ]);
       setRatesLoaded(rateResult.loaded);
       setApprovals(approvalsFromQueue(approvalItems.items, directories.nameDirectory));
       setApprovalsLoaded(approvalItems.loaded);
