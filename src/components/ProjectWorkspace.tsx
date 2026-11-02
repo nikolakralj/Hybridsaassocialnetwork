@@ -1,7 +1,7 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
-  Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck, ClipboardCheck
+  Plus, Settings, Users, MessageSquare, X, Network, ShieldCheck, ClipboardCheck
 } from "lucide-react";
 import { ViewerSelector } from "./workgraph/WorkGraphBuilder";
 import { Button } from "./ui/button";
@@ -30,6 +30,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
 import { ALLOW_GRAPH_ADMIN_VIEW, buildViewerOptions, type ViewerIdentity } from "./workgraph/graph-visibility";
+import { createClient } from "../utils/supabase/client";
 
 const LazyWorkGraphBuilder = lazy(() =>
   import("./workgraph/WorkGraphBuilder").then((mod) => ({ default: mod.WorkGraphBuilder }))
@@ -917,11 +918,11 @@ export function ProjectWorkspace({
             </TabsContent>
 
             <TabsContent value="contracts" className="space-y-6">
-              <ContractsModule />
+              <ContractsModule projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="documents" className="space-y-6">
-              <DocumentsModule />
+              <DocumentsModule projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="tasks" className="space-y-6">
@@ -1068,61 +1069,166 @@ function OverviewModule({ projectName }: { projectName: string }) {
 
 
 
-function ContractsModule() {
+const CONTRACT_DOCUMENT_TYPES = new Set(["nda", "contract", "sow", "rate_card", "change_order"]);
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  nda: "NDA",
+  contract: "Contract",
+  sow: "SOW",
+  invoice: "Invoice",
+  purchase_order: "Purchase order",
+  expense_report: "Expense report",
+  deliverable_signoff: "Deliverable sign-off",
+  change_order: "Change order",
+  compliance: "Compliance",
+  rate_card: "Rate card",
+  other: "Other",
+};
+
+interface ProjectDocumentRow {
+  id: string;
+  type: string;
+  title: string;
+  status: string;
+  file_name?: string | null;
+  created_at?: string | null;
+}
+
+// Real documents stored for this project (wg_documents). No seed/demo rows:
+// a new project shows an empty state, not invented agreements or files.
+function useProjectDocuments(projectId: string) {
+  const [rows, setRows] = useState<ProjectDocumentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    void createClient()
+      .from("wg_documents")
+      .select("id, type, title, status, file_name, created_at")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .then(({ data, error: queryError }) => {
+        if (cancelled) return;
+        if (queryError) {
+          setError("Documents could not be loaded right now.");
+          setRows([]);
+        } else {
+          setRows(Array.isArray(data) ? (data as ProjectDocumentRow[]) : []);
+        }
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  return { rows, loading, error };
+}
+
+function formatDocumentStatus(status: string) {
+  return status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function formatDocumentDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+}
+
+function DocumentList({
+  rows,
+  loading,
+  error,
+  emptyTitle,
+  emptyText,
+}: {
+  rows: ProjectDocumentRow[];
+  loading: boolean;
+  error: string | null;
+  emptyTitle: string;
+  emptyText: string;
+}) {
+  if (loading) {
+    return <p className="text-sm text-muted-foreground">Loading...</p>;
+  }
+  if (error) {
+    return <p className="text-sm text-muted-foreground">{error}</p>;
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-12 border border-dashed rounded-lg">
+        <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+        <p className="font-medium mb-1">{emptyTitle}</p>
+        <p className="text-sm text-muted-foreground m-0">{emptyText}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {rows.map((doc) => (
+        <div key={doc.id} className="flex items-center justify-between p-4 border border-border rounded-lg">
+          <div className="flex items-center gap-3">
+            <FileText className="w-5 h-5 text-accent-brand" />
+            <div>
+              <p className="font-medium">{doc.title || doc.file_name || "Untitled document"}</p>
+              <p className="text-sm text-muted-foreground">
+                {DOCUMENT_TYPE_LABELS[doc.type] || doc.type}
+                {formatDocumentDate(doc.created_at) ? ` · ${formatDocumentDate(doc.created_at)}` : ""}
+              </p>
+            </div>
+          </div>
+          <Badge variant={doc.status === "signed" ? "default" : "secondary"}>
+            {formatDocumentStatus(doc.status)}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContractsModule({ projectId }: { projectId: string }) {
+  const { rows, loading, error } = useProjectDocuments(projectId);
+  const contracts = rows.filter((row) => CONTRACT_DOCUMENT_TYPES.has(row.type));
   return (
     <Card className="p-6">
       <h3 className="mb-4">Contracts & Legal Documents</h3>
       <p className="text-muted-foreground mb-4">
-        Centralized storage for all project agreements, NDAs, and statements of work.
+        Agreements, NDAs, and statements of work recorded for this project.
       </p>
-      <div className="space-y-3">
-        {[
-          { name: "Master Service Agreement", type: "MSA", status: "Signed", date: "Dec 15, 2023" },
-          { name: "Non-Disclosure Agreement", type: "NDA", status: "Signed", date: "Dec 15, 2023" },
-          { name: "Statement of Work", type: "SOW", status: "Pending Signature", date: "Jan 5, 2024" },
-        ].map((doc, i) => (
-          <div key={i} className="flex items-center justify-between p-4 border border-border rounded-lg">
-            <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-accent-brand" />
-              <div>
-                <p className="font-medium">{doc.name}</p>
-                <p className="text-sm text-muted-foreground">{doc.type} · {doc.date}</p>
-              </div>
-            </div>
-            <Badge variant={doc.status === "Signed" ? "default" : "secondary"}>
-              {doc.status}
-            </Badge>
-          </div>
-        ))}
-      </div>
+      <DocumentList
+        rows={contracts}
+        loading={loading}
+        error={error}
+        emptyTitle="No contracts yet"
+        emptyText="Contracts recorded for this project will appear here. Rates between parties are set on the Project Graph."
+      />
     </Card>
   );
 }
 
-function DocumentsModule() {
+function DocumentsModule({ projectId }: { projectId: string }) {
+  const { rows, loading, error } = useProjectDocuments(projectId);
   return (
     <Card className="p-6">
       <h3 className="mb-4">Project Documents</h3>
       <p className="text-muted-foreground mb-4">
-        All project files, deliverables, and assets organized in one place.
+        Documents exchanged between the parties on this project.
       </p>
-      <div className="grid md:grid-cols-2 gap-4">
-        {[
-          { name: "Design Mockups v3.fig", folder: "Deliverables", size: "12.4 MB" },
-          { name: "Project Brief.pdf", folder: "Planning", size: "2.1 MB" },
-          { name: "User Research Report.docx", folder: "Research", size: "5.8 MB" },
-          { name: "Brand Guidelines.pdf", folder: "Assets", size: "8.3 MB" },
-        ].map((doc, i) => (
-          <div key={i} className="p-4 border border-border rounded-lg hover:border-accent-brand apple-transition cursor-pointer">
-            <div className="flex items-start justify-between mb-2">
-              <FileText className="w-5 h-5 text-accent-brand" />
-              <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <p className="font-medium mb-1">{doc.name}</p>
-            <p className="text-sm text-muted-foreground">{doc.folder} · {doc.size}</p>
-          </div>
-        ))}
-      </div>
+      <DocumentList
+        rows={rows}
+        loading={loading}
+        error={error}
+        emptyTitle="No documents yet"
+        emptyText="Documents added to this project, such as purchase orders, will appear here."
+      />
     </Card>
   );
 }
