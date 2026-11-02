@@ -23,6 +23,8 @@ import {
 import type { BaseEdge, BaseNode } from '../../types/workgraph';
 import { fetchScopedGraph } from '../../utils/api/scoped-graph-api';
 import { buildScopedGraphDirectories } from '../../utils/graph/scoped-graph-directories';
+import { listLinkRates } from '../../utils/api/link-rates-api';
+import { planChainInvoices, type ChainParty, type LinkRate } from '../../utils/billing/chain-billing';
 import {
   createInvoice,
   deleteDraftInvoice,
@@ -1008,12 +1010,38 @@ export function InvoicesWorkspace({
       }),
     );
 
-    const weeksToInvoice = excludeInvoicedWeeks(approvedWeeks, existingKeys);
-    if (weeksToInvoice.length === 0) {
-      toast.info('All approved weeks already have invoices.');
-      return;
-    }
+    // Pass-through billing: every approved worker-week is billed once per hop
+    // of its billing chain (Sub -> Agency, Agency -> Client), each hop at the
+    // rate on that link (wg_link_rates, migration 044). Before 044 is applied
+    // only the legacy per-person rate exists, which prices the final hop.
+    const linkRateResult = await listLinkRates(projectId).catch(() => ({ available: false, rates: [] as LinkRate[] }));
+    const chainParties: ChainParty[] = (billingDirectories?.approvalDirectory || readApprovalParties(projectId)) as ChainParty[];
+    const invoicedKeysBySeller = new Map<string, Set<string>>();
+    const unattributedKeys = new Set<string>();
+    storedInvoices.forEach((invoice) => {
+      const normalized = normalizePersistedInvoice(invoice, projectId, currentProjectName, billingClientName, billingNameLookup, weekLookup);
+      const keys = [getInvoiceKey(normalized), ...(invoice.timesheetIds || [])].filter(Boolean);
+      const seller = invoice.fromPartyId && invoice.fromPartyId !== projectId ? invoice.fromPartyId : '';
+      const target = seller ? (invoicedKeysBySeller.get(seller) || new Set<string>()) : unattributedKeys;
+      keys.forEach((key) => target.add(key));
+      if (seller) invoicedKeysBySeller.set(seller, target);
+    });
 
+    const plan = planChainInvoices<BillableWeek>({
+      weeks: approvedWeeks,
+      parties: chainParties,
+      linkRates: linkRateResult.rates,
+      legacyRates: rates,
+      workerIdOf: (week) => weekBillingPersonId(week),
+      weekKeysOf: (week) => blockingKeysFor(week),
+      canBillSeller: () => true, // canGenerateInvoices already limits this to project managers
+      invoicedKeysBySeller,
+      unattributedInvoicedKeys: unattributedKeys,
+    });
+
+    // Workers with no billing chain (no employer party / no billsTo) keep the
+    // previous per-person flow.
+    const weeksToInvoice = excludeInvoicedWeeks(plan.unrouted, existingKeys);
     const rateGate = weeksEligibleForInvoiceDrafts(
       weeksToInvoice,
       rates,
@@ -1024,39 +1052,69 @@ export function InvoicesWorkspace({
         `Set a private billing rate for ${rateGate.missingRateNames.join(', ')} before generating invoices. No zero-value drafts were created.`,
         { duration: 8000 },
       );
+    }
+    if (plan.missing.length > 0) {
+      const described = plan.missing.map((item) => (
+        `${item.sellerName || item.sellerId} → ${item.buyerName || item.buyerId} (${billingNameLookup[item.workerId]?.name || item.workerId})`
+      ));
+      toast.error(
+        `No rate on ${Array.from(new Set(described)).join(', ')}. Set the link rate on the Project Graph; those invoices were not created.`,
+        { duration: 9000 },
+      );
+    }
+    if (plan.groups.length === 0 && rateGate.weeks.length === 0) {
+      if (plan.missing.length === 0 && rateGate.missingRateNames.length === 0) {
+        toast.info('All approved weeks already have invoices.');
+      }
       return;
     }
 
-    const draftsToCreate = consolidateInvoices
-      ? groupWeeksBySellerOrg(rateGate.weeks, projectId).map((group, index) => {
-          const draft = buildConsolidatedDraft(
-            group,
-            projectId,
-            currentProjectName,
-            billingClientName,
-            billingNameLookup,
-            rates,
-            todayIso,
-            index,
-            selectedMonthLabel,
-            projectTemplate,
-          );
-          return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
-        })
-      : rateGate.weeks.map((week, index) => {
-          const draft = buildDraftFromWeek(
-            week,
-            projectId,
-            currentProjectName,
-            billingClientName,
-            billingNameLookup,
-            rates[weekBillingPersonId(week)],
-            todayIso,
-            index,
-            projectTemplate,
-          );
-          return selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft;
-        });
+    const chainDrafts = plan.groups.flatMap((group, index) => {
+      const sellerGroup = { sellerId: group.sellerId, sellerName: group.sellerName, buyerId: group.buyerId, buyerName: group.buyerName, weeks: group.weeks };
+      const hopRates = group.rates as unknown as Record<string, PersonRate>;
+      const parties = {
+        fromPartyId: group.sellerId,
+        toPartyId: group.buyerId,
+        fromPartyName: group.sellerName,
+        toPartyName: group.buyerName,
+      };
+      if (consolidateInvoices) {
+        return [buildConsolidatedDraft(sellerGroup, projectId, currentProjectName, group.buyerName || billingClientName, billingNameLookup, hopRates, todayIso, index, selectedMonthLabel, projectTemplate)];
+      }
+      return group.weeks.map((week, weekIndex) => {
+        const draft = buildDraftFromWeek(week, projectId, currentProjectName, group.buyerName || billingClientName, billingNameLookup, hopRates[weekBillingPersonId(week)], todayIso, index * 100 + weekIndex, projectTemplate);
+        return { ...draft, ...parties, id: `${draft.id}_${group.sellerId}` };
+      });
+    });
+
+    const legacyDrafts = consolidateInvoices
+      ? groupWeeksBySellerOrg(rateGate.weeks, projectId).map((group, index) => buildConsolidatedDraft(
+          group,
+          projectId,
+          currentProjectName,
+          billingClientName,
+          billingNameLookup,
+          rates,
+          todayIso,
+          plan.groups.length + index,
+          selectedMonthLabel,
+          projectTemplate,
+        ))
+      : rateGate.weeks.map((week, index) => buildDraftFromWeek(
+          week,
+          projectId,
+          currentProjectName,
+          billingClientName,
+          billingNameLookup,
+          rates[weekBillingPersonId(week)],
+          todayIso,
+          index,
+          projectTemplate,
+        ));
+
+    const draftsToCreate = [...chainDrafts, ...legacyDrafts].map((draft) => (
+      selectedBillingTemplate ? applyBillingTemplateToDraft(draft, selectedBillingTemplate) : draft
+    ));
 
     setIsSavingInvoices(true);
     try {

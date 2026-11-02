@@ -7,6 +7,8 @@ import { createClient } from '../supabase/client';
 import type { LinkRate } from '../billing/chain-billing';
 
 const supabase = createClient();
+// wg_link_rates is not in the generated Database types until 044 is applied.
+const linkRates = () => (supabase as any).from('wg_link_rates');
 
 export interface LinkRatesResult {
   available: boolean;
@@ -34,8 +36,7 @@ export function rowToLinkRate(row: any): LinkRate {
 
 export async function listLinkRates(projectId: string): Promise<LinkRatesResult> {
   if (!projectId) return { available: false, rates: [] };
-  const { data, error } = await supabase
-    .from('wg_link_rates')
+  const { data, error } = await linkRates()
     .select('id, link_kind, seller_party_id, buyer_party_id, subject_graph_node_id, amount, rate_type, currency')
     .eq('project_id', projectId)
     .is('effective_to', null);
@@ -43,7 +44,7 @@ export async function listLinkRates(projectId: string): Promise<LinkRatesResult>
     if (isMissingTable(error)) return { available: false, rates: [] };
     return { available: false, rates: [], error: error.message };
   }
-  return { available: true, rates: (data || []).map(rowToLinkRate).filter((rate) => rate.amount > 0) };
+  return { available: true, rates: ((data || []) as any[]).map(rowToLinkRate).filter((rate: LinkRate) => rate.amount > 0) };
 }
 
 export interface SaveLinkRateInput {
@@ -64,8 +65,7 @@ export async function saveLinkRate(input: SaveLinkRateInput): Promise<LinkRate> 
   const userId = session?.session?.user?.id;
   if (!userId) throw new Error('You must be signed in to save rates.');
 
-  let lookup = supabase
-    .from('wg_link_rates')
+  let lookup = linkRates()
     .select('id')
     .eq('project_id', input.projectId)
     .eq('link_kind', input.kind)
@@ -90,8 +90,8 @@ export async function saveLinkRate(input: SaveLinkRateInput): Promise<LinkRate> 
     currency: (input.currency || 'EUR').toUpperCase(),
   };
   const query = existing?.id
-    ? supabase.from('wg_link_rates').update(row).eq('id', existing.id).select('*').single()
-    : supabase.from('wg_link_rates').insert({ ...row, created_by: userId }).select('*').single();
+    ? linkRates().update(row).eq('id', existing.id).select('*').single()
+    : linkRates().insert({ ...row, created_by: userId }).select('*').single();
   const { data, error } = await query;
   if (error) throw new Error(error.message || 'Could not save the rate');
   return rowToLinkRate(data);
