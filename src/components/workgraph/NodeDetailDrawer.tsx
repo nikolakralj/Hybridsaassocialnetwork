@@ -11,6 +11,7 @@
  * The graph becomes a navigation hub: click a node → see real data → jump to pages.
  */
 
+import { LinkRatesSection } from './LinkRatesSection';
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import {
   X,
@@ -1635,6 +1636,11 @@ export function NodeDetailDrawer({
               edges={edges}
               onUpdateNodeData={onUpdateNodeData}
             />
+          )}
+
+          {/* Per-link rates (044): supply links on a company, employment rate on a person */}
+          {(node.type === 'party' || node.type === 'person') && (
+            <LinkRatesSection projectId={projectId} node={node} nodes={nodes} edges={edges} viewer={viewer} />
           )}
 
           {/* Timesheets (for people) — interactive with inline edit + approval */}
