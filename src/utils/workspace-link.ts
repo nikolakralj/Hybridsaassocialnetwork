@@ -1,3 +1,25 @@
+export const WORKSPACE_MODULE_IDS = [
+  'overview',
+  'project-graph',
+  'timesheets',
+  'approvals',
+  'close',
+  'invoices',
+  'contracts',
+  'documents',
+  'tasks',
+  'analytics',
+  'team',
+  'messages',
+  'graph-snapshot',
+] as const;
+
+/** Unknown query values stay off the tab strip and fall back to overview. */
+export function workspaceTab(value: string | null | undefined): string {
+  if (value && (WORKSPACE_MODULE_IDS as readonly string[]).includes(value)) return value;
+  return 'overview';
+}
+
 /**
  * Copy of the workspace query with a new project id and/or tab.
  * Overview is the default tab, so it is omitted from the URL.

@@ -17,8 +17,9 @@ export function averageSavedRate(contracts: SavedContractRate[]): { rate: number
     typeof contract.baseHourlyRate === 'number' && Number.isFinite(contract.baseHourlyRate) && contract.baseHourlyRate > 0
   );
   if (usable.length === 0) return null;
+  if (usable.some((contract) => !(contract.currency || '').trim())) return null;
   const currencies = [...new Set(
-    usable.map((contract) => (contract.currency || '').trim().toUpperCase()).filter(Boolean),
+    usable.map((contract) => (contract.currency || '').trim().toUpperCase()),
   )];
   if (currencies.length !== 1) return null;
   const rate = usable.reduce((sum, contract) => sum + (contract.baseHourlyRate as number), 0) / usable.length;
