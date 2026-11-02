@@ -314,9 +314,16 @@ export function InvoiceDetailPrintView({
                 </Button>
               )}
               {invoice.status === 'draft' && (
-                <Button variant="default" className="bg-indigo-600 hover:bg-indigo-700">
+                // No send pipeline exists yet (no email/e-invoice delivery), so
+                // don't offer a button that silently does nothing.
+                <Button
+                  variant="default"
+                  className="bg-indigo-600 hover:bg-indigo-700"
+                  disabled
+                  title="Sending invoices from WorkGraph isn't available yet. Export the PDF and send it yourself."
+                >
                   <Send className="w-4 h-4 mr-2" />
-                  Send to Client
+                  Send to Client (soon)
                 </Button>
               )}
               <Button variant="outline" onClick={() => window.print()}>
@@ -335,7 +342,7 @@ export function InvoiceDetailPrintView({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto bg-white border border-slate-200/60 shadow-md rounded-xl p-12 print:shadow-none print:border-none print:p-0">
+        <div className="invoice-print-root max-w-4xl mx-auto bg-white border border-slate-200/60 shadow-md rounded-xl p-12 print:shadow-none print:border-none print:p-0">
           <div className="flex justify-between items-start mb-12">
             <div>
               <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 uppercase">INVOICE</h1>

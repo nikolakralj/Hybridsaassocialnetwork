@@ -2,3 +2,21 @@
 @source './**/*.{js,ts,jsx,tsx}';
 @import 'tw-animate-css';
 @import './styles/globals.css';
+/* Invoice "Print" / "Export PDF": print only the invoice sheet, not the app
+   header, tabs and action bar around it. */
+@media print {
+  body:has(.invoice-print-root) * {
+    visibility: hidden;
+  }
+  body:has(.invoice-print-root) .invoice-print-root,
+  body:has(.invoice-print-root) .invoice-print-root * {
+    visibility: visible;
+  }
+  body:has(.invoice-print-root) .invoice-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+  }
+}
