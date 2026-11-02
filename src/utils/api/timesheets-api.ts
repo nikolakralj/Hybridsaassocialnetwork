@@ -5,6 +5,7 @@
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
+import { isTimesheetLockError, timesheetContentLocked, timesheetLockMessage } from '../timesheet-lock';
 
 const BASE = `https://${supabaseProjectId}.supabase.co/functions/v1/make-server-f8b491be/api`;
 const supabase = createClient();
@@ -92,11 +93,26 @@ export async function saveTimesheetWeek(
       };
       if (weekData.projectId) row.project_id = weekData.projectId;
 
+      const { data: existing, error: existingError } = await supabase
+        .from('wg_timesheet_weeks')
+        .select('status')
+        .eq('id', rowId)
+        .maybeSingle();
+      if (existingError) throw new Error(existingError.message || 'Failed to save timesheet');
+      // wg_timesheet_weeks is not in the generated Supabase types; type the row here.
+      const existingStatus = (existing as { status?: string } | null)?.status;
+      if (existing && timesheetContentLocked(existingStatus)) {
+        throw new Error(timesheetLockMessage(existingStatus));
+      }
+
       const { error } = await supabase
         .from('wg_timesheet_weeks')
         .upsert(row, { onConflict: 'id' });
 
       if (!error) return { weekStart, ...row };
+      if (isTimesheetLockError(error)) {
+        throw new Error(error.message || timesheetLockMessage(existingStatus));
+      }
       console.warn('[timesheets] Direct Supabase save failed:', error.message);
     }
   }
