@@ -99,15 +99,32 @@ BEGIN
 END;
 $$;
 
+-- wg_documents does not exist on every deployment (see 041's trigger comment);
+-- fall back to a signed 'po' graph node so this test still exercises the gate
+-- on a database that lacks the table, same as the trigger itself does.
 CREATE OR REPLACE FUNCTION public.wg_test_041_sign_po() RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO public AS $$
 BEGIN
-  INSERT INTO public.wg_documents (
-    id, project_id, type, title, from_party, to_party, status, created_by
-  ) VALUES (
-    'doc_041_po', 'proj_reg_041', 'purchase_order', 'PO', 'party_client', 'party_agency', 'signed',
-    '04100000-0000-4000-8000-0000000000a1'
-  );
+  IF to_regclass('public.wg_documents') IS NOT NULL THEN
+    INSERT INTO public.wg_documents (
+      id, project_id, type, title, from_party, to_party, status, created_by
+    ) VALUES (
+      'doc_041_po', 'proj_reg_041', 'purchase_order', 'PO', 'party_client', 'party_agency', 'signed',
+      '04100000-0000-4000-8000-0000000000a1'
+    );
+  ELSE
+    UPDATE public.wg_projects
+    SET graph = jsonb_set(
+      graph, '{nodes}',
+      COALESCE(graph->'nodes', '[]'::jsonb) || jsonb_build_array(
+        jsonb_build_object(
+          'id', 'po_041', 'type', 'po',
+          'data', jsonb_build_object('poNumber', 'PO-041', 'status', 'signed', 'partyId', 'party_agency')
+        )
+      )
+    )
+    WHERE id = 'proj_reg_041';
+  END IF;
 END;
 $$;
 
@@ -202,6 +219,47 @@ BEGIN
   IF result NOT LIKE '23505%already billed%' THEN
     RAISE EXCEPTION 'the same week was billed twice: %', result;
   END IF;
+
+  -- Same week, two spellings (graph node id vs auth uid), inside one invoice.
+  result := public.wg_test_041_create(jsonb_build_object(
+    'project_id', 'proj_reg_041', 'invoice_number', 'INV-041-ALIAS-DUP',
+    'from_party_id', 'party_agency', 'to_party_id', 'party_client',
+    'issue_date', CURRENT_DATE, 'due_date', CURRENT_DATE + 30, 'currency', 'EUR',
+    'status', 'draft',
+    'timesheet_ids', jsonb_build_array('person_rodman:2026-09-14', '04100000-0000-4000-8000-0000000000b1:2026-09-14'),
+    'subtotal', 1, 'tax_total', 0, 'total', 1
+  ));
+  IF result NOT LIKE '23514%more than once%' THEN
+    RAISE EXCEPTION 'uid and graph-node aliases of the same week doubled the invoice: %', result;
+  END IF;
+
+  -- A whole week and a month-part of that same week, inside one invoice.
+  result := public.wg_test_041_create(jsonb_build_object(
+    'project_id', 'proj_reg_041', 'invoice_number', 'INV-041-PART-DUP',
+    'from_party_id', 'party_agency', 'to_party_id', 'party_client',
+    'issue_date', CURRENT_DATE, 'due_date', CURRENT_DATE + 30, 'currency', 'EUR',
+    'status', 'draft',
+    'timesheet_ids', jsonb_build_array('person_rodman:2026-09-14', 'person_rodman:2026-09-14@2026-09'),
+    'subtotal', 1, 'tax_total', 0, 'total', 1
+  ));
+  IF result NOT LIKE '23514%more than once%' THEN
+    RAISE EXCEPTION 'a whole week and its month part doubled the invoice: %', result;
+  END IF;
+
+  -- A direct, non-'issued' live status must not skip the duplicate-bill check.
+  result := public.wg_test_041_create(jsonb_build_object(
+    'project_id', 'proj_reg_041', 'invoice_number', 'INV-041-PAID-DUP',
+    'from_party_id', 'party_agency', 'to_party_id', 'party_client',
+    'issue_date', CURRENT_DATE, 'due_date', CURRENT_DATE + 30, 'currency', 'EUR',
+    'status', 'paid', 'timesheet_ids', jsonb_build_array('person_rodman:2026-09-07'),
+    'subtotal', 1, 'tax_total', 0, 'total', 1
+  ));
+  IF result NOT LIKE '23505%already billed%' THEN
+    RAISE EXCEPTION 'an invoice inserted straight into paid skipped the duplicate-bill check: %', result;
+  END IF;
+
+  INSERT INTO wg_regression_041_results VALUES
+    ('no_duplicate_within_one_invoice', 'A uid/graph-node alias pair or a whole-week/month-part pair naming the same week inside one invoice is refused, and an invoice created directly in a live, non-issued status still honours the duplicate-bill check.');
 
   PERFORM public.wg_test_041_require_po(true);
   result := public.wg_test_041_create(jsonb_build_object(

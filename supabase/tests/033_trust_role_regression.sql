@@ -162,8 +162,8 @@ INSERT INTO public.wg_contract_signatories (
   'worker_company'
 );
 
--- 041 requires the signed-in caller on every invoice write, including the
--- fixture rows below. The agency owner controls party_reg_agency.
+-- 041's trigger checks invoice facts regardless of caller; this fixture still
+-- runs as the agency owner so created_by is a real, consistent value below.
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 SELECT set_config(
   'request.jwt.claims',

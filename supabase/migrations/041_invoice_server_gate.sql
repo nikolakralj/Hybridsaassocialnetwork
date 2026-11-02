@@ -10,8 +10,12 @@
 --   * when the project requires a purchase order, issuing needs a signed one
 --   * a week already on a live invoice cannot be issued again
 --
--- wg_create_invoice is what the app calls. The trigger also covers a direct
--- insert, including service_role, because auth.uid() must be the caller.
+-- wg_create_invoice is what the app calls; it and the wg_invoices RLS policies
+-- enforce who may write (signed in, controls from_party). The BEFORE trigger
+-- enforces facts about the invoice itself regardless of who writes it --
+-- including a direct insert or service_role -- and does not require auth.uid(),
+-- so migrations, fixtures and any future admin path are checked the same way
+-- an interactive user is.
 
 BEGIN;
 
@@ -75,6 +79,7 @@ DECLARE
   v_line jsonb;
   v_unit numeric;
   v_require_po boolean;
+  v_po_ok boolean;
 BEGIN
   IF NEW.status = 'cancelled' THEN
     RETURN NEW;
@@ -83,16 +88,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF auth.uid() IS NULL THEN
-    RAISE EXCEPTION 'Sign in to create an invoice.' USING ERRCODE = '42501';
-  END IF;
-  IF TG_OP = 'INSERT' AND NEW.created_by IS DISTINCT FROM auth.uid() THEN
-    RAISE EXCEPTION 'You cannot create an invoice for another user.' USING ERRCODE = '42501';
-  END IF;
-  IF NOT public.wg_invoice_caller_controls_party(NEW.project_id, NEW.from_party_id) THEN
-    RAISE EXCEPTION 'You cannot issue an invoice from a party you do not control.'
-      USING ERRCODE = '42501';
-  END IF;
+  -- Who may write wg_invoices is enforced by RLS (wg_invoices_insert_access /
+  -- wg_invoices_update_access) and, on the app's path, by wg_create_invoice.
+  -- This trigger enforces facts about the invoice itself, regardless of who
+  -- (or what role, including service_role) is writing it.
 
   SELECT graph, COALESCE(require_purchase_order, false)
   INTO v_graph, v_require_po
@@ -111,12 +110,30 @@ BEGIN
   END IF;
 
   IF COALESCE(array_length(NEW.timesheet_ids, 1), 0) > 0 THEN
+    -- Two keys in the same invoice must not name the same week, even when one
+    -- spells the person as an auth uid and the other as a graph node id, or
+    -- one is the whole week and the other is a month part of it. Comparing
+    -- raw text (exact duplicates) is not enough.
     IF EXISTS (
-      SELECT 1 FROM unnest(NEW.timesheet_ids) AS repeated_key
-      GROUP BY repeated_key
-      HAVING count(*) > 1
+      SELECT 1
+      FROM unnest(NEW.timesheet_ids) WITH ORDINALITY AS a(key_a, ord_a)
+      JOIN unnest(NEW.timesheet_ids) WITH ORDINALITY AS b(key_b, ord_b)
+        ON a.ord_a < b.ord_b
+      WHERE right(split_part(a.key_a, '@', 1), 10) = right(split_part(b.key_b, '@', 1), 10)
+        AND public.wg_resolve_timesheet_person(
+              NEW.project_id,
+              left(split_part(a.key_a, '@', 1), length(split_part(a.key_a, '@', 1)) - 11)
+            ) = public.wg_resolve_timesheet_person(
+              NEW.project_id,
+              left(split_part(b.key_b, '@', 1), length(split_part(b.key_b, '@', 1)) - 11)
+            )
+        AND (
+          nullif(split_part(a.key_a, '@', 2), '') IS NULL
+          OR nullif(split_part(b.key_b, '@', 2), '') IS NULL
+          OR nullif(split_part(a.key_a, '@', 2), '') = nullif(split_part(b.key_b, '@', 2), '')
+        )
     ) THEN
-      RAISE EXCEPTION 'This invoice lists the same timesheet more than once.'
+      RAISE EXCEPTION 'This invoice lists the same timesheet week more than once.'
         USING ERRCODE = '23514';
     END IF;
 
@@ -225,11 +242,12 @@ BEGIN
         'timesheetId', v_key
       ));
 
-      IF NEW.status = 'issued' THEN
-        -- Hold this week until the insert commits so a second invoice cannot
-        -- pass the same check before this row is visible.
+      IF NEW.status IN ('issued', 'paid', 'partially_paid', 'overdue') THEN
+        -- Hold this week (not just this month-part) until the insert commits,
+        -- so a whole-week issue and a month-part issue of the same week
+        -- cannot both pass the check before either row is visible.
         PERFORM pg_advisory_xact_lock(hashtextextended(
-          NEW.project_id || ':' || COALESCE(v_uid::text, v_person) || ':' || v_week::text || ':' || COALESCE(v_part, '*'),
+          NEW.project_id || ':' || COALESCE(v_uid::text, v_person) || ':' || v_week::text,
           0
         ));
         SELECT i.invoice_number INTO v_conflict
@@ -276,43 +294,54 @@ BEGIN
   NEW.tax_total := round(NEW.subtotal * COALESCE(NEW.tax_rate, 0) / 100, 2);
   NEW.total := NEW.subtotal + NEW.tax_total;
 
-  IF NEW.status = 'issued' AND v_require_po AND NOT (
-    EXISTS (
-      SELECT 1 FROM wg_documents d
-      WHERE d.project_id = NEW.project_id
-        AND d.type = 'purchase_order'
-        AND d.status = 'signed'
-        AND (d.expires_at IS NULL OR d.expires_at > now())
-        AND (
-          (d.from_party = NEW.from_party_id AND d.to_party = NEW.to_party_id)
-          OR (d.from_party = NEW.to_party_id AND d.to_party = NEW.from_party_id)
-        )
-        AND (
-          COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId', '') = ''
-          OR COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId') IN (
-            SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
-            FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+  IF v_require_po AND NEW.status IN ('issued', 'paid', 'partially_paid', 'overdue') THEN
+    v_po_ok := false;
+
+    -- wg_documents may not exist on every deployment yet; a PO signed there is
+    -- one way to satisfy the gate, not a hard dependency of this trigger.
+    IF to_regclass('public.wg_documents') IS NOT NULL THEN
+      SELECT EXISTS (
+        SELECT 1 FROM wg_documents d
+        WHERE d.project_id = NEW.project_id
+          AND d.type = 'purchase_order'
+          AND d.status = 'signed'
+          AND (d.expires_at IS NULL OR d.expires_at > now())
+          AND (
+            (d.from_party = NEW.from_party_id AND d.to_party = NEW.to_party_id)
+            OR (d.from_party = NEW.to_party_id AND d.to_party = NEW.from_party_id)
           )
-        )
-    )
-    OR EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements(COALESCE(v_graph->'nodes', '[]'::jsonb)) n
-      WHERE n->>'type' = 'po'
-        AND COALESCE(n->'data'->>'poNumber', n->'data'->>'po_number', '') <> ''
-        AND COALESCE(n->'data'->>'status', n->'data'->>'poStatus', '') IN ('signed', 'active')
-        AND COALESCE(n->'data'->>'partyId', n->'data'->>'orgId', n->'data'->>'fromPartyId', '') IN (NEW.from_party_id, NEW.to_party_id)
-        AND (
-          COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId', '') = ''
-          OR COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId') IN (
-            SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
-            FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+          AND (
+            COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId', '') = ''
+            OR COALESCE(d.data->>'workerId', d.data->>'personId', d.data->>'subjectGraphNodeId') IN (
+              SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
+              FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+            )
           )
-        )
-    )
-  ) THEN
-    RAISE EXCEPTION 'A signed purchase order is required before this invoice can be issued.'
-      USING ERRCODE = '23514';
+      ) INTO v_po_ok;
+    END IF;
+
+    IF NOT v_po_ok THEN
+      SELECT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(COALESCE(v_graph->'nodes', '[]'::jsonb)) n
+        WHERE n->>'type' = 'po'
+          AND COALESCE(n->'data'->>'poNumber', n->'data'->>'po_number', '') <> ''
+          AND COALESCE(n->'data'->>'status', n->'data'->>'poStatus', '') IN ('signed', 'active')
+          AND COALESCE(n->'data'->>'partyId', n->'data'->>'orgId', n->'data'->>'fromPartyId', '') IN (NEW.from_party_id, NEW.to_party_id)
+          AND (
+            COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId', '') = ''
+            OR COALESCE(n->'data'->>'workerId', n->'data'->>'personId', n->'data'->>'subjectGraphNodeId') IN (
+              SELECT left(split_part(k, '@', 1), length(split_part(k, '@', 1)) - 11)
+              FROM unnest(COALESCE(NEW.timesheet_ids, ARRAY[]::text[])) k
+            )
+          )
+      ) INTO v_po_ok;
+    END IF;
+
+    IF NOT v_po_ok THEN
+      RAISE EXCEPTION 'A signed purchase order is required before this invoice can be issued.'
+        USING ERRCODE = '23514';
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -349,6 +378,10 @@ BEGIN
   IF NULLIF(p_invoice->>'created_by', '') IS NOT NULL
      AND (p_invoice->>'created_by')::uuid IS DISTINCT FROM auth.uid() THEN
     RAISE EXCEPTION 'You cannot create an invoice for another user.' USING ERRCODE = '42501';
+  END IF;
+  IF NOT public.wg_invoice_caller_controls_party(p_invoice->>'project_id', p_invoice->>'from_party_id') THEN
+    RAISE EXCEPTION 'You cannot issue an invoice from a party you do not control.'
+      USING ERRCODE = '42501';
   END IF;
 
   SELECT COALESCE(array_agg(value), ARRAY[]::text[])
