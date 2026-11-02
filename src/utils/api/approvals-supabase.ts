@@ -555,7 +555,7 @@ export async function getApprovalQueue(
 ): Promise<ApprovalQueueItem[]> {
   try {
     let query = supabase
-      .from('approval_records')
+      .from('wg_approval_records_visible')
       .select('*');
 
     if (filters.status && filters.status !== 'all') {
@@ -680,7 +680,7 @@ export async function getApprovalQueue(
     if (rowIdsToFetch.size > 0) {
       const rowIds = [...rowIdsToFetch];
       const { data: weekRows } = await supabase
-        .from('wg_timesheet_weeks')
+        .from('wg_timesheet_weeks_visible')
         .select('id, user_id, week_start, total_hours, data')
         .in('id', rowIds);
 
@@ -847,7 +847,7 @@ export async function getLatestPendingApproval(
 ): Promise<ApprovalRecord | null> {
   try {
     let query = supabase
-      .from('approval_records')
+      .from('wg_approval_records_visible')
       .select('*')
       .eq('subject_type', subjectType)
       .eq('subject_id', subjectId)
@@ -969,7 +969,7 @@ export async function getApprovalHistory(
 ): Promise<ApprovalRecord[]> {
   try {
     const { data, error } = await supabase
-      .from('approval_records')
+      .from('wg_approval_records_visible')
       .select('*')
       .eq('subject_type', subjectType)
       .eq('subject_id', subjectId)
@@ -990,7 +990,7 @@ export async function getApprovalHistory(
 export async function getPendingCount(approverUserId: string): Promise<number> {
   try {
     const { count, error } = await supabase
-      .from('approval_records')
+      .from('wg_approval_records_visible')
       .select('*', { count: 'exact', head: true })
       .eq('approver_user_id', approverUserId)
       .eq('status', 'pending');
