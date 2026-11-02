@@ -675,14 +675,15 @@ function buildLineItemsFromPayload(payload: InvoicePayload): InvoiceLineItem[] {
       description: normalizeString(item.description),
       quantity: toNumber(item.quantity),
       unitPrice: toNumber(item.unitPrice),
-      // Every line is rounded to the cent; an explicit amount is kept but rounded.
-      amount: roundMoney(toNumber(item.amount, lineAmount(toNumber(item.quantity), toNumber(item.unitPrice)))),
+      // A client-sent amount is ignored. The line is quantity times unit price,
+      // rounded to the cent, which is also what the database stores.
+      amount: lineAmount(toNumber(item.quantity), toNumber(item.unitPrice)),
     }));
   }
 
   const hours = toNumber(payload.hours);
   const rate = toNumber(payload.rate);
-  const amount = roundMoney(toNumber(payload.amount, lineAmount(hours, rate)));
+  const amount = lineAmount(hours, rate);
   return [
     {
       id: generateId('line'),
