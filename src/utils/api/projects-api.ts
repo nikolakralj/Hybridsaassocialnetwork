@@ -4,6 +4,7 @@
 
 import { projectId as supabaseProjectId, publicAnonKey } from '../supabase/info';
 import { createClient } from '../supabase/client';
+import { mergeDirectoryProject } from './project-directory-cache';
 import type { ProjectMember } from '../../types/collaboration';
 const supabase = createClient();
 const PROJECT_METADATA_COLUMNS = 'id,name,description,region,currency,start_date,end_date,work_week,status,supply_chain_status,owner_id,created_at,updated_at,require_purchase_order';
@@ -355,8 +356,6 @@ function mapSupabaseProjectRow(row: any) {
     updatedAt: row.updated_at,
     storageSource: 'cloud' as const,
   };
-  // Directory reads omit graph and parties. Only keep them when a payload
-  // actually contains them, so a metadata refresh does not wipe a cached graph.
   if (row.graph != null) mapped.graph = row.graph;
   if (row.parties != null) mapped.parties = row.parties;
   return mapped;
@@ -374,7 +373,7 @@ function cacheCloudProjectList(projects: Record<string, any>[]) {
   projects.forEach((project) => {
     const prior = byId.get(project.id);
     byId.set(project.id, {
-      project: { ...(prior?.project || {}), ...project, storageSource: 'cloud' as const },
+      project: mergeDirectoryProject(prior?.project, project),
       members: prior?.members || [],
     });
   });
