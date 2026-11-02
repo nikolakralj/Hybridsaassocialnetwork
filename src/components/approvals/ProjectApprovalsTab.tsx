@@ -112,7 +112,7 @@ export function ProjectApprovalsTab({
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter={filterStatus}
-          viewerNodeId={viewerNodeId}
+          viewerNodeId={isPlaceholderViewer ? undefined : viewerNodeId}
           viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="inbox"
           embedded
@@ -123,7 +123,7 @@ export function ProjectApprovalsTab({
         <ApprovalsWorkbench
           projectFilter={projectId}
           statusFilter="all"
-          viewerNodeId={viewerNodeId}
+          viewerNodeId={isPlaceholderViewer ? undefined : viewerNodeId}
           viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="submitted"
           embedded
