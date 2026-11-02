@@ -34,12 +34,12 @@ import { getDashboardData } from '../../utils/api/dashboard';
 import type { DashboardData, RecentConnection, MessagePreview, Insight } from '../../types/dashboard';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../../contexts/AuthContext';
+import { SHOW_SOCIAL_FEATURES } from '../../utils/feature-flags';
 
 // Social/network surface (feed, connections, messaging, job board) is a
 // pre-product stub with no backend. Hidden until the WorkGraph billing loop
 // ships and the social layer is built for real (see ROADMAP.md Phase 9).
 // Set VITE_SHOW_SOCIAL_FEATURES=true to restore the social dashboard surface.
-const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -121,7 +121,7 @@ export function DashboardPage() {
       { id: 'agency-invoice', label: 'Generate your first draft invoice from approved hours', actionText: 'Invoice Workspace', route: '/app/projects', autoDone: work_stats.earnings.current_period > 0 },
     ],
     company: [
-      { id: 'company-profile', label: 'Set up your company profile and details', actionText: 'Profile Setup', route: '/app/company-profile', autoDone: !!user?.headline || !!user?.bio },
+      { id: 'company-profile', label: 'Set up your company profile and details', actionText: 'Profile Setup', route: SHOW_SOCIAL_FEATURES ? '/app/company-profile' : '/app/projects', autoDone: !!user?.headline || !!user?.bio },
       { id: 'company-project', label: 'Create your first project and define requirements', actionText: 'New Project', route: '/app/projects', autoDone: work_stats.active_contracts.count > 0 },
       { id: 'company-approval', label: 'Configure timesheet approval chain pathways', actionText: 'Review Approvals', route: '/app/approvals', autoDone: work_stats.pending_approvals.count > 0 || work_stats.hours.total > 0 },
       { id: 'company-finance', label: 'Invite a manager or finance team member', actionText: 'Add Teammate', route: '/app/settings', autoDone: false },
