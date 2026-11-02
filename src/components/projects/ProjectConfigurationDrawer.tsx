@@ -792,7 +792,14 @@ export function ProjectConfigurationDrawer({
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={!projectName || approvalChain.length === 0}>
+            {/* Editing an existing project saves name/description on their own;
+                the parties list may still be loading or have failed to load, and
+                must not block a rename. A new project still needs a party. */}
+            <Button
+              onClick={handleSave}
+              disabled={!projectName.trim() || (!project && approvalChain.length === 0)}
+              title={!projectName.trim() ? 'Add a project name' : undefined}
+            >
               {project ? 'Update Project' : 'Create Project'}
             </Button>
           </div>
