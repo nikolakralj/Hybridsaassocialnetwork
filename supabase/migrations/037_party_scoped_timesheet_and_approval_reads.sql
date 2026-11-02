@@ -280,8 +280,22 @@ CREATE POLICY approval_records_select ON public.approval_records
   FOR SELECT TO authenticated
   USING (public.wg_user_can_read_approval_record(id));
 
-REVOKE SELECT (data) ON public.wg_timesheet_weeks FROM anon, authenticated;
-REVOKE SELECT (subject_snapshot) ON public.approval_records FROM anon, authenticated;
+-- A table-level SELECT grant is not reduced by REVOKE SELECT (column).
+-- Take the table grant away, then grant every column except the raw notes
+-- and the raw snapshot. Those come back only through the views below.
+REVOKE SELECT ON public.wg_timesheet_weeks FROM anon, authenticated;
+GRANT SELECT (
+  id, user_id, project_id, week_start, status, total_hours,
+  submitted_at, approved_at, approved_by, created_at, updated_at
+) ON public.wg_timesheet_weeks TO authenticated;
+
+REVOKE SELECT ON public.approval_records FROM anon, authenticated;
+GRANT SELECT (
+  id, project_id, subject_type, subject_id,
+  approver_user_id, approver_name, approver_node_id,
+  approval_layer, status, notes, submitted_at, decided_at,
+  graph_version_id, created_at, updated_at, submitter_user_id
+) ON public.approval_records TO authenticated;
 
 CREATE OR REPLACE VIEW public.wg_timesheet_weeks_visible
 WITH (security_invoker = true) AS
