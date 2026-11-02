@@ -18,7 +18,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContext } from '../../contexts/MonthContext';
 import { getMondaysForMonth, useTimesheetStore } from '../../contexts/TimesheetDataContext';
 import type { StoredWeek } from '../../types/timesheets';
-import { sumWeekHours } from '../../types/timesheets';
+import { sumWeekHoursInMonth } from '../../types/timesheets';
 import type { ProjectMember } from '../../types/collaboration';
 import type { BaseEdge, BaseNode } from '../../types/workgraph';
 import { buildPersonToOrgMap } from '../workgraph/graph-visibility';
@@ -426,7 +426,8 @@ export function CloseReadinessGate({
       weekStart: week.weekStart,
       weekLabel: week.weekLabel,
       status: week.status,
-      hours: sumWeekHours(week),
+      // Only this month's days: a Nov 30 - Dec 4 week contributes Nov 30 only.
+      hours: sumWeekHoursInMonth(week, monthKey),
       rejectionNote: week.rejectionNote,
     })),
     approvals,
@@ -636,7 +637,10 @@ export function CloseReadinessGate({
                   <TableCell>
                     <div className="font-medium text-slate-900">{row.workerName}</div>
                     {row.orgName ? <div className="text-xs text-muted-foreground">{row.orgName}</div> : null}
-                    <div className="text-xs text-muted-foreground">{row.loggedHours}h logged</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.approvedHours}h approved
+                      {row.loggedHours !== row.approvedHours ? ` · ${row.loggedHours}h logged` : ''}
+                    </div>
                   </TableCell>
                   <TableCell className="whitespace-normal">
                     {row.missingWeekLabels.length === 0 ? (
