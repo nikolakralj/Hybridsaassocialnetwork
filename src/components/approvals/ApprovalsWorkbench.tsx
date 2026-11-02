@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { userDisplayName } from '../../utils/auth/display-name';
 import {
   AlertTriangle,
@@ -204,6 +204,13 @@ export function ApprovalsWorkbench({
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
   const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
+  // loadApprovals awaits the queue; the graph directories often finish loading
+  // meanwhile. Read them through refs so the rows use the latest directories
+  // instead of the empty ones captured when the load started.
+  const nameDirectoryRef = useRef(nameDirectory);
+  const approvalDirectoryRef = useRef(approvalDirectory);
+  nameDirectoryRef.current = nameDirectory;
+  approvalDirectoryRef.current = approvalDirectory;
   const [items, setItems] = useState<UIApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -343,6 +350,8 @@ export function ApprovalsWorkbench({
       };
 
       const data = await getApprovalQueue(filters);
+      const latestNameDirectory = nameDirectoryRef.current;
+      const latestApprovalDirectory = approvalDirectoryRef.current;
 
       const transformedItems = (data || []).map((item) => {
         const subjectSnapshot = item.subjectSnapshot || null;
@@ -376,13 +385,13 @@ export function ApprovalsWorkbench({
           subjectType: item.subjectType,
           subjectSnapshot,
           timesheetData: item.timesheetData,
-        }, nameDirectory);
+        }, latestNameDirectory);
         const submitterOrgName = subjectSnapshot?.submitterOrg
           || resolveSubmitterOrgName(
             item.projectId,
             submitterId,
-            nameDirectory,
-            approvalDirectory,
+            latestNameDirectory,
+            latestApprovalDirectory,
           );
         const totalHours = snapshotHours ?? item.timesheetData?.totalHours ?? 0;
 
