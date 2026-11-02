@@ -22,8 +22,6 @@ import {
   Clock,
   AlertCircle,
   CheckCircle2,
-  FileCheck,
-  Receipt,
   UserCheck,
   X,
   MoreHorizontal,
@@ -55,7 +53,6 @@ import {
   formatMonthKey,
   parseMonthKey,
   type MonthOption,
-  type MonthlySnapshot,
   type EdgeFlowSummary,
 } from './graph-data-flows';
 import { NodeDetailDrawer } from './NodeDetailDrawer';
@@ -71,6 +68,7 @@ import { assignPartyApprover } from '../../utils/api/organizations-api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useMonthContextSafe } from '../../contexts/MonthContext';
 import { migrateGraphForVisibility } from '../../utils/graph/migrate-graph';
+import { useTimesheetStore } from '../../contexts/TimesheetDataContext';
 
 // ============================================================================
 // Layout Engine - Hierarchical Sugiyama-style
@@ -852,41 +850,65 @@ function MonthNavigator({
 // Month Summary Bar
 // ============================================================================
 
-function MonthSummaryBar({ snapshot }: { snapshot: MonthlySnapshot }) {
-  const stats = snapshot.stats;
-  const activeCount = snapshot.activePeople.filter(p => p.status === 'active').length;
-  const onboardingCount = snapshot.activePeople.filter(p => p.status === 'onboarding').length;
+export interface GraphMonthTimeStats {
+  peopleWithHours: number;
+  hoursSubmitted: number;
+  hoursApproved: number;
+  pendingWeeks: number;
+}
 
+/**
+ * Real hours for the selected month from the project timesheet store, limited
+ * to the people visible in this (scoped) graph. Only days inside the month are
+ * counted. The bar used to show static demo snapshot numbers (always 0h and
+ * "0 NDAs") even when hours were submitted and approved.
+ */
+export function computeGraphMonthTimeStats(
+  weeks: Array<{ personId: string; graphNodeId?: string; weekStart: string; status: string; days: Array<{ hours?: number; totalHours?: number }> }>,
+  monthKey: string,
+  visiblePersonIds: Set<string>,
+): GraphMonthTimeStats {
+  const people = new Set<string>();
+  let submitted = 0;
+  let approved = 0;
+  let pending = 0;
+  for (const week of weeks) {
+    const id = visiblePersonIds.has(week.personId) ? week.personId
+      : (week.graphNodeId && visiblePersonIds.has(week.graphNodeId) ? week.graphNodeId : null);
+    if (!id) continue;
+    let hoursInMonth = 0;
+    week.days.forEach((day, index) => {
+      const date = new Date(`${week.weekStart}T00:00:00`);
+      date.setDate(date.getDate() + index);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      if (key === monthKey) hoursInMonth += Number(day.totalHours ?? day.hours ?? 0) || 0;
+    });
+    if (hoursInMonth > 0) people.add(id);
+    if (week.status === 'submitted' || week.status === 'approved') submitted += hoursInMonth;
+    if (week.status === 'approved') approved += hoursInMonth;
+    if (week.status === 'submitted') pending += 1;
+  }
+  return { peopleWithHours: people.size, hoursSubmitted: submitted, hoursApproved: approved, pendingWeeks: pending };
+}
+
+function MonthSummaryBar({ stats }: { stats: GraphMonthTimeStats }) {
   return (
     <div className="flex items-center gap-5 px-5 py-2 bg-muted/30 border-b border-border text-[11px]">
       <div className="flex items-center gap-1.5 text-muted-foreground">
         <UserCheck className="h-3 w-3" />
-        <span><span className="font-semibold text-foreground">{activeCount}</span> active</span>
-        {onboardingCount > 0 && (
-          <span className="text-amber-500">+{onboardingCount} onboarding</span>
-        )}
+        <span><span className="font-semibold text-foreground">{stats.peopleWithHours}</span> {stats.peopleWithHours === 1 ? 'person' : 'people'} logged time</span>
       </div>
       <div className="flex items-center gap-1.5 text-muted-foreground">
         <Clock className="h-3 w-3" />
-        <span><span className="font-semibold text-foreground">{stats.totalHoursSubmitted.toLocaleString()}</span>h submitted</span>
-        <span>/ <span className="font-semibold text-foreground">{stats.totalHoursApproved.toLocaleString()}</span>h approved</span>
+        <span><span className="font-semibold text-foreground">{stats.hoursSubmitted.toLocaleString()}</span>h submitted</span>
+        <span>/ <span className="font-semibold text-foreground">{stats.hoursApproved.toLocaleString()}</span>h approved</span>
       </div>
-      {stats.pendingApprovals > 0 && (
+      {stats.pendingWeeks > 0 && (
         <div className="flex items-center gap-1.5 text-amber-600">
           <AlertCircle className="h-3 w-3" />
-          <span className="font-medium">{stats.pendingApprovals} pending</span>
+          <span className="font-medium">{stats.pendingWeeks} {stats.pendingWeeks === 1 ? 'week' : 'weeks'} pending</span>
         </div>
       )}
-      {stats.totalAmountInvoiced > 0 && (
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Receipt className="h-3 w-3" />
-          <span><span className="font-semibold text-foreground">${stats.totalAmountInvoiced.toLocaleString()}</span> invoiced</span>
-        </div>
-      )}
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <FileCheck className="h-3 w-3" />
-        <span>{stats.activeNDAs} NDAs</span>
-      </div>
     </div>
   );
 }
@@ -2091,6 +2113,13 @@ export function WorkGraphBuilder({
     approvals: filteredEdges.filter(e => e.data?.edgeType === 'approves').length,
   }), [filteredNodes, filteredEdges]);
 
+  const timesheetStore = useTimesheetStore();
+  const graphMonthTimeStats = useMemo(() => {
+    const visiblePersonIds = new Set(filteredNodes.filter((n) => n.type === 'person').map((n) => n.id));
+    return computeGraphMonthTimeStats(timesheetStore.getAllWeeksForMonth(selectedMonth), selectedMonth, visiblePersonIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timesheetStore.version, selectedMonth, filteredNodes]);
+
   const editableParties = useMemo(() => buildEditableParties(allNodes, allEdges), [allNodes, allEdges]);
 
   const handleEditSupplyChainSave = useCallback(async ({
@@ -2254,7 +2283,7 @@ export function WorkGraphBuilder({
       </div>
 
       {/* Month summary */}
-      {currentSnapshot && <MonthSummaryBar snapshot={currentSnapshot} />}
+      <MonthSummaryBar stats={graphMonthTimeStats} />
 
       {/* Hidden nodes banner */}
       <HiddenBanner hiddenNodes={scopedView.hiddenNodeCount} hiddenEdges={scopedView.hiddenEdgeCount} />
