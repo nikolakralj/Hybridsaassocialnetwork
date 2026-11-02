@@ -27,7 +27,8 @@ FROM (VALUES
   ('03700000-0000-4000-8000-0000000000c1'::uuid, 'james-037@example.test', 'James'),
   ('03700000-0000-4000-8000-0000000000d1'::uuid, 'martin-037@example.test', 'Martin'),
   ('03700000-0000-4000-8000-0000000000e1'::uuid, 'outsider-037@example.test', 'Outsider'),
-  ('03700000-0000-4000-8000-0000000000f1'::uuid, 'colleague-037@example.test', 'Client colleague')
+  ('03700000-0000-4000-8000-0000000000f1'::uuid, 'colleague-037@example.test', 'Client colleague'),
+  ('03700000-0000-4000-8000-0000000000f2'::uuid, 'opsadmin-037@example.test', 'Rodman Co admin')
 ) AS u(id, email, display_name);
 
 INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
@@ -63,6 +64,28 @@ INSERT INTO public.wg_project_members (
   ('mem_037_james', 'proj_reg_037', '03700000-0000-4000-8000-0000000000c1', 'James', 'james-037@example.test', 'Commenter', 'party_client', 'person_james', '03700000-0000-4000-8000-0000000000a1', NOW(), true),
   ('mem_037_martin', 'proj_reg_037', '03700000-0000-4000-8000-0000000000d1', 'Martin', 'martin-037@example.test', 'Contributor', 'party_martin', 'person_martin', '03700000-0000-4000-8000-0000000000a1', NOW(), false),
   ('mem_037_colleague', 'proj_reg_037', '03700000-0000-4000-8000-0000000000f1', 'Client colleague', 'colleague-037@example.test', 'Viewer', 'party_client', NULL, '03700000-0000-4000-8000-0000000000a1', NOW(), false);
+
+-- A verified org_admin of Rodman's own party (the worker's party), with no
+-- project_members row at all. This is the only path wg_caller_operates_party
+-- grants since 037's last fix dropped the Owner/Editor + scope shortcut, and
+-- it is scoped to the worker's party, not the current approver's party: it
+-- must work on its own.
+INSERT INTO public.wg_organizations (id, name, owner_user_id, created_by) VALUES
+  ('org_reg_037_contractor', 'Rodman Co', '03700000-0000-4000-8000-0000000000f2', '03700000-0000-4000-8000-0000000000f2');
+
+INSERT INTO public.wg_organization_members (
+  organization_id, user_id, email, display_name, org_role, membership_state, verified_by, verified_at
+) VALUES (
+  'org_reg_037_contractor', '03700000-0000-4000-8000-0000000000f2', 'opsadmin-037@example.test', 'Rodman Co admin',
+  'org_admin', 'verified', '03700000-0000-4000-8000-0000000000f2', NOW()
+);
+
+INSERT INTO public.wg_project_organizations (
+  project_id, organization_id, graph_node_id, party_role, status, invited_by, accepted_by, accepted_at
+) VALUES (
+  'proj_reg_037', 'org_reg_037_contractor', 'party_contractor', 'subcontractor', 'active',
+  '03700000-0000-4000-8000-0000000000a1', '03700000-0000-4000-8000-0000000000f2', NOW()
+);
 
 INSERT INTO public.wg_timesheet_weeks (id, user_id, project_id, week_start, status, data) VALUES
   ('03700000-0000-4000-8000-0000000000b1:2026-09-07', '03700000-0000-4000-8000-0000000000b1', 'proj_reg_037', DATE '2026-09-07', 'draft',
@@ -168,6 +191,27 @@ BEGIN
   END IF;
   IF blob LIKE '%party_client%' OR blob LIKE '%party_end%' THEN
     RAISE EXCEPTION 'Rodman saw a party outside his hop: %', blob;
+  END IF;
+
+  -- A verified org_admin of Rodman's own party is not a project member and
+  -- not the assigned approver, but wg_caller_operates_party's only remaining
+  -- path (verified org role on the worker's party) must still surface the
+  -- row to them, with the same note visibility Rodman himself gets.
+  PERFORM public.wg_test_037_act_as('03700000-0000-4000-8000-0000000000f2');
+  SELECT count(*) INTO n FROM public.wg_timesheet_weeks_visible WHERE project_id = 'proj_reg_037';
+  IF n <> 1 THEN RAISE EXCEPTION 'contractor party operator saw % weeks (expected Rodman''s submitted one)', n; END IF;
+  SELECT count(*) INTO n FROM public.wg_approval_records_visible WHERE project_id = 'proj_reg_037';
+  IF n <> 1 THEN RAISE EXCEPTION 'contractor party operator saw % approval rows', n; END IF;
+  SELECT COALESCE(string_agg(subject_snapshot::text, ' '), '') INTO blob
+  FROM public.wg_approval_records_visible WHERE project_id = 'proj_reg_037';
+  IF blob NOT LIKE '%SECRET-NOTE-RODMAN%' THEN
+    RAISE EXCEPTION 'contractor party operator lost Rodman''s day note: %', blob;
+  END IF;
+  IF blob LIKE '%SECRET-NOTE-MARTIN%' THEN
+    RAISE EXCEPTION 'contractor party operator saw Martin''s note from a different party: %', blob;
+  END IF;
+  IF blob LIKE '%party_client%' OR blob LIKE '%party_end%' THEN
+    RAISE EXCEPTION 'contractor party operator saw a party outside their hop: %', blob;
   END IF;
 
   -- Nikola, now the assigned approver, sees the week but not the end party.
