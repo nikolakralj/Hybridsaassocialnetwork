@@ -228,10 +228,11 @@ BEGIN
   SELECT count(*) INTO n_week FROM public.wg_timesheet_weeks WHERE project_id = 'proj_reg_034';
   SELECT count(*) INTO n_appr FROM public.approval_records WHERE project_id = 'proj_reg_034';
   IF n_week <> 1 THEN RAISE EXCEPTION 'client approver read % weeks (expected only the assigned one)', n_week; END IF;
-  IF n_appr <> 2 THEN RAISE EXCEPTION 'client approver read % approval records (expected 2 for that subject)', n_appr; END IF;
+  -- Since 037 an approver sees the layer assigned to them, not every layer of the subject.
+  IF n_appr <> 1 THEN RAISE EXCEPTION 'client approver read % approval records (expected only the assigned layer)', n_appr; END IF;
 
   INSERT INTO wg_regression_034_results VALUES
-    ('scoped_reads', 'Client viewer: 0 weeks, 0 approvals. Client approver: only the assigned week (1 of 2) and its 2 approval layers.');
+    ('scoped_reads', 'Client viewer: 0 weeks, 0 approvals. Client approver: only the assigned week and the approval layer assigned to them.');
 END $$;
 
 -- 7. The owner cannot decide the client's layer.
@@ -301,6 +302,8 @@ SET LOCAL ROLE authenticated;
 DO $$
 DECLARE v_id text; r jsonb; v_status text;
 BEGIN
+  -- The client approver cannot see the end client's layer. The worker can.
+  PERFORM public.wg_test_034_act_as('a0340000-0000-4000-8000-00000000000b');
   SELECT id INTO v_id FROM public.approval_records
   WHERE project_id = 'proj_reg_034' AND subject_id = 'person_w:2026-09-07' AND approval_layer = 3;
   PERFORM public.wg_test_034_act_as('a0340000-0000-4000-8000-00000000000e');
@@ -401,7 +404,9 @@ BEGIN
   IF r->>'weekStatus' <> 'rejected' THEN RAISE EXCEPTION 'week % after rejection', r->>'weekStatus'; END IF;
 
   PERFORM public.wg_test_034_act_as('a0340000-0000-4000-8000-00000000000b');
-  UPDATE public.wg_timesheet_weeks SET status = 'draft', data = jsonb_set(data, '{days}', '[{"day":"Mon","hours":5}]'::jsonb)
+  -- data is not selectable. Write the replacement document; do not read the column.
+  UPDATE public.wg_timesheet_weeks
+  SET status = 'draft', data = '{"totalHours":5,"days":[{"day":"Mon","hours":5}]}'::jsonb
   WHERE id = 'a0340000-0000-4000-8000-00000000000b:2026-09-14';
   r := public.wg_submit_timesheet('proj_reg_034', DATE '2026-09-14', 'person_w:2026-09-14', '{}'::jsonb);
   IF r->'approval'->>'approver_user_id' <> 'a0340000-0000-4000-8000-00000000000a' THEN
