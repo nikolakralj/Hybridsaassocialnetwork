@@ -1156,9 +1156,11 @@ function useProjectDocuments(projectId: string) {
   const [rows, setRows] = useState<ProjectDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [storageMissing, setStorageMissing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setStorageMissing(false);
     if (!projectId) {
       setRows([]);
       setLoading(false);
@@ -1174,7 +1176,14 @@ function useProjectDocuments(projectId: string) {
       .then(({ data, error: queryError }) => {
         if (cancelled) return;
         if (queryError) {
-          setError("Documents could not be loaded right now.");
+          // PGRST205: the wg_documents table is not in this database yet
+          // (migration 006 not applied). That is "nothing stored", not an outage.
+          if (queryError.code === "PGRST205" || queryError.code === "42P01") {
+            setStorageMissing(true);
+            setError(null);
+          } else {
+            setError("Documents could not be loaded right now.");
+          }
           setRows([]);
         } else {
           setRows(Array.isArray(data) ? (data as ProjectDocumentRow[]) : []);
@@ -1186,7 +1195,7 @@ function useProjectDocuments(projectId: string) {
     };
   }, [projectId]);
 
-  return { rows, loading, error };
+  return { rows, loading, error, storageMissing };
 }
 
 function formatDocumentStatus(status: string) {
@@ -1205,12 +1214,14 @@ function DocumentList({
   error,
   emptyTitle,
   emptyText,
+  storageMissing = false,
 }: {
   rows: ProjectDocumentRow[];
   loading: boolean;
   error: string | null;
   emptyTitle: string;
   emptyText: string;
+  storageMissing?: boolean;
 }) {
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -1223,7 +1234,9 @@ function DocumentList({
       <div className="text-center py-12 border border-dashed rounded-lg">
         <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
         <p className="font-medium mb-1">{emptyTitle}</p>
-        <p className="text-sm text-muted-foreground m-0">{emptyText}</p>
+        <p className="text-sm text-muted-foreground m-0">
+          {storageMissing ? "Document storage is not enabled for this workspace yet, so nothing has been uploaded." : emptyText}
+        </p>
       </div>
     );
   }
@@ -1251,7 +1264,7 @@ function DocumentList({
 }
 
 function ContractsModule({ projectId }: { projectId: string }) {
-  const { rows, loading, error } = useProjectDocuments(projectId);
+  const { rows, loading, error, storageMissing } = useProjectDocuments(projectId);
   const contracts = rows.filter((row) => CONTRACT_DOCUMENT_TYPES.has(row.type));
   return (
     <Card className="p-6">
@@ -1263,6 +1276,7 @@ function ContractsModule({ projectId }: { projectId: string }) {
         rows={contracts}
         loading={loading}
         error={error}
+        storageMissing={storageMissing}
         emptyTitle="No contracts yet"
         emptyText="Contracts recorded for this project will appear here. Rates between parties are set on the Project Graph."
       />
@@ -1271,7 +1285,7 @@ function ContractsModule({ projectId }: { projectId: string }) {
 }
 
 function DocumentsModule({ projectId }: { projectId: string }) {
-  const { rows, loading, error } = useProjectDocuments(projectId);
+  const { rows, loading, error, storageMissing } = useProjectDocuments(projectId);
   return (
     <Card className="p-6">
       <h3 className="mb-4">Project Documents</h3>
@@ -1282,6 +1296,7 @@ function DocumentsModule({ projectId }: { projectId: string }) {
         rows={rows}
         loading={loading}
         error={error}
+        storageMissing={storageMissing}
         emptyTitle="No documents yet"
         emptyText="Documents added to this project, such as purchase orders, will appear here."
       />
