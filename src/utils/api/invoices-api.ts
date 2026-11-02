@@ -17,6 +17,11 @@ import { lineAmount, roundMoney, sumMoney, taxOn } from '../money';
 import { ratesFromScopedGraph } from './scoped-graph-rates';
 
 const supabase = createClient();
+
+// wg_create_invoice (041) and wg_get_scoped_graph are not in the generated
+// Supabase types; call them through an untyped rpc instead of casting args.
+const untypedRpc = (fn: string, args: Record<string, unknown>) =>
+  (supabase.rpc.bind(supabase) as unknown as (fn: string, args: Record<string, unknown>) => ReturnType<typeof supabase.rpc>)(fn, args);
 const ALLOW_GRAPH_RATE_FALLBACK = import.meta.env.VITE_ALLOW_GRAPH_RATE_FALLBACK === 'true';
 
 const LOCAL_INVOICES_KEY = (projectId: string) => `workgraph-invoices-${projectId}`;
@@ -232,7 +237,7 @@ async function resolveLegacyGraphRates(projectId: string): Promise<Record<string
 
   // The raw project graph is not readable (036). The scoped RPC already removed
   // rates this caller must not see; this only copies what it returned.
-  const { data, error } = await supabase.rpc('wg_get_scoped_graph', { p_project_id: scope });
+  const { data, error } = await untypedRpc('wg_get_scoped_graph', { p_project_id: scope });
 
   if (error) {
     console.warn(`[invoices] resolveProjectRates failed for ${scope}: ${error.message}`);
@@ -675,14 +680,15 @@ function buildLineItemsFromPayload(payload: InvoicePayload): InvoiceLineItem[] {
       description: normalizeString(item.description),
       quantity: toNumber(item.quantity),
       unitPrice: toNumber(item.unitPrice),
-      // Every line is rounded to the cent; an explicit amount is kept but rounded.
-      amount: roundMoney(toNumber(item.amount, lineAmount(toNumber(item.quantity), toNumber(item.unitPrice)))),
+      // A client-sent amount is ignored. The line is quantity times unit price,
+      // rounded to the cent, which is also what the database stores.
+      amount: lineAmount(toNumber(item.quantity), toNumber(item.unitPrice)),
     }));
   }
 
   const hours = toNumber(payload.hours);
   const rate = toNumber(payload.rate);
-  const amount = roundMoney(toNumber(payload.amount, lineAmount(hours, rate)));
+  const amount = lineAmount(hours, rate);
   return [
     {
       id: generateId('line'),
@@ -736,7 +742,9 @@ export function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvo
   // disagrees with its own lines is ignored); VAT is rounded on that subtotal.
   const subtotal = Math.max(0, sumMoney(lineItems.map((item) => item.amount)));
   const taxRate = Math.min(100, Math.max(0, toNumber(payload.taxRate, 0)));
-  const taxTotal = Math.max(0, roundMoney(toNumber(payload.taxTotal, taxOn(subtotal, taxRate))));
+  // A client-supplied tax total is ignored. VAT is the rounded tax rate
+  // applied to the line subtotal. A missing rate stays 0; nothing here picks one.
+  const taxTotal = Math.max(0, taxOn(subtotal, taxRate));
   const total = roundMoney(subtotal + taxTotal);
   const projectId = normalizeString(payload.projectId);
 
@@ -744,8 +752,8 @@ export function buildInvoiceRequestBody(payload: InvoicePayload): NormalizedInvo
     projectId,
     templateId: payload.templateId ?? null,
     invoiceNumber: normalizeString(payload.invoiceNumber ?? payload.number) || `INV-${Date.now()}`,
-    fromPartyId: normalizeString(payload.fromPartyId) || projectId,
-    toPartyId: normalizeString(payload.toPartyId) || projectId,
+    fromPartyId: normalizeString(payload.fromPartyId),
+    toPartyId: normalizeString(payload.toPartyId),
     fromPartyName: normalizeString(payload.fromPartyName),
     toPartyName: normalizeString(payload.toPartyName),
     fromAddress: normalizeString(payload.fromAddress),
@@ -895,23 +903,23 @@ export async function createInvoice(invoice: InvoicePayload, _accessToken?: stri
   let row = toInvoiceRow(body, userId);
 
   try {
-    let { data, error } = await supabase.from('wg_invoices').insert(row).select().single();
+    let { data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row });
 
     // FK violation on template_id → retry without the template link.
     if (error && error.code === '23503' && row.template_id) {
       row = { ...row, template_id: null };
-      ({ data, error } = await supabase.from('wg_invoices').insert(row).select().single());
+      ({ data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row }));
     }
 
     // Duplicate invoice number for this project → retry once with a suffix.
     if (error && error.code === '23505') {
       row = { ...row, invoice_number: `${row.invoice_number}-${Date.now() % 10000}` };
-      ({ data, error } = await supabase.from('wg_invoices').insert(row).select().single());
+      ({ data, error } = await untypedRpc('wg_create_invoice', { p_invoice: row }));
     }
 
     if (error) {
-      if (error.code === '42501') {
-        throw new Error('You do not have permission to create invoices on this project (owner or accepted member required).');
+      if (error.code === '42501' || error.code === '23514') {
+        throw new Error(error.message || 'This invoice was refused.');
       }
       throw new Error(error.message || 'Failed to create invoice');
     }

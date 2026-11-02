@@ -25,6 +25,26 @@ function db() {
   );
 }
 
+function userDb(c: any) {
+  const header = c.req.header("Authorization") || "";
+  const [scheme, token] = header.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    throw new Error("Authentication required");
+  }
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
+  );
+}
+
+// Keep in step with src/utils/invoice-gate.ts.
+function invoiceGateStatus(code: string | undefined): number | null {
+  if (code === "42501") return 403;
+  if (code === "23514" || code === "23505") return 422;
+  return null;
+}
+
 function normalizeString(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (value === null || value === undefined) return "";
@@ -276,6 +296,7 @@ function normalizeInvoicePayload(body: any) {
       ? toNumber(rawTotal, Number.NaN)
       : null,
     status,
+    taxRate: taxRate !== undefined && taxRate !== null && taxRate !== "" ? toNumber(taxRate, 0) : 0,
     timesheetIds: Array.isArray(body.timesheetIds)
       ? body.timesheetIds
       : Array.isArray(body.timesheet_ids)
@@ -365,9 +386,10 @@ invoicesRouter.post("/", async (c) => {
       return c.json({ error: "dueDate must be on or after issueDate" }, 400);
     }
 
+    // Totals are recomputed in wg_create_invoice. These values are not trusted.
     const subtotal = Number.isFinite(payload.subtotal) ? payload.subtotal : sumLineItems(payload.lineItems);
     const taxTotal = Number.isFinite(payload.taxTotal) ? payload.taxTotal : 0;
-    const total = Number.isFinite(payload.total) ? payload.total : Math.round((subtotal + taxTotal) * 100) / 100;
+    const total = Number.isFinite(payload.total) ? payload.total : subtotal + taxTotal;
 
     const insertRow = {
       project_id: payload.projectId,
@@ -382,6 +404,7 @@ invoicesRouter.post("/", async (c) => {
       due_date: payload.dueDate,
       delivery_date: payload.deliveryDate,
       currency: payload.currency,
+      tax_rate: payload.taxRate,
       line_items: payload.lineItems,
       subtotal,
       tax_total: taxTotal,
@@ -395,21 +418,13 @@ invoicesRouter.post("/", async (c) => {
       created_by: user.id,
     };
 
-    const { data, error } = await db()
-      .from("wg_invoices")
-      .insert(insertRow)
-      .select("*")
-      .single();
+    const { data, error } = await userDb(c).rpc("wg_create_invoice", { p_invoice: insertRow });
 
     if (error) {
-      if (error.code === "23505") {
-        return c.json({ error: "Invoice number already exists for this project" }, 409);
-      }
+      const status = invoiceGateStatus(error.code);
+      if (status) return c.json({ error: error.message }, status);
       if (error.code === "23503") {
         return c.json({ error: "Referenced project or template not found" }, 400);
-      }
-      if (error.code === "23514") {
-        return c.json({ error: error.message }, 400);
       }
       throw error;
     }
@@ -446,14 +461,18 @@ invoicesRouter.patch("/:id", async (c) => {
     const canEdit = await canEditInvoice(invoice, user.id);
     if (!canEdit) return c.json({ error: "Forbidden" }, 403);
 
-    const { data: updated, error } = await db()
+    const { data: updated, error } = await userDb(c)
       .from("wg_invoices")
       .update({ status: nextStatus })
       .eq("id", invoiceId)
       .select("*")
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const status = invoiceGateStatus(error.code);
+      if (status) return c.json({ error: error.message }, status);
+      throw error;
+    }
 
     return c.json({ invoice: rowToInvoice(updated) });
   } catch (err: any) {

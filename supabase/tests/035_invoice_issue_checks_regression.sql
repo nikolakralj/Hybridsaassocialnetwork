@@ -31,7 +31,24 @@ INSERT INTO public.wg_projects (id, name, owner_id, graph, parties) VALUES (
 );
 
 INSERT INTO public.wg_project_members (id, project_id, user_id, user_name, role, scope, graph_node_id, invited_by, accepted_at)
-VALUES ('mem_035_w', 'proj_reg_035', 'a0350000-0000-4000-8000-00000000000b', 'Worker', 'Contributor', 'party_a', 'person_w', 'a0350000-0000-4000-8000-00000000000a', NOW());
+VALUES
+  ('mem_035_w', 'proj_reg_035', 'a0350000-0000-4000-8000-00000000000b', 'Worker', 'Contributor', 'party_a', 'person_w', 'a0350000-0000-4000-8000-00000000000a', NOW()),
+  ('mem_035_owner', 'proj_reg_035', 'a0350000-0000-4000-8000-00000000000a', 'Owner', 'Owner', 'party_a', NULL, 'a0350000-0000-4000-8000-00000000000a', NOW());
+
+-- 041 prices an issued week from the stored bill rate and requires the caller.
+INSERT INTO public.wg_contract_rates (
+  id, project_id, subject_user_id, subject_graph_node_id, rate_scope, rate_type, amount, currency, created_by
+) VALUES (
+  'ctrate_035', 'proj_reg_035', 'a0350000-0000-4000-8000-00000000000b', 'person_w',
+  'bill', 'hourly', 10, 'EUR', 'a0350000-0000-4000-8000-00000000000a'
+);
+
+SELECT set_config('request.jwt.claim.sub', 'a0350000-0000-4000-8000-00000000000a', true);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"a0350000-0000-4000-8000-00000000000a","role":"authenticated"}',
+  true
+);
 
 SELECT set_config('wg.approval_write', 'on', true);
 INSERT INTO public.wg_timesheet_weeks (id, user_id, project_id, week_start, status, data) VALUES
@@ -48,7 +65,7 @@ BEGIN
   VALUES (p_id, 'proj_reg_035', p_id, p_from, p_to, CURRENT_DATE, CURRENT_DATE + 30,
           '[]'::jsonb, 1, 0, 1, 'issued', p_keys, 'a0350000-0000-4000-8000-00000000000a');
   RETURN 'issued';
-EXCEPTION WHEN check_violation OR unique_violation THEN
+EXCEPTION WHEN check_violation OR unique_violation OR insufficient_privilege THEN
   RETURN 'refused: ' || SQLERRM;
 END;
 $$;
@@ -67,10 +84,12 @@ BEGIN
   IF r NOT LIKE 'refused%not an approved week%' THEN RAISE EXCEPTION 'missing week issued: %', r; END IF;
 
   r := public.wg_test_035_issue('INV-035-WRONG-BUYER', 'party_c', 'party_a', ARRAY['person_w:2026-09-28@2026-09']);
-  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'reverse direction issued: %', r; END IF;
+  IF r NOT LIKE 'refused%buyer%' AND r NOT LIKE 'refused%do not control%' THEN
+    RAISE EXCEPTION 'reverse direction issued: %', r;
+  END IF;
 
-  r := public.wg_test_035_issue('INV-035-SELF', 'proj_reg_035', 'proj_reg_035', ARRAY['person_w:2026-09-28@2026-09']);
-  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'project-as-both-parties issued: %', r; END IF;
+  r := public.wg_test_035_issue('INV-035-SELF', 'party_a', 'party_a', ARRAY['person_w:2026-09-28@2026-09']);
+  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'seller billing itself was issued: %', r; END IF;
 
   INSERT INTO wg_regression_035_results VALUES
     ('only_approved_weeks_and_right_buyer', 'Approved week issues; submitted or unknown week, reversed parties, or project-as-both-parties are refused.');
@@ -92,21 +111,26 @@ BEGIN
     ('no_double_billing', 'A week is billed once; September and October parts each bill once; a whole-week key conflicts with its parts.');
 END $$;
 
--- Drafts are not checked, and a cancelled invoice frees its weeks.
+-- A draft is checked too: an unapproved week is refused. Cancelling still frees a week.
 DO $$
 DECLARE r text;
 BEGIN
-  INSERT INTO public.wg_invoices (id, project_id, invoice_number, from_party_id, to_party_id, issue_date, due_date,
-                                  line_items, subtotal, tax_total, total, status, timesheet_ids, created_by)
-  VALUES ('INV-035-DRAFT', 'proj_reg_035', 'INV-035-DRAFT', 'party_c', 'party_a', CURRENT_DATE, CURRENT_DATE + 30,
-          '[]'::jsonb, 1, 0, 1, 'draft', ARRAY['person_w:2026-09-21'], 'a0350000-0000-4000-8000-00000000000a');
+  BEGIN
+    INSERT INTO public.wg_invoices (id, project_id, invoice_number, from_party_id, to_party_id, issue_date, due_date,
+                                    line_items, subtotal, tax_total, total, status, timesheet_ids, created_by)
+    VALUES ('INV-035-DRAFT', 'proj_reg_035', 'INV-035-DRAFT', 'party_a', 'party_c', CURRENT_DATE, CURRENT_DATE + 30,
+            '[]'::jsonb, 1, 0, 1, 'draft', ARRAY['person_w:2026-09-21'], 'a0350000-0000-4000-8000-00000000000a');
+    RAISE EXCEPTION 'draft of a submitted week was saved';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
 
   UPDATE public.wg_invoices SET status = 'cancelled' WHERE id = 'INV-035-OK';
   r := public.wg_test_035_issue('INV-035-REISSUE', 'party_a', 'party_c', ARRAY['person_w:2026-09-14']);
   IF r <> 'issued' THEN RAISE EXCEPTION 'week not freed by cancellation: %', r; END IF;
 
   INSERT INTO wg_regression_035_results VALUES
-    ('drafts_free_cancel_frees', 'A draft with a submitted week and reversed parties saves; after cancelling, the week can be issued again.');
+    ('drafts_free_cancel_frees', 'A draft of an unapproved week is refused. After cancelling an issued invoice, the week can be issued again.');
 END $$;
 
 SELECT check_name, detail FROM wg_regression_035_results ORDER BY check_name;
