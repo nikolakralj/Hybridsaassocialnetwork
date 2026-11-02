@@ -967,7 +967,16 @@ export async function getProjectMembers(projectId: string, accessToken?: string 
 
 export async function addProjectMember(
   projectId: string,
-  member: { userName?: string; userEmail?: string; role?: string },
+  member: {
+    userName?: string;
+    userEmail?: string;
+    role?: string;
+    /** Party graph node the member belongs to (their company on this project). */
+    scope?: string | null;
+    /** Person graph node this member is (honoured by the server from this branch on). */
+    graphNodeId?: string | null;
+    canApprove?: boolean;
+  },
   accessToken?: string | null
 ) {
   const res = await fetch(`${BASE}/projects/${projectId}/members`, {

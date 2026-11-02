@@ -48,6 +48,9 @@ import { canViewerApproveSubmitter, type ApprovalParty } from '../../utils/graph
 import { ALLOW_GRAPH_ADMIN_VIEW } from '../workgraph/graph-visibility';
 import { getLatestPendingApproval } from '../../utils/api/approvals-supabase';
 import { listProjects } from '../../utils/api/projects-api';
+import { createClient } from '../../utils/supabase/client';
+
+const timesheetSupabase = createClient();
 
 // ============================================================================
 // Person / Org helpers — graph-aware resolution
@@ -67,6 +70,28 @@ function getNameDir(): NameDir {
   return cachedNameDir;
 }
 
+// Weeks loaded from the server are keyed by the worker's account id; the name
+// directory is keyed by graph person node id. Without this alias a manager's
+// "All parties" view listed people as raw UUIDs under "Other".
+const personAlias: Record<string, string> = {};
+function rememberPersonAlias(accountId: string, graphNodeId?: string) {
+  if (accountId && graphNodeId && accountId !== graphNodeId) personAlias[accountId] = graphNodeId;
+}
+// Names of workers this viewer approves but whose graph node the privity
+// projection hides (e.g. the client approving subcontractor hours). They come
+// from the approval records the server already returns to this viewer.
+const snapshotPeople: Record<string, { name: string; org?: string }> = {};
+export function rememberSnapshotPerson(id: string | undefined, name: string | undefined, org?: string) {
+  if (id && name && !snapshotPeople[id]) snapshotPeople[id] = { name, org };
+}
+function snapshotPerson(id: string) {
+  return snapshotPeople[id] || (personAlias[id] ? snapshotPeople[personAlias[id]] : undefined);
+}
+function dirEntry(id: string) {
+  const dir = getNameDir();
+  return dir[id] || (personAlias[id] ? dir[personAlias[id]] : undefined);
+}
+
 function getApprovalParties(): ApprovalParty[] {
   return cachedApprovalParties;
 }
@@ -76,21 +101,23 @@ function buildTimesheetSubjectId(personId: string, weekStart: string): string {
 }
 
 function personName(id: string): string {
-  const entry = getNameDir()[id];
+  const entry = dirEntry(id);
   if (entry?.name) return entry.name;
+  const fromSnapshot = snapshotPerson(id);
+  if (fromSnapshot?.name) return fromSnapshot.name;
   return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 24);
 }
 function personInitials(id: string): string {
   return personName(id).split(' ').map(n => n[0]).join('');
 }
 function personOrgId(id: string): string | undefined {
-  const fromDir = getNameDir()[id]?.orgId;
+  const fromDir = dirEntry(id)?.orgId;
   if (fromDir) return fromDir;
   if (id.startsWith('org-')) return id;
   return undefined;
 }
 function personViewerType(id: string): string | undefined {
-  const fromDir = getNameDir()[id]?.type;
+  const fromDir = dirEntry(id)?.type;
   if (fromDir && fromDir !== 'party') return fromDir;
   if (id.startsWith('org-')) return 'company';
   return undefined;
@@ -111,8 +138,14 @@ function getOrgMap(): Record<string, OrgInfo> {
   const map: Record<string, OrgInfo> = {};
   let colorIdx = 0;
 
-  Object.entries(getNameDir()).forEach(([id, entry]) => {
-    if (entry.type === 'party' && !map[id]) {
+  // Org entries can arrive typed 'party' or as a viewer type ('company',
+  // 'agency', 'client'); treat anything referenced as a person's orgId as an org.
+  const dir = getNameDir();
+  const referencedOrgIds = new Set(
+    Object.values(dir).map((e) => e.orgId).filter((v): v is string => Boolean(v)),
+  );
+  Object.entries(dir).forEach(([id, entry]) => {
+    if ((entry.type === 'party' || referencedOrgIds.has(id)) && !map[id]) {
       const [color, bgColor] = PALETTE[colorIdx % PALETTE.length];
       map[id] = { id, name: entry.name, color, bgColor };
       colorIdx++;
@@ -131,6 +164,12 @@ function getOrgForPerson(pid: string): OrgInfo {
   const oid = personOrgId(pid);
   if (oid && map[oid]) return map[oid];
   if (personViewerType(pid) === 'freelancer') return map['__freelancers__'];
+  const snapshotOrg = snapshotPerson(pid)?.org;
+  if (snapshotOrg) {
+    const key = `snapshot:${snapshotOrg}`;
+    if (!map[key]) map[key] = { id: key, name: snapshotOrg, color: 'text-indigo-700', bgColor: 'bg-indigo-100' };
+    return map[key];
+  }
   return map['__other__'] ?? { id: '__other__', name: 'Other', color: 'text-slate-700', bgColor: 'bg-slate-100' };
 }
 
@@ -184,13 +223,19 @@ interface ProjectTimesheetsViewProps {
     name: string;
     orgId?: string;
   };
+  /**
+   * The viewer is not a project manager, so it cannot impersonate anyone and
+   * the timesheet store holds exactly the weeks the server (RLS) returned to
+   * it: its own weeks plus the weeks it is an approver on.
+   */
+  serverScoped?: boolean;
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTimesheetsViewProps) {
+export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped = false }: ProjectTimesheetsViewProps) {
   const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
   const projectNameDir = nameDirectory[projectId] ?? EMPTY_NAME_DIR;
   const projectApprovalParties = approvalDirectory[projectId] ?? EMPTY_APPROVAL_PARTIES;
@@ -206,6 +251,25 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
   cachedApprovalParties = projectApprovalParties;
 
   const store = useTimesheetStore();
+  const [snapshotVersion, setSnapshotVersion] = useState(0);
+  useEffect(() => {
+    if (!serverScoped || !projectId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await (timesheetSupabase as any)
+        .from('approval_records')
+        .select('subject_snapshot')
+        .eq('project_id', projectId);
+      if (cancelled || !Array.isArray(data)) return;
+      data.forEach((row: any) => {
+        const snap = row?.subject_snapshot || {};
+        rememberSnapshotPerson(snap.submitterId, snap.submitterName, snap.submitterOrg);
+        rememberSnapshotPerson(snap.submitterNodeId, snap.submitterName, snap.submitterOrg);
+      });
+      setSnapshotVersion((value) => value + 1);
+    })().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [projectId, serverScoped]);
   const { user, accessToken } = useAuth();
   const { selectedMonth, setSelectedMonth } = useMonthContextSafe();
 
@@ -345,7 +409,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     viewerType === 'freelancer' ||
     (viewerEntry && viewerEntry.type !== 'party' && viewerEntry.orgId)
   );
-  const isAdmin = ALLOW_GRAPH_ADMIN_VIEW && viewerType === 'admin';
+  // The workspace only offers the '__admin__' ("All parties") viewer to project
+  // managers. Without this, a manager's default view filtered every week down
+  // to a person with id '__admin__' and showed "No timesheet data" while the
+  // Overview counted the hours.
+  const isAdmin = viewerType === 'admin' && (ALLOW_GRAPH_ADMIN_VIEW || viewerOverride?.id === '__admin__');
   // Org/party viewer: an org, agency, or client party node (not a person)
   const isOrgViewer = !isPersonViewer && !isAdmin && (
     viewerType === 'company' ||
@@ -369,6 +437,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       filtered = allWeeks.filter(w => {
         // Person belongs to this org
         if (personOrgId(w.personId) === viewerId) return true;
+        if (serverScoped && w.status !== 'draft') return true;
         // This org's approvers can approve the submitter (follows the approval chain)
         return canViewerApproveSubmitter(viewerId, w.personId, projectApprovalParties);
       });
@@ -376,14 +445,20 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
       // Person viewer: own weeks + weeks of people this person can approve
       filtered = allWeeks.filter(w =>
         w.personId === viewerId ||
-        canViewerApproveSubmitter(viewerId, w.personId, projectApprovalParties)
+        w.graphNodeId === viewerId ||
+        canViewerApproveSubmitter(viewerId, w.graphNodeId || w.personId, projectApprovalParties) ||
+        // Approvers: the server only returned weeks this viewer may see.
+        (serverScoped && w.status !== 'draft')
       );
     } else {
       filtered = allWeeks;
     }
 
     const byPerson = new Map<string, StoredWeek[]>();
-    filtered.forEach(w => { const arr = byPerson.get(w.personId) || []; arr.push(w); byPerson.set(w.personId, arr); });
+    filtered.forEach(w => {
+      rememberPersonAlias(w.personId, w.graphNodeId);
+      const arr = byPerson.get(w.personId) || []; arr.push(w); byPerson.set(w.personId, arr);
+    });
     const flatPW = [...byPerson.entries()].sort((a, b) => personName(a[0]).localeCompare(personName(b[0])));
 
     const byOrg = new Map<string, { org: OrgInfo; people: [string, StoredWeek[]][] }>();
@@ -396,7 +471,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
 
     return { orgGroups: [...byOrg.values()], flatPersonWeeks: flatPW };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir]);
+  }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir, serverScoped, snapshotVersion]);
 
   const submittedWeekRefs = useMemo(() => (
     flatPersonWeeks.flatMap(([personId, weeks]) =>
@@ -554,7 +629,9 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     if (week && (week.status === 'approved' || week.status === 'draft')) return false;
     if (!viewerId) return false;
     if (personId === viewerId || personId === user?.id) return false;
-    if (isAdmin) return true;
+    // A manager's read-only "All parties" view must not offer Approve on weeks
+    // that wait on someone else; only the dev-only admin persona may.
+    if (isAdmin && ALLOW_GRAPH_ADMIN_VIEW) return true;
     if (week?.status === 'submitted') {
       const pendingApproval = pendingApprovalAssignees[buildTimesheetSubjectId(personId, week.weekStart)];
       const pendingTargets = [

@@ -77,6 +77,8 @@ export interface ProjectCreateWizardProps {
   initialParties?: PartyEntry[];
   initialProjectName?: string;
   editablePartyIds?: string[];
+  /** Edit mode: may add and remove organizations (owner / creator-org Editor). */
+  canManageStructure?: boolean;
 }
 
 type Step = 'basic' | 'supply-chain' | 'people' | 'review';
@@ -145,6 +147,7 @@ export function ProjectCreateWizard({
   initialParties,
   initialProjectName,
   editablePartyIds = [],
+  canManageStructure = false,
 }: ProjectCreateWizardProps) {
   const safeInitialParties = useMemo(() => initialParties ?? EMPTY_PARTIES, [initialParties]);
   const safeInitialProjectName = initialProjectName ?? '';
@@ -163,9 +166,27 @@ export function ProjectCreateWizard({
   const [parties, setParties] = useState<PartyEntry[]>([]);
   const [showCompanySearch, setShowCompanySearch] = useState(false);
   const [searchTargetPartyId, setSearchTargetPartyId] = useState<string | null>(null);
+  const initialPartyIds = useMemo(() => new Set(safeInitialParties.map((party) => party.id)), [safeInitialParties]);
   const canEditParty = useCallback(
-    (partyId: string) => !editMode || editablePartyIds.includes(partyId),
-    [editMode, editablePartyIds],
+    (partyId: string) => (
+      !editMode ||
+      editablePartyIds.includes(partyId) ||
+      // An organization added in this edit session is fully editable.
+      (canManageStructure && !initialPartyIds.has(partyId))
+    ),
+    [editMode, editablePartyIds, canManageStructure, initialPartyIds],
+  );
+  const canRemoveParty = useCallback(
+    (partyId: string) => (
+      editMode
+        ? canManageStructure && !editablePartyIds.includes(partyId)
+        : canEditParty(partyId)
+    ),
+    [editMode, canManageStructure, editablePartyIds, canEditParty],
+  );
+  const canChangePartyType = useCallback(
+    (partyId: string) => !editMode || (canManageStructure && !initialPartyIds.has(partyId)),
+    [editMode, canManageStructure, initialPartyIds],
   );
 
   const currentStepIndex = steps.indexOf(step);
@@ -305,7 +326,13 @@ export function ProjectCreateWizard({
           userId: person.id && person.id.match(/^[0-9a-f-]{36}$/) ? person.id : undefined,
           userName: person.name,
           userEmail: person.email,
-          role: (person.canApprove ? 'Editor' : 'Contributor') as ProjectRole,
+          // Approvers on the creator's own organization co-manage the project.
+          // Approvers of OTHER organizations (client, subcontractor) only
+          // approve: making them Editor gave them project-manager rights
+          // (full topology, graph edits, rate inserts via can_manage_project).
+          role: (person.canApprove
+            ? (party.isCreator ? 'Editor' : 'Commenter')
+            : 'Contributor') as ProjectRole,
           scope: party.id,
           graphNodeId: person.id,
         }))
@@ -470,7 +497,10 @@ export function ProjectCreateWizard({
                   removeParty={removeParty} toggleConnection={toggleConnection}
                   onSearchExisting={(id) => { setSearchTargetPartyId(id); setShowCompanySearch(true); }}
                   canEditParty={canEditParty}
-                  canAddParties={!editMode}
+                  canAddParties={!editMode || canManageStructure}
+                  canRemoveParty={canRemoveParty}
+                  canChangePartyType={canChangePartyType}
+                  editMode={editMode}
                 />
               )}
               {step === 'people' && (
@@ -604,7 +634,7 @@ function BasicInfoStep({ name, setName,
 // Step 2: Supply Chain — Connection-based
 // ============================================================================
 
-function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleConnection, onSearchExisting, canEditParty, canAddParties }: {
+function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleConnection, onSearchExisting, canEditParty, canAddParties, canRemoveParty, canChangePartyType, editMode = false }: {
   parties: PartyEntry[];
   addParty: (type: PartyType, orgData?: any) => string;
   updateParty: (id: string, updates: Partial<PartyEntry>) => void;
@@ -613,6 +643,9 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
   onSearchExisting: (partyId: string) => void;
   canEditParty: (partyId: string) => boolean;
   canAddParties: boolean;
+  canRemoveParty: (partyId: string) => boolean;
+  canChangePartyType: (partyId: string) => boolean;
+  editMode?: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -639,9 +672,9 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
               onToggleConnection={(targetId) => toggleConnection(party.id, targetId)}
               onSearchExisting={() => onSearchExisting(party.id)}
               editable={canEditParty(party.id)}
-              canRemove={canAddParties && canEditParty(party.id)}
-              canChangeType={canAddParties}
-              isCurrentOrganization={!canAddParties && canEditParty(party.id)}
+              canRemove={canRemoveParty(party.id)}
+              canChangeType={canChangePartyType(party.id)}
+              isCurrentOrganization={editMode && canEditParty(party.id) && !canChangePartyType(party.id)}
             />
           ))}
         </div>
@@ -672,6 +705,11 @@ function SupplyChainStep({ parties, addParty, updateParty, removeParty, toggleCo
       {!canAddParties && (
         <p className="text-xs text-muted-foreground">
           Adding or removing organizations is a governed project-structure change.
+        </p>
+      )}
+      {editMode && canAddParties && (
+        <p className="text-xs text-muted-foreground" data-testid="structure-edit-note">
+          You can add or remove organizations. An organization that already has timesheets, invoices or joined members cannot be removed.
         </p>
       )}
     </div>

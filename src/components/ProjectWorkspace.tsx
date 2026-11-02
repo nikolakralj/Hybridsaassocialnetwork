@@ -324,6 +324,9 @@ export function ProjectWorkspace({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
   const [projectOwnerId, setProjectOwnerId] = useState<string | null>(null);
+  // Set when the server refuses the project (not a member / unknown id). The
+  // workspace used to render every tab as an empty shell for such users.
+  const [projectAccessDenied, setProjectAccessDenied] = useState(false);
   const [projectStatus, setProjectStatus] = useState<string | null>(null);
   const [projectDescription, setProjectDescription] = useState("");
   const [projectParties, setProjectParties] = useState<Array<{ id: string; name: string; partyType?: string }>>([]);
@@ -376,6 +379,12 @@ export function ProjectWorkspace({
       ? [ownerPartyId]
       : [];
   const canEditGraph = canManageProject && editablePartyIds.length > 0;
+  // Adding/removing organizations mirrors the server rule: project owner, or
+  // an Editor of the creator (owner) organization.
+  const canManageStructure = canEditGraph && (
+    currentProjectRole === "Owner" ||
+    (currentProjectRole === "Editor" && !!ownerPartyId && currentMembership?.scope === ownerPartyId)
+  );
   const visibleTeamCount = dedupeTeamMembers(teamMembers).length;
   const teamButtonLabel = visibleTeamCount > 0 ? `Team (${visibleTeamCount})` : "Team";
   const allowedViewerIds = useMemo(
@@ -491,6 +500,7 @@ export function ProjectWorkspace({
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
           setProjectPartiesStatus('loaded');
+          setProjectAccessDenied(false);
           const loadedName = data?.project?.name;
           if (loadedName) {
             setProjectName(loadedName);
@@ -518,9 +528,11 @@ export function ProjectWorkspace({
           setOwnerPartyId(creatorParty?.id || null);
           setProjectGraphViewers(buildViewerOptions(graphNodes, graphEdges));
         }
-      } catch {
+      } catch (error: any) {
         if (!cancelled) {
           setProjectPartiesStatus('error');
+          const message = String(error?.message || '');
+          setProjectAccessDenied(/forbidden|not found|not a member/i.test(message));
           setProjectOwnerId(null);
           setProjectStatus(null);
           setProjectParties([]);
@@ -742,6 +754,22 @@ export function ProjectWorkspace({
     setIsAddModuleOpen(false);
   };
 
+  if (projectAccessDenied) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="max-w-xl mx-auto px-6 py-16 text-center space-y-3" data-testid="project-access-denied">
+          <h1 className="m-0 text-xl font-semibold">You don't have access to this project</h1>
+          <p className="text-sm text-muted-foreground m-0">
+            It doesn't exist or you are not a member. Ask the project owner to invite you, then accept the invite on your Projects page.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => { window.location.href = '/app/projects'; }}>
+            Go to Projects
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Project Header */}
@@ -947,6 +975,7 @@ export function ProjectWorkspace({
                   asOf={asOf}
                   canEditGraph={canEditGraph}
                   editablePartyIds={editablePartyIds}
+                  canManageStructure={canManageStructure}
                   allowFullProjectView={canManageProject}
                   currentViewer={effectiveViewer}
                   onViewerChange={(viewer) => {
@@ -970,6 +999,7 @@ export function ProjectWorkspace({
                     name: effectiveViewer.name,
                     orgId: effectiveViewer.orgId,
                   } : undefined}
+                  serverScoped={!canManageProject}
                 />
               </Suspense>
             </TabsContent>
