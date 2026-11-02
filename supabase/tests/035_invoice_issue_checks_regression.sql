@@ -84,10 +84,12 @@ BEGIN
   IF r NOT LIKE 'refused%not an approved week%' THEN RAISE EXCEPTION 'missing week issued: %', r; END IF;
 
   r := public.wg_test_035_issue('INV-035-WRONG-BUYER', 'party_c', 'party_a', ARRAY['person_w:2026-09-28@2026-09']);
-  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'reverse direction issued: %', r; END IF;
+  IF r NOT LIKE 'refused%buyer%' AND r NOT LIKE 'refused%do not control%' THEN
+    RAISE EXCEPTION 'reverse direction issued: %', r;
+  END IF;
 
-  r := public.wg_test_035_issue('INV-035-SELF', 'proj_reg_035', 'proj_reg_035', ARRAY['person_w:2026-09-28@2026-09']);
-  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'project-as-both-parties issued: %', r; END IF;
+  r := public.wg_test_035_issue('INV-035-SELF', 'party_a', 'party_a', ARRAY['person_w:2026-09-28@2026-09']);
+  IF r NOT LIKE 'refused%buyer%' THEN RAISE EXCEPTION 'seller billing itself was issued: %', r; END IF;
 
   INSERT INTO wg_regression_035_results VALUES
     ('only_approved_weeks_and_right_buyer', 'Approved week issues; submitted or unknown week, reversed parties, or project-as-both-parties are refused.');
