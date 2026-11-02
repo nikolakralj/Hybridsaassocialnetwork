@@ -1250,6 +1250,28 @@ export function InvoicesWorkspace({
             Your role is to submit accurate timesheets. Invoice records, billing templates, company
             rates, and client billing controls are restricted to authorized finance and project admins.
           </p>
+          {/* Buyer/seller decision-makers (e.g. the client approver, the
+              subcontractor owner) read the invoices their company is on.
+              The server decides which rows come back (wg_invoices RLS, 046). */}
+          {monthInvoices.length > 0 && (
+            <div className="space-y-2" data-testid="party-invoices">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Invoices involving your company · {selectedMonthLabel}
+              </div>
+              {monthInvoices.map((invoice) => (
+                <div key={invoice.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                  <div>
+                    <div className="font-medium text-slate-800">{invoice.number}</div>
+                    <div className="text-xs text-slate-500">{invoice.fromPartyName || 'Seller'} → {invoice.toPartyName || invoice.clientName}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-slate-800">{displayCurrency(invoice.amount, invoice.currency)}</div>
+                    <div className="text-xs capitalize text-slate-500">{invoice.apiStatus || invoice.status}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => window.dispatchEvent(new CustomEvent('changeTab', { detail: 'timesheets' }))}
