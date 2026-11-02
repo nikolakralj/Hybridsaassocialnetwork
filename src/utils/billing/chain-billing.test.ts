@@ -58,6 +58,36 @@ describe('chain billing', () => {
     expect(plan.groups.flatMap((g) => g.weeks.map((w) => w.personId))).toEqual(['ana']);
   });
 
+  it('a party billing two companies needs a per-worker rate to pick the buyer; nothing is guessed', () => {
+    const shared: ChainParty[] = [
+      { id: 'agencyA', name: 'Agency A', billsTo: ['client'], people: [] },
+      { id: 'agencyB', name: 'Agency B', billsTo: ['client'], people: [] },
+      { id: 'sub', name: 'Sub', billsTo: ['agencyA', 'agencyB'], people: [{ id: 'will' }, { id: 'tom' }] },
+      { id: 'client', name: 'Client', billsTo: [], people: [] },
+    ];
+    const rates = [rate('supply', 'sub', 'agencyB', 60, 'will'), rate('supply', 'sub', 'agencyA', 55), rate('supply', 'sub', 'agencyB', 58),
+      rate('supply', 'agencyA', 'client', 80), rate('supply', 'agencyB', 'client', 82)];
+    const sWeeks: W[] = [{ personId: 'will', weekStart: '2026-11-02', hours: 8 }, { personId: 'tom', weekStart: '2026-11-02', hours: 8 }];
+    const plan = planChainInvoices({ ...base, weeks: sWeeks, parties: shared, linkRates: rates });
+    expect(plan.groups.map((g) => `${g.sellerId}>${g.buyerId}:${g.weeks.map((w) => w.personId).join(',')}`).sort())
+      .toEqual(['agencyB>client:will', 'sub>agencyB:will']);
+    expect(plan.ambiguous).toEqual([{ workerId: 'tom', partyId: 'sub', partyName: 'Sub' }]);
+    expect(plan.unrouted).toEqual([]);
+  });
+
+  it('a worker with no rate on a hop is left out; the other workers on that hop are still invoiced', () => {
+    const subParties: ChainParty[] = parties.map((p) => (p.id === 'sub' ? { ...p, people: [...(p.people || []), { id: 'tom' }] } : p));
+    const subWeeks: W[] = [...weeks, { personId: 'tom', weekStart: '2026-11-02', hours: 8 }];
+    // Sub -> Agency priced per worker; Tom (new hire) has no price yet.
+    const rates = [rate('supply', 'agency', 'client', 80), rate('supply', 'sub', 'agency', 60, 'will')];
+    const plan = planChainInvoices({ ...base, weeks: subWeeks, parties: subParties, linkRates: rates });
+    const toAgency = plan.groups.find((g) => g.sellerId === 'sub')!;
+    expect(toAgency.weeks.map((w) => w.personId)).toEqual(['will']);
+    expect(plan.missing.map((m) => `${m.sellerId}>${m.buyerId}:${m.workerId}`)).toEqual(['sub>agency:tom']);
+    const toClient = plan.groups.find((g) => g.sellerId === 'agency')!;
+    expect(toClient.weeks.map((w) => w.personId).sort()).toEqual(['ana', 'tom', 'will']);
+  });
+
   it('legacy per-person rate prices only the final hop; a missing link rate blocks that seller invoice only', () => {
     const plan = planChainInvoices({ ...base, linkRates: [], legacyRates: { ana: { rate: 80 }, will: { rate: 80 } } });
     expect(plan.groups.map((g) => `${g.sellerId}>${g.buyerId}`)).toEqual(['agency>client']);

@@ -29,7 +29,8 @@ function check(name,cond,detail){out.push(`${cond?'PASS':'FAIL'}  ${name}${detai
  async function tryAs(k,sql,args){await q('SAVEPOINT t');await q(`SELECT set_config('request.jwt.claim.sub',$1,true)`,[U[k]]);await q('SET LOCAL ROLE authenticated');try{const r=await q(sql,args);await q('RESET ROLE');await q('RELEASE SAVEPOINT t');return {ok:true,r}}catch(e){await q('ROLLBACK TO SAVEPOINT t');await q('RESET ROLE');return {ok:false,e:e.message}}}
  const ins=`INSERT INTO wg_link_rates(project_id,link_kind,seller_party_id,buyer_party_id,subject_graph_node_id,amount,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)`;
  let r=await tryAs('owner',ins,[P,'supply',AG,CL,null,80,U.owner]); check('agency writes Agency->Client 80',r.ok,r.e);
- r=await tryAs('owner',ins,[P,'supply',SUB,AG,null,60,U.owner]); check('agency writes Sub->Agency 60 (buyer side)',r.ok,r.e);
+ r=await tryAs('owner',ins,[P,'supply',SUB,AG,null,61,U.owner]); check('agency (buyer) CANNOT write Sub->Agency: only the seller prices its link',!r.ok,r.e);
+ r=await tryAs('sub',ins,[P,'supply',SUB,AG,null,60,U.sub]); check('sub (seller) writes Sub->Agency 60',r.ok,r.e);
  r=await tryAs('sub',ins,[P,'employment',SUB,null,WILL,45,U.sub]); check('sub writes employment Sub->Will 45',r.ok,r.e);
  r=await tryAs('owner',ins,[P,'employment',SUB,null,WILL,99,U.owner]); check('agency CANNOT write the sub\'s employment rate',!r.ok,r.e);
  r=await tryAs('subworker',ins,[P,'supply',AG,CL,WILL,1,U.subworker]); check('worker CANNOT write a supply rate',!r.ok,r.e);
@@ -44,14 +45,30 @@ function check(name,cond,detail){out.push(`${cond?'PASS':'FAIL'}  ${name}${detai
  }
  r=await tryAs('client',`UPDATE wg_link_rates SET amount=1 WHERE seller_party_id=$1 AND buyer_party_id=$2 RETURNING id`,[SUB,AG]);
  check('client cannot update Sub->Agency (0 rows)',r.ok&&r.r.rowCount===0,r.e||('rows '+(r.r&&r.r.rowCount)));
+ r=await tryAs('client',`UPDATE wg_link_rates SET amount=1 WHERE seller_party_id=$1 AND buyer_party_id=$2 RETURNING id`,[AG,CL]);
+ check('client (buyer) cannot update Agency->Client (0 rows)',r.ok&&r.r.rowCount===0,r.e||('rows '+(r.r&&r.r.rowCount)));
+ r=await tryAs('owner',`UPDATE wg_link_rates SET amount=1 WHERE seller_party_id=$1 AND buyer_party_id=$2 RETURNING id`,[SUB,AG]);
+ check('agency (buyer) cannot update Sub->Agency (0 rows)',r.ok&&r.r.rowCount===0,r.e||('rows '+(r.r&&r.r.rowCount)));
  // Invoices (046)
- await q(`INSERT INTO wg_invoices(id,project_id,invoice_number,from_party_id,to_party_id,status,created_by,total,due_date) VALUES('i_viss',$1,'VISS',$2,$3,'draft',$4,480,current_date+30),('i_visa',$1,'VISA',$3,$5,'draft',$4,1280,current_date+30)`,[P,SUB,AG,U.owner,CL]).catch(async e=>{out.push('invoice seed error: '+e.message);});
- const invExp={owner:['VISA','VISS'],agworker:[],sub:['VISS'],subworker:[],client:['VISA'],outsider:[]};
- out.push('\nINVOICE VISIBILITY (wg_invoices SELECT, 046):');
- for(const k of Object.keys(invExp)){
-   const seen=await as(k,async()=> (await q('SELECT invoice_number n FROM wg_invoices ORDER BY 1')).rows.map(x=>x.n)).catch(e=>['ERR '+e.message]);
-   check(`${k} sees invoices ${JSON.stringify(invExp[k])}`,JSON.stringify(seen)===JSON.stringify(invExp[k]),'saw '+JSON.stringify(seen));
+ await q(`INSERT INTO wg_invoices(id,project_id,invoice_number,from_party_id,to_party_id,status,created_by,total,due_date) VALUES('i_viss',$1,'VISS',$2,$3,'draft',$6,480,current_date+30),('i_visa',$1,'VISA',$3,$5,'draft',$4,1280,current_date+30)`,[P,SUB,AG,U.owner,CL,U.sub]).catch(async e=>{out.push('invoice seed error: '+e.message);});
+ const has048=(await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='wg_invoices' AND column_name='issued_at') ok")).rows[0].ok;
+ const seeInvoices=async(label,invExp)=>{
+   out.push(`\nINVOICE VISIBILITY ${label}:`);
+   for(const k of Object.keys(invExp)){
+     const seen=await as(k,async()=> (await q('SELECT invoice_number n FROM wg_invoices ORDER BY 1')).rows.map(x=>x.n)).catch(e=>['ERR '+e.message]);
+     check(`${k} sees invoices ${JSON.stringify(invExp[k])}`,JSON.stringify(seen)===JSON.stringify(invExp[k]),'saw '+JSON.stringify(seen));
+   }
+ };
+ if(has048){
+   // Drafts: only the seller side reads them (048).
+   await seeInvoices('(both DRAFT, 048: buyer does not see drafts)',{owner:['VISA'],agworker:[],sub:['VISS'],subworker:[],client:[],outsider:[]});
+   await q("UPDATE wg_invoices SET status='issued' WHERE id IN ('i_viss','i_visa')");
+   const ia=(await q("SELECT count(*)::int n FROM wg_invoices WHERE id IN ('i_viss','i_visa') AND issued_at IS NOT NULL")).rows[0].n;
+   check('issuing sets issued_at on both',ia===2,'issued_at set on '+ia);
+   r=await tryAs('owner',`UPDATE wg_invoices SET issued_at=NULL WHERE id='i_visa' RETURNING issued_at`,[]);
+   check('issued_at cannot be cleared by the seller (refused or kept)',!r.ok||(r.r.rows[0]&&r.r.rows[0].issued_at!==null),r.e||JSON.stringify(r.r&&r.r.rows));
  }
+ await seeInvoices(has048?'(both ISSUED, 046+048)':'(046)',{owner:['VISA','VISS'],agworker:[],sub:['VISS'],subworker:[],client:['VISA'],outsider:[]});
  // Pass-through issue check (047): the same approved week on Sub->Agency AND Agency->Client.
  out.push('\nISSUE CHECK (047, per-seller once):');
  const has041=(await q("SELECT to_regprocedure('public.wg_invoice_line_amount(numeric,numeric)') IS NOT NULL ok")).rows[0].ok;
