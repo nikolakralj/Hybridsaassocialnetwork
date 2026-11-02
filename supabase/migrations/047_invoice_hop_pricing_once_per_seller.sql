@@ -11,7 +11,8 @@
 --     (worker-specific rate first, then the link's general rate); the legacy
 --     per-person bill rate applies only on the final hop (buyer bills nobody),
 --     so projects without link rates price exactly as under 041;
---   * "already billed" looks only at live invoices from the same seller.
+--   * "already billed" looks only at live invoices from the same seller;
+--   * each line names the worker (041 wrote only the week).
 -- And it lets a party's own decision-makers (044 wg_user_is_party_commercial:
 -- Owner/Editor or approver scoped to that party, or its org admin/finance/
 -- manager/approver) create invoices FROM their party, so the Sub can issue
@@ -285,7 +286,12 @@ BEGIN
       v_subtotal := v_subtotal + v_amount;
       v_lines := v_lines || jsonb_build_array(jsonb_build_object(
         'id', 'ts:' || v_key,
-        'description', 'Approved hours ' || v_week::text,
+        -- 047: name the worker, so a multi-person invoice is readable.
+        'description', 'Approved hours ' || v_week::text || COALESCE(' - ' || (
+          SELECT NULLIF(m.user_name, '') FROM wg_project_members m
+          WHERE m.project_id = NEW.project_id AND v_uid IS NOT NULL AND m.user_id = v_uid
+          ORDER BY m.accepted_at DESC NULLS LAST LIMIT 1
+        ), ''),
         'quantity', v_qty,
         'unitPrice', v_rate,
         'amount', v_amount,
