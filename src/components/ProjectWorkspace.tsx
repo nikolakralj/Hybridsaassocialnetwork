@@ -346,6 +346,13 @@ export function ProjectWorkspace({
     return currentMembership?.role || null;
   }, [currentMembership?.role, projectOwnerId, user?.id]);
   const canManageProject = currentProjectRole === "Owner" || currentProjectRole === "Editor";
+  // Month close and invoicing are the billing side of the project. Workers
+  // (Contributors) submit time; they don't close months or see invoices.
+  const BILLING_MODULE_IDS: ModuleId[] = ["close", "invoices"];
+  const hideBillingModules = currentProjectRole === "Contributor";
+  const visibleModules = hideBillingModules
+    ? enabledModules.filter((module) => !BILLING_MODULE_IDS.includes(module.id))
+    : enabledModules;
   const canInviteMembers = getInvitableRolesForRole(currentProjectRole).length > 0;
   // A project role opens the workspace; an accepted organization scope limits
   // which party the member may administer inside the shared supply chain.
@@ -511,6 +518,12 @@ export function ProjectWorkspace({
       setActiveTab("overview");
     }
   }, [activeTab, canManageProject]);
+
+  useEffect(() => {
+    if (hideBillingModules && (activeTab === "close" || activeTab === "invoices")) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, hideBillingModules]);
 
   useEffect(() => {
     const viewerMetaStorageKey = `workgraph-viewer-meta:${projectId}`;
@@ -807,7 +820,7 @@ export function ProjectWorkspace({
             {/* Tab List with (+) Button */}
             <div className="flex items-center gap-2 mb-6">
               <TabsList className="flex-1">
-                {enabledModules.map((module) => {
+                {visibleModules.map((module) => {
                   const Icon = module.icon;
                   return (
                     <TabsTrigger 
@@ -952,22 +965,26 @@ export function ProjectWorkspace({
 
             <TabsContent value="close" className="space-y-6">
               <Suspense fallback={tabLoadingFallback}>
+                {hideBillingModules ? null : (
                 <LazyCloseReadinessGate
                   projectId={projectId}
                   projectName={projectName}
                   canConfirmRates={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
                   members={teamMembers}
                 />
+                )}
               </Suspense>
             </TabsContent>
 
             <TabsContent value="invoices" className="space-y-6">
               <Suspense fallback={tabLoadingFallback}>
+                {hideBillingModules ? null : (
                 <LazyInvoicesWorkspace
                   projectId={projectId}
                   projectName={projectName}
                   canGenerateInvoices={currentProjectRole === "Owner" || currentProjectRole === "Editor"}
                 />
+                )}
               </Suspense>
             </TabsContent>
 
