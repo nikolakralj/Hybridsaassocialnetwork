@@ -22,9 +22,9 @@ export function ResultsStrip() {
     },
     {
       icon: Rocket,
-      number: "Open",
-      label: "Beta",
-      sublabel: "Free while we build in public",
+      number: "Pilot",
+      label: "Paid",
+      sublabel: "See pricing",
     },
   ];
 

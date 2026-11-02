@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
+import { useSearchParams } from "react-router";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
   Plus, Settings, Users, MessageSquare, X, MoreHorizontal, Network, ShieldCheck, ClipboardCheck
@@ -26,6 +27,7 @@ import { ProjectConfigurationDrawer } from "./projects/ProjectConfigurationDrawe
 import { addProjectMember, getMyProjectMembership, getProject, getProjectMembers } from "../utils/api/projects-api";
 import { assignProjectMemberAsWorker } from "../utils/api/organizations-api";
 import { getInvitableRolesForRole } from "../utils/collaboration/permissions";
+import { withWorkspaceSearch, workspaceTab } from "../utils/workspace-link";
 import { useAuth } from "../contexts/AuthContext";
 import { useTimesheetStore } from "../contexts/TimesheetDataContext";
 import type { ProjectMember, ProjectRole } from "../types/collaboration";
@@ -132,53 +134,37 @@ export function ProjectWorkspace({
   projectName: propProjectName,
 }: ProjectWorkspaceProps) {
   const { user, accessToken } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const storedProjectId = sessionStorage.getItem('currentProjectId');
-  const storedProjectName = sessionStorage.getItem('currentProjectName');
+  const queryProjectId = searchParams.get('projectId')?.trim() || '';
+  const storedIsDemo = !storedProjectId || storedProjectId === 'proj-alpha';
 
-  // Never fall back to demo project IDs (e.g. proj-alpha), otherwise real workspaces
-  // get silently blended with seed graph/timesheet data.
-  const buildFallbackProjectId = () => {
-    const fromName = propProjectName || storedProjectName;
-    if (!fromName) return '';
-    const slug = fromName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    return slug ? `proj-${slug}` : '';
-  };
-
-  const fallbackProjectId = buildFallbackProjectId();
-  const shouldReplaceDemoProjectId =
-    storedProjectId === 'proj-alpha' &&
-    !!fallbackProjectId &&
-    (propProjectName || storedProjectName) !== 'Mobile App Redesign';
-
-  const resolvedProjectId =
-    propProjectId ||
-    (shouldReplaceDemoProjectId ? fallbackProjectId : storedProjectId) ||
-    fallbackProjectId;
-
-  const projectId = resolvedProjectId || '';
+  const projectId = propProjectId || queryProjectId || (storedIsDemo ? '' : storedProjectId);
   const [projectName, setProjectName] = useState(
     propProjectName || sessionStorage.getItem('currentProjectName') || 'Project'
   );
 
   useEffect(() => {
     if (!projectId) return;
-    const stored = sessionStorage.getItem('currentProjectId');
-    if (!stored || shouldReplaceDemoProjectId) {
-      sessionStorage.setItem('currentProjectId', projectId);
+    // The query-selected project replaces whatever the session stored, before
+    // timesheets and other listeners reread currentProjectId.
+    const previousId = sessionStorage.getItem('currentProjectId');
+    sessionStorage.setItem('currentProjectId', projectId);
+    if (previousId && previousId !== projectId) {
+      sessionStorage.removeItem('currentProjectName');
     }
     window.dispatchEvent(new CustomEvent('workgraph-project-changed', {
       detail: { projectId },
     }));
-  }, [projectId, shouldReplaceDemoProjectId]);
+  }, [projectId]);
   
-  // Load project name from API if not provided
+  // The stored name belongs to the previous project until this one loads.
   useEffect(() => {
-    if (propProjectName) return;
-    const stored = sessionStorage.getItem('currentProjectName');
-    if (stored) { setProjectName(stored); return; }
-    if (projectId) {
-      setProjectName(`Project ${projectId.slice(0, 8)}`);
+    if (propProjectName) {
+      setProjectName(propProjectName);
+      return;
     }
+    setProjectName(projectId ? `Project ${projectId.slice(0, 8)}` : 'Project');
   }, [projectId, propProjectName]);
 
   // Get hash params for deep linking (works in Figma Make iframe)
@@ -307,7 +293,30 @@ export function ProjectWorkspace({
     },
   ]);
 
-  const [activeTab, setActiveTab] = useState<ModuleId>("overview");
+  const [activeTab, setActiveTab] = useState<ModuleId>(
+    workspaceTab(searchParams.get('tab')) as ModuleId,
+  );
+
+  useEffect(() => {
+    if (!projectId || searchParams.get('projectId') === projectId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('projectId', projectId);
+    setSearchParams(next, { replace: true });
+  }, [projectId, searchParams, setSearchParams]);
+
+  const openTab = (moduleId: ModuleId) => {
+    setActiveTab(moduleId);
+    setSearchParams((prev) => withWorkspaceSearch(prev, { tab: moduleId }), { replace: true });
+  };
+
+  useEffect(() => {
+    const requested = searchParams.get('tab');
+    const tab = workspaceTab(requested) as ModuleId;
+    setActiveTab((current) => (current === tab ? current : tab));
+    if (requested && requested !== tab) {
+      setSearchParams((prev) => withWorkspaceSearch(prev, { tab }), { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -358,7 +367,7 @@ export function ProjectWorkspace({
 
   const enableAndOpenModule = (moduleId: ModuleId) => {
     setModules(prev => prev.map(m => m.id === moduleId ? { ...m, isEnabled: true } : m));
-    setActiveTab(moduleId);
+    openTab(moduleId);
   };
 
   const handleOpenTeam = () => {
@@ -439,6 +448,11 @@ export function ProjectWorkspace({
       try {
         const data = await getProject(projectId, accessToken);
         if (!cancelled) {
+          const loadedName = data?.project?.name;
+          if (loadedName) {
+            setProjectName(loadedName);
+            sessionStorage.setItem('currentProjectName', loadedName);
+          }
           setProjectOwnerId(data?.project?.ownerId || null);
           const graphNodes = Array.isArray(data?.project?.graph?.nodes) ? data.project.graph.nodes : [];
           const graphEdges = Array.isArray(data?.project?.graph?.edges) ? data.project.graph.edges : [];
@@ -464,7 +478,7 @@ export function ProjectWorkspace({
 
   useEffect(() => {
     if (!canManageProject && activeTab === "team") {
-      setActiveTab("overview");
+      openTab("overview");
     }
   }, [activeTab, canManageProject]);
 
@@ -631,7 +645,7 @@ export function ProjectWorkspace({
   // Listen for custom tab change events (from deep links)
   useEffect(() => {
     const handleTabChange = (event: CustomEvent<ModuleId>) => {
-      setActiveTab(event.detail);
+      openTab(event.detail);
     };
     
     window.addEventListener('changeTab', handleTabChange as EventListener);
@@ -646,7 +660,7 @@ export function ProjectWorkspace({
     const module = modules.find(m => m.id === moduleId);
     if (module && !module.isEnabled) {
       toast.success(`${module.name} module added to project`);
-      setActiveTab(moduleId);
+      openTab(moduleId);
     } else if (module && module.isEnabled) {
       toast.success(`${module.name} module removed`);
     }
@@ -749,7 +763,7 @@ export function ProjectWorkspace({
       {/* Modular Tabs */}
       <div className="max-w-7xl mx-auto px-6 py-6">
         <MonthProvider key={projectId}>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ModuleId)}>
+          <Tabs value={activeTab} onValueChange={(v) => openTab(v as ModuleId)}>
             {/* Tab List with (+) Button */}
             <div className="flex items-center gap-2 mb-6">
               <TabsList className="flex-1">
@@ -873,7 +887,6 @@ export function ProjectWorkspace({
                   ownerId={user?.id || "current-user"}
                   ownerName={(user?.user_metadata?.name as string) || (user?.email as string) || "Current User"}
                   contractors={[]}
-                  hourlyRate={95}
                   viewerOverride={effectiveViewer ? {
                     id: effectiveViewer.nodeId,
                     type: effectiveViewer.type,

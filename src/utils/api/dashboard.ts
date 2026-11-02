@@ -19,6 +19,7 @@ import type {
 } from '../../types/dashboard';
 import { listProjects } from './projects-api';
 import { listContracts } from './contracts-api';
+import { moneyFromHours } from '../dashboard-earnings';
 import { listTimesheets } from './timesheets-api';
 
 const SHOW_SOCIAL_FEATURES = import.meta.env.VITE_SHOW_SOCIAL_FEATURES === 'true';
@@ -52,8 +53,7 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
     let totalHours = 0;
     let billableHours = 0;
     let submittedCount = 0;
-    let submittedValue = 0;
-
+    let submittedHours = 0;
     timesheetWeeks.forEach((week: any) => {
       const weekHours = (week.days || []).reduce((sum: number, d: any) => sum + (d.hours || 0), 0);
       totalHours += weekHours;
@@ -61,29 +61,28 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
 
       if (week.status === 'submitted') {
         submittedCount++;
-        // Estimate value at average rate if contracts exist
-        const avgRate = activeContracts.length > 0
-          ? activeContracts.reduce((sum: number, c: any) => sum + (c.baseHourlyRate || 0), 0) / activeContracts.length
-          : 100;
-        submittedValue += weekHours * avgRate;
+        submittedHours += weekHours;
       }
     });
 
-    // Estimate earnings based on approved weeks
-    const approvedWeeks = timesheetWeeks.filter((w: any) => w.status === 'approved');
-    const avgRate = activeContracts.length > 0
-      ? activeContracts.reduce((sum: number, c: any) => sum + (c.baseHourlyRate || 0), 0) / activeContracts.length
-      : 100;
-    const currentEarnings = approvedWeeks.reduce((sum: number, w: any) => {
-      const weekHours = (w.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0);
-      return sum + weekHours * avgRate;
-    }, 0);
+    const approvedHours = timesheetWeeks
+      .filter((week: any) => week.status === 'approved')
+      .reduce((sum: number, week: any) => (
+        sum + (week.days || []).reduce((s: number, d: any) => s + (d.hours || 0), 0)
+      ), 0);
+    const savedRates = activeContracts.map((contract: any) => ({
+      baseHourlyRate: contract.baseHourlyRate,
+      currency: contract.currency,
+    }));
+    const earnings = moneyFromHours(approvedHours, savedRates);
+    const pending = moneyFromHours(submittedHours, savedRates);
 
     return {
       earnings: {
-        current_period: Math.round(currentEarnings) || 0,
-        previous_period: 0, // No historical comparison yet
-        currency: 'USD',
+        current_period: earnings.amount,
+        previous_period: 0,
+        currency: earnings.currency,
+        money_known: earnings.known,
         period: 'month',
         trend: 0,
       },
@@ -95,8 +94,9 @@ async function fetchRealWorkStats(accessToken?: string | null): Promise<WorkStat
       },
       pending_approvals: {
         count: submittedCount,
-        total_value: Math.round(submittedValue),
-        currency: 'USD',
+        total_value: pending.amount,
+        currency: pending.currency,
+        money_known: pending.known,
       },
       active_contracts: {
         count: activeContracts.length,
@@ -188,7 +188,8 @@ const FALLBACK_WORK_STATS: WorkStats = {
   earnings: {
     current_period: 0,
     previous_period: 0,
-    currency: 'USD',
+    currency: '',
+    money_known: false,
     period: 'month',
     trend: 0,
   },
@@ -201,7 +202,8 @@ const FALLBACK_WORK_STATS: WorkStats = {
   pending_approvals: {
     count: 0,
     total_value: 0,
-    currency: 'USD',
+    currency: '',
+    money_known: false,
   },
   active_contracts: {
     count: 0,

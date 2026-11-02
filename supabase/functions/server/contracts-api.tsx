@@ -3,6 +3,7 @@
 // previous KV-backed version so the frontend requires zero changes.
 import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { explicitPositiveRate, explicitWorkTypeRates } from "./contract-rate.ts";
 
 const contractsRouter = new Hono();
 
@@ -307,7 +308,10 @@ contractsRouter.post("/make-server-f8b491be/api/contracts", async (c) => {
     const body = await c.req.json();
     const now = new Date().toISOString();
     const contractId = generateId();
-    const baseRate = body.baseHourlyRate || 0;
+    const baseRate = explicitPositiveRate(body.baseHourlyRate);
+    if (baseRate == null) {
+      return c.json({ error: "Enter an hourly rate. A missing rate is not filled in." }, 400);
+    }
     const projectId = normalizeString(body.projectId) || null;
 
     if (projectId) {
@@ -327,8 +331,8 @@ contractsRouter.post("/make-server-f8b491be/api/contracts", async (c) => {
       recipientType: body.recipientType || "company",
       recipientName: body.recipientName || "Client",
       baseHourlyRate: baseRate,
-      // Only rates someone entered; nothing is derived from the base rate.
-      workTypeRates: body.workTypeRates || { regular: baseRate },
+      // Only rates someone entered. The regular rate is the hourly rate they sent.
+      workTypeRates: explicitWorkTypeRates(body.workTypeRates) || { regular: baseRate },
       contractNumber: body.contractNumber || `CTR-${Date.now().toString().slice(-6)}`,
       billingCycle: body.billingCycle || "monthly",
       hideRateFromProvider: body.hideRateFromProvider || false,
@@ -414,7 +418,13 @@ contractsRouter.put("/make-server-f8b491be/api/contracts/:contractId", async (c)
     if (body.recipientName !== undefined) updateData.client_name = body.recipientName;
     if (body.recipientEmail !== undefined) updateData.client_email = body.recipientEmail;
     if (body.status !== undefined) updateData.status = body.status;
-    if (body.baseHourlyRate !== undefined) updateData.rate = body.baseHourlyRate;
+    if (body.baseHourlyRate !== undefined) {
+      const nextRate = explicitPositiveRate(body.baseHourlyRate);
+      if (nextRate == null) {
+        return c.json({ error: "Enter an hourly rate. A missing rate is not filled in." }, 400);
+      }
+      updateData.rate = nextRate;
+    }
     if (body.currency !== undefined) updateData.currency = body.currency;
     if (body.effectiveDate !== undefined) updateData.start_date = body.effectiveDate.slice(0, 10);
     if (body.expirationDate !== undefined) updateData.end_date = body.expirationDate ? body.expirationDate.slice(0, 10) : null;
