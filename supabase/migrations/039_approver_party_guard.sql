@@ -102,6 +102,15 @@ AS $$
         )
     )
     OR public.wg_user_can_access_project_party(p_project_id, p_party_id, NULL)
+    OR EXISTS (
+      SELECT 1
+      FROM wg_projects p
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.graph->'nodes', '[]'::jsonb)) n
+      WHERE p.id = p_project_id
+        AND n->>'type' = 'person'
+        AND COALESCE(n->'data'->>'partyId', n->'data'->>'orgId') = p_party_id
+        AND public.wg_graph_node_user_id(p.id, n) = auth.uid()
+    )
   );
 $$;
 
