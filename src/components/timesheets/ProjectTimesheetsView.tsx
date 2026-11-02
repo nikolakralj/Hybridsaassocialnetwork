@@ -67,6 +67,18 @@ function getNameDir(): NameDir {
   return cachedNameDir;
 }
 
+// Weeks loaded from the server are keyed by the worker's account id; the name
+// directory is keyed by graph person node id. Without this alias a manager's
+// "All parties" view listed people as raw UUIDs under "Other".
+const personAlias: Record<string, string> = {};
+function rememberPersonAlias(accountId: string, graphNodeId?: string) {
+  if (accountId && graphNodeId && accountId !== graphNodeId) personAlias[accountId] = graphNodeId;
+}
+function dirEntry(id: string) {
+  const dir = getNameDir();
+  return dir[id] || (personAlias[id] ? dir[personAlias[id]] : undefined);
+}
+
 function getApprovalParties(): ApprovalParty[] {
   return cachedApprovalParties;
 }
@@ -76,7 +88,7 @@ function buildTimesheetSubjectId(personId: string, weekStart: string): string {
 }
 
 function personName(id: string): string {
-  const entry = getNameDir()[id];
+  const entry = dirEntry(id);
   if (entry?.name) return entry.name;
   return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).slice(0, 24);
 }
@@ -84,13 +96,13 @@ function personInitials(id: string): string {
   return personName(id).split(' ').map(n => n[0]).join('');
 }
 function personOrgId(id: string): string | undefined {
-  const fromDir = getNameDir()[id]?.orgId;
+  const fromDir = dirEntry(id)?.orgId;
   if (fromDir) return fromDir;
   if (id.startsWith('org-')) return id;
   return undefined;
 }
 function personViewerType(id: string): string | undefined {
-  const fromDir = getNameDir()[id]?.type;
+  const fromDir = dirEntry(id)?.type;
   if (fromDir && fromDir !== 'party') return fromDir;
   if (id.startsWith('org-')) return 'company';
   return undefined;
@@ -111,8 +123,14 @@ function getOrgMap(): Record<string, OrgInfo> {
   const map: Record<string, OrgInfo> = {};
   let colorIdx = 0;
 
-  Object.entries(getNameDir()).forEach(([id, entry]) => {
-    if (entry.type === 'party' && !map[id]) {
+  // Org entries can arrive typed 'party' or as a viewer type ('company',
+  // 'agency', 'client'); treat anything referenced as a person's orgId as an org.
+  const dir = getNameDir();
+  const referencedOrgIds = new Set(
+    Object.values(dir).map((e) => e.orgId).filter((v): v is string => Boolean(v)),
+  );
+  Object.entries(dir).forEach(([id, entry]) => {
+    if ((entry.type === 'party' || referencedOrgIds.has(id)) && !map[id]) {
       const [color, bgColor] = PALETTE[colorIdx % PALETTE.length];
       map[id] = { id, name: entry.name, color, bgColor };
       colorIdx++;
@@ -387,7 +405,10 @@ export function ProjectTimesheetsView({ projectId, viewerOverride }: ProjectTime
     }
 
     const byPerson = new Map<string, StoredWeek[]>();
-    filtered.forEach(w => { const arr = byPerson.get(w.personId) || []; arr.push(w); byPerson.set(w.personId, arr); });
+    filtered.forEach(w => {
+      rememberPersonAlias(w.personId, w.graphNodeId);
+      const arr = byPerson.get(w.personId) || []; arr.push(w); byPerson.set(w.personId, arr);
+    });
     const flatPW = [...byPerson.entries()].sort((a, b) => personName(a[0]).localeCompare(personName(b[0])));
 
     const byOrg = new Map<string, { org: OrgInfo; people: [string, StoredWeek[]][] }>();
