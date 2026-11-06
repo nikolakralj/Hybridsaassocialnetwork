@@ -1,5 +1,6 @@
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
 import { userDisplayName } from "../utils/auth/display-name";
+import { parseTabNavigation, type FocusPerson } from "../utils/navigation/focus-person";
 import {
   LayoutDashboard, Clock, FileText, CheckSquare, BarChart3, Receipt,
   Plus, Settings, Users, MessageSquare, X, Network, ShieldCheck, ClipboardCheck
@@ -310,6 +311,8 @@ export function ProjectWorkspace({
   ]);
 
   const [activeTab, setActiveTab] = useState<ModuleId>("overview");
+  // Person picked on the graph ("View Timesheets" on Rodman); narrows the tab it opens.
+  const [focusPerson, setFocusPerson] = useState<FocusPerson | null>(null);
   const [isAddModuleOpen, setIsAddModuleOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectConfiguration | undefined>();
@@ -722,8 +725,11 @@ export function ProjectWorkspace({
 
   // Listen for custom tab change events (from deep links)
   useEffect(() => {
-    const handleTabChange = (event: CustomEvent<ModuleId>) => {
-      setActiveTab(event.detail);
+    const handleTabChange = (event: CustomEvent<unknown>) => {
+      const navigation = parseTabNavigation(event.detail);
+      if (!navigation) return;
+      setActiveTab(navigation.tab as ModuleId);
+      setFocusPerson(navigation.focusPerson);
     };
     
     window.addEventListener('changeTab', handleTabChange as EventListener);
@@ -1001,6 +1007,8 @@ export function ProjectWorkspace({
                     orgId: effectiveViewer.orgId,
                   } : undefined}
                   serverScoped={!canManageProject}
+                  focusPerson={focusPerson}
+                  onClearFocus={() => setFocusPerson(null)}
                 />
               </Suspense>
             </TabsContent>
@@ -1012,6 +1020,8 @@ export function ProjectWorkspace({
                   projectName={projectName}
                   viewerName={effectiveViewer?.name}
                   viewerNodeId={effectiveViewer?.nodeId}
+                  focusPerson={focusPerson}
+                  onClearFocus={() => setFocusPerson(null)}
                 />
               </Suspense>
             </TabsContent>

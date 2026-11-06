@@ -49,6 +49,7 @@ import { ALLOW_GRAPH_ADMIN_VIEW } from '../workgraph/graph-visibility';
 import { getLatestPendingApproval } from '../../utils/api/approvals-supabase';
 import { listProjects } from '../../utils/api/projects-api';
 import { createClient } from '../../utils/supabase/client';
+import { weekMatchesFocus, type FocusPerson } from '../../utils/navigation/focus-person';
 
 const timesheetSupabase = createClient();
 
@@ -229,13 +230,16 @@ interface ProjectTimesheetsViewProps {
    * it: its own weeks plus the weeks it is an approver on.
    */
   serverScoped?: boolean;
+  /** Person picked on the graph ("View Timesheets" on Rodman): show only them. */
+  focusPerson?: FocusPerson | null;
+  onClearFocus?: () => void;
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped = false }: ProjectTimesheetsViewProps) {
+export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped = false, focusPerson = null, onClearFocus }: ProjectTimesheetsViewProps) {
   const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
   const projectNameDir = nameDirectory[projectId] ?? EMPTY_NAME_DIR;
   const projectApprovalParties = approvalDirectory[projectId] ?? EMPTY_APPROVAL_PARTIES;
@@ -462,6 +466,11 @@ export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped 
       filtered = allWeeks;
     }
 
+    // Graph focus narrows what this viewer may already see; it never widens it.
+    if (focusPerson) {
+      filtered = filtered.filter(w => weekMatchesFocus(w, focusPerson));
+    }
+
     const byPerson = new Map<string, StoredWeek[]>();
     filtered.forEach(w => {
       rememberPersonAlias(w.personId, w.graphNodeId);
@@ -479,7 +488,7 @@ export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped 
 
     return { orgGroups: [...byOrg.values()], flatPersonWeeks: flatPW };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir, serverScoped, snapshotVersion]);
+  }, [store.version, monthKey, viewerId, isAdmin, projectApprovalParties, projectNameDir, serverScoped, snapshotVersion, focusPerson]);
 
   const submittedWeekRefs = useMemo(() => (
     flatPersonWeeks.flatMap(([personId, weeks]) =>
@@ -707,6 +716,19 @@ export function ProjectTimesheetsView({ projectId, viewerOverride, serverScoped 
 
   return (
     <div className="space-y-4">
+      {focusPerson ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+          <p className="m-0 text-sm text-blue-950">
+            Showing timesheets for <span className="font-medium">{focusPerson.name || personName(focusPerson.id)}</span>
+            {flatPersonWeeks.length === 0 ? ' — none you can see this month.' : ''}
+          </p>
+          {onClearFocus ? (
+            <Button size="sm" variant="outline" className="h-7" onClick={onClearFocus}>
+              Show everyone
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
