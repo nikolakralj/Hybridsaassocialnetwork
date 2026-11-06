@@ -7,12 +7,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ApprovalsWorkbench } from "./ApprovalsWorkbench";
 import { DevApprovalChainPanel } from "./DevApprovalChainPanel";
 import { useAuth } from "../../contexts/AuthContext";
+import type { FocusPerson } from "../../utils/navigation/focus-person";
 
 interface ProjectApprovalsTabProps {
   projectId: string;
   projectName: string;
   viewerName?: string;
   viewerNodeId?: string;
+  /** Person picked on the graph; the queue shows only their submissions. */
+  focusPerson?: FocusPerson | null;
+  onClearFocus?: () => void;
 }
 
 type QueueStatus = "all" | "pending" | "approved" | "rejected";
@@ -29,6 +33,8 @@ export function ProjectApprovalsTab({
   projectName,
   viewerName,
   viewerNodeId,
+  focusPerson = null,
+  onClearFocus,
 }: ProjectApprovalsTabProps) {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<"queue" | "history" | "analytics">("queue");
@@ -116,6 +122,8 @@ export function ProjectApprovalsTab({
           viewerName={isPlaceholderViewer ? undefined : viewerName}
           viewScope="inbox"
           embedded
+          focusPerson={focusPerson}
+          onClearFocus={onClearFocus}
         />
       </TabsContent>
 

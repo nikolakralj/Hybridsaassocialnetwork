@@ -646,7 +646,7 @@ function TimesheetSection({
   month: string;
   viewer: ViewerIdentity;
   edges: VisibleEdge[];
-  onNavigate: (target: string) => void;
+  onNavigate: (target: string, context?: Record<string, string>) => void;
 }) {
   const store = useTimesheetStoreSafe();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -793,7 +793,7 @@ function TimesheetSection({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => onNavigate('timesheets')}
+          onClick={() => onNavigate('timesheets', { personId })}
           className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
         >
           View all <ExternalLink className="h-2.5 w-2.5" />
@@ -915,7 +915,7 @@ function TimesheetSection({
                   </div>
                   {/* Escape hatch to full editor */}
                   <button
-                    onClick={() => onNavigate('timesheets')}
+                    onClick={() => onNavigate('timesheets', { personId })}
                     className="mt-2.5 w-full flex items-center justify-center gap-1.5 text-[10px] text-blue-600 hover:text-blue-700 font-medium py-1.5 rounded-md hover:bg-blue-50 transition-colors"
                   >
                     <Clock className="h-3 w-3" />
@@ -1001,7 +1001,7 @@ function TimesheetSection({
 
                   {/* Escape hatch */}
                   <button
-                    onClick={() => onNavigate('timesheets')}
+                    onClick={() => onNavigate('timesheets', { personId })}
                     className="w-full flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground hover:text-blue-600 font-medium py-1 rounded-md hover:bg-blue-50/50 transition-colors"
                   >
                     Need start/end times or breaks? Open full timesheet editor
@@ -1077,7 +1077,7 @@ function ContractsSection({
 }: {
   personId: string;
   viewer: ViewerIdentity;
-  onNavigate: (target: string) => void;
+  onNavigate: (target: string, context?: Record<string, string>) => void;
 }) {
   const contracts = PERSON_CONTRACTS[personId];
   if (!contracts || contracts.length === 0) return null;
@@ -1094,7 +1094,7 @@ function ContractsSection({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => onNavigate('contracts')}
+          onClick={() => onNavigate('contracts', { personId })}
           className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
         >
           View all <ExternalLink className="h-2.5 w-2.5" />
@@ -1105,7 +1105,7 @@ function ContractsSection({
         {contracts.map(c => (
           <button
             key={c.id}
-            onClick={() => onNavigate('contracts')}
+            onClick={() => onNavigate('contracts', { personId })}
             className="w-full flex items-start gap-2.5 px-2.5 py-2.5 rounded-lg hover:bg-muted/40 transition-colors text-left group border border-transparent hover:border-border"
           >
             <div className="w-7 h-7 rounded-md bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
@@ -1193,7 +1193,7 @@ function QuickActions({
   onNavigate,
 }: {
   node: VisibleNode;
-  onNavigate: (target: string) => void;
+  onNavigate: (target: string, context?: Record<string, string>) => void;
 }) {
   const actions: { label: string; icon: React.ReactNode; target: string; color: string }[] = [];
 
@@ -1226,7 +1226,7 @@ function QuickActions({
         {actions.map(action => (
           <button
             key={action.label}
-            onClick={() => onNavigate(action.target)}
+            onClick={() => onNavigate(action.target, node.type === 'person' ? { personId: node.id } : undefined)}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[12px] font-medium transition-all ${action.color}`}
           >
             {action.icon}
@@ -1472,7 +1472,23 @@ export function NodeDetailDrawer({
   ownPartyIds,
 }: NodeDetailDrawerProps) {
   const node = nodes.find(n => n.id === selectedId);
-  
+
+  // Sections name the person by graph node id; add the linked account and the
+  // display name so the target tab can match weeks stored under either id.
+  const navigateWithPerson = (target: string, context?: Record<string, string>) => {
+    if (!context?.personId) {
+      onNavigate(target, context);
+      return;
+    }
+    const personNode = nodes.find(n => n.id === context.personId);
+    const data = (personNode?.data || {}) as Record<string, unknown>;
+    onNavigate(target, {
+      ...context,
+      ...(typeof data.userId === 'string' && data.userId ? { personUserId: data.userId } : {}),
+      ...(typeof data.name === 'string' && data.name ? { personName: data.name } : {}),
+    });
+  };
+
   // Fallback when node not found in filtered list
   if (!node) {
     return (
@@ -1653,7 +1669,7 @@ export function NodeDetailDrawer({
               month={selectedMonth}
               viewer={viewer}
               edges={edges}
-              onNavigate={onNavigate}
+              onNavigate={navigateWithPerson}
             />
           )}
 
@@ -1662,7 +1678,7 @@ export function NodeDetailDrawer({
             <ContractsSection
               personId={node.id}
               viewer={viewer}
-              onNavigate={onNavigate}
+              onNavigate={navigateWithPerson}
             />
           )}
 
@@ -1754,7 +1770,7 @@ export function NodeDetailDrawer({
           <Separator />
 
           {/* Quick Actions */}
-          <QuickActions node={node} onNavigate={onNavigate} />
+          <QuickActions node={node} onNavigate={navigateWithPerson} />
         </div>
       </div>
     </div>

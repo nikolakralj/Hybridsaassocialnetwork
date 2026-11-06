@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { navigateToTab } from '../../utils/navigation/focus-person';
 import { userDisplayName } from '../../utils/auth/display-name';
 import {
   Building2,
@@ -2065,9 +2066,10 @@ export function WorkGraphBuilder({
   }, [filteredEdges, currentSnapshot]);
 
   // Navigation handler - dispatches custom event to ProjectWorkspace
-  const handleNavigate = useCallback((target: string) => {
-    const event = new CustomEvent('changeTab', { detail: target });
-    window.dispatchEvent(event);
+  const handleNavigate = useCallback((target: string, context?: Record<string, string>) => {
+    navigateToTab(target, context?.personId
+      ? { id: context.personId, userId: context.personUserId, name: context.personName }
+      : null);
   }, []);
 
   // Stats

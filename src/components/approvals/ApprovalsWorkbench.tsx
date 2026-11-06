@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { approvalMatchesFocus, type FocusPerson } from "../../utils/navigation/focus-person";
 import { userDisplayName } from '../../utils/auth/display-name';
 import {
   AlertTriangle,
@@ -107,6 +108,9 @@ interface ApprovalsWorkbenchProps {
   viewerName?: string;
   viewScope?: "inbox" | "submitted" | "all";
   embedded?: boolean;
+  /** Person picked on the graph: show only their submissions. */
+  focusPerson?: FocusPerson | null;
+  onClearFocus?: () => void;
 }
 
 type WorkbenchStatus = "all" | "pending" | "approved" | "rejected";
@@ -201,6 +205,8 @@ export function ApprovalsWorkbench({
   viewerName,
   viewScope = "inbox",
   embedded = false,
+  focusPerson = null,
+  onClearFocus,
 }: ApprovalsWorkbenchProps = {}) {
   const { user } = useAuth();
   const { nameDirectory, approvalDirectory, loadGraphContext } = useWorkGraphContext();
@@ -465,6 +471,8 @@ export function ApprovalsWorkbench({
         const presentedStatus = viewScope === "submitted" ? normalizeSubmittedStatus(item.status) : item.status;
         if (effectiveStatusFilter !== "all" && presentedStatus !== effectiveStatusFilter) return false;
         if (typeFilter !== "all" && item.objectType !== typeFilter) return false;
+        // Applied after the queue's own permission scoping: narrows, never widens.
+        if (focusPerson && !approvalMatchesFocus(item, focusPerson)) return false;
         return true;
       })
       .sort((a, b) => {
@@ -481,7 +489,7 @@ export function ApprovalsWorkbench({
         if (sortPreference === "oldest") return aTs - bTs;
         return bTs - aTs;
       });
-  }, [effectiveStatusFilter, items, searchQuery, sortBy, typeFilter, viewScope]);
+  }, [effectiveStatusFilter, focusPerson, items, searchQuery, sortBy, typeFilter, viewScope]);
 
   const stats = useMemo(
     () => ({
@@ -895,6 +903,19 @@ export function ApprovalsWorkbench({
             </div>
           </div>
         )}
+
+        {focusPerson ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+            <p className="m-0 text-sm text-blue-950">
+              Showing approvals for <span className="font-medium">{focusPerson.name || "the selected person"}</span>
+            </p>
+            {onClearFocus ? (
+              <Button size="sm" variant="outline" className="h-7" onClick={onClearFocus}>
+                Show everyone
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-4">
           {loading ? (
