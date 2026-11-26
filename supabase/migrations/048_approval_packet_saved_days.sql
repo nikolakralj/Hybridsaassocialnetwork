@@ -33,7 +33,7 @@ BEGIN
   SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
     'day', d->>'day',
     'hours', coalesce(public.wg_safe_numeric(d->>'totalHours'), public.wg_safe_numeric(d->>'hours'), 0),
-    'notes', d->>'notes'
+    'notes', coalesce(d->>'notes', d->>'note')
   )) ORDER BY ord), '[]'::jsonb) INTO v_summary
   FROM jsonb_array_elements(v_days) WITH ORDINALITY AS day_rows(d, ord);
 
