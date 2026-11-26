@@ -12,6 +12,8 @@ DECLARE
   v_week public.wg_timesheet_weeks%ROWTYPE;
   v_days jsonb;
   v_summary jsonb;
+  v_last_day integer;
+  v_day_hours numeric;
 BEGIN
   IF NEW.subject_type <> 'timesheet' THEN
     RETURN NEW;
@@ -30,12 +32,22 @@ BEGIN
 
   v_days := CASE WHEN jsonb_typeof(v_week.data->'days') = 'array'
     THEN v_week.data->'days' ELSE '[]'::jsonb END;
+  WITH saved AS (
+    SELECT d, ord,
+      coalesce(public.wg_safe_numeric(d->>'totalHours'), public.wg_safe_numeric(d->>'hours'), 0) AS hours,
+      CASE lower(left(trim(d->>'day'), 3))
+        WHEN 'mon' THEN 0 WHEN 'tue' THEN 1 WHEN 'wed' THEN 2 WHEN 'thu' THEN 3
+        WHEN 'fri' THEN 4 WHEN 'sat' THEN 5 WHEN 'sun' THEN 6
+        ELSE least(ord - 1, 6)::integer
+      END AS day_offset
+    FROM jsonb_array_elements(v_days) WITH ORDINALITY AS day_rows(d, ord)
+  )
   SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
     'day', d->>'day',
-    'hours', coalesce(public.wg_safe_numeric(d->>'totalHours'), public.wg_safe_numeric(d->>'hours'), 0),
+    'hours', hours,
     'notes', coalesce(d->>'notes', d->>'note')
-  )) ORDER BY ord), '[]'::jsonb) INTO v_summary
-  FROM jsonb_array_elements(v_days) WITH ORDINALITY AS day_rows(d, ord);
+  )) ORDER BY ord), '[]'::jsonb), max(day_offset), sum(hours)
+  INTO v_summary, v_last_day, v_day_hours FROM saved;
 
   -- Billable hours have no authoritative stored aggregate yet. Leave them
   -- unknown instead of retaining a second caller-supplied hours claim.
@@ -44,9 +56,9 @@ BEGIN
       THEN NEW.subject_snapshot ELSE '{}'::jsonb END
     - 'billableHours'
   ) || jsonb_build_object(
-    'hours', v_week.total_hours,
+    'hours', coalesce(v_week.total_hours, public.wg_safe_numeric(v_week.data->>'totalHours'), v_day_hours, 0),
     'periodStart', v_week.week_start,
-    'periodEnd', v_week.week_start + 6,
+    'periodEnd', v_week.week_start + coalesce(v_last_day, 4),
     'daySummary', v_summary
   );
   RETURN NEW;

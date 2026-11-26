@@ -89,7 +89,7 @@ BEGIN
   IF s->'daySummary' IS DISTINCT FROM '[{"day":"Mon","hours":8}]'::jsonb
      OR s->>'hours' IS DISTINCT FROM '8'
      OR s->>'periodStart' IS DISTINCT FROM '2026-09-07'
-     OR s->>'periodEnd' IS DISTINCT FROM '2026-09-13'
+     OR s->>'periodEnd' IS DISTINCT FROM '2026-09-07'
      OR s ? 'billableHours' THEN
     RAISE EXCEPTION 'Caller daily facts survived submission: %', s;
   END IF;
@@ -109,7 +109,7 @@ RESET ROLE;
 
 -- Rebuilding a copied snapshot must take notes from the saved day too.
 UPDATE public.wg_timesheet_weeks
-SET data = jsonb_set(data, '{days}', '[{"day":"Mon","hours":4,"notes":"saved note"}]')
+SET data = jsonb_set(data, '{days}', '[{"day":"Mon","hours":4,"notes":"saved note"},{"day":"Sun","hours":0}]')
 WHERE project_id = 'proj_reg_048' AND week_start = DATE '2026-09-14';
 SET LOCAL ROLE authenticated;
 DO $$
@@ -118,8 +118,9 @@ BEGIN
   PERFORM public.wg_test_048_act_as('a0480000-0000-4000-8000-00000000000b');
   r := public.wg_submit_timesheet('proj_reg_048', DATE '2026-09-14', 'person_w:2026-09-14',
     '{"daySummary":[{"day":"Mon","hours":4,"notes":"forged note"}]}'::jsonb);
-  IF r->'approval'->'subject_snapshot'->'daySummary' IS DISTINCT FROM
-     '[{"day":"Mon","hours":4,"notes":"saved note"}]'::jsonb THEN
+  IF r->'approval'->'subject_snapshot'->>'periodEnd' IS DISTINCT FROM '2026-09-20'
+     OR r->'approval'->'subject_snapshot'->'daySummary' IS DISTINCT FROM
+     '[{"day":"Mon","hours":4,"notes":"saved note"},{"day":"Sun","hours":0}]'::jsonb THEN
     RAISE EXCEPTION 'Saved notes were not used: %', r;
   END IF;
 END;
